@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>PardDefender</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="panel">
+
+        <header class="head">
+            <span class="brand">PardDefender</span>
+            <span class="version" id="version">v1.0.0</span>
+        </header>
+
+        <div class="update" id="update" hidden>
+            <div class="update-head">
+                <span class="update-title">Вышла версия <b id="update-version"></b></span>
+                <button class="icon" id="update-dismiss" title="Скрыть до следующей версии">✕</button>
+            </div>
+            <div class="update-summary" id="update-summary"></div>
+            <button class="link" id="update-open">Открыть страницу релиза</button>
+        </div>
+
+        <div class="status neutral" id="status">ЗАПУСК…</div>
+        <div class="note" id="note" hidden></div>
+
+        <button class="primary danger" id="resume" hidden>ВОЗОБНОВИТЬ</button>
+
+        <div class="workspace-row" id="workspace-row" hidden>
+            <span class="workspace-label">Рабочая папка</span>
+            <span class="workspace" id="workspace"></span>
+            <button class="link" id="open-folder" title="Открыть в проводнике">Открыть</button>
+        </div>
+
+        <div class="counts" id="counts" hidden></div>
+        <div class="render-comps" id="render-comps" hidden></div>
+
+        <button class="primary" id="run-now" disabled>РАЗЛОЖИТЬ СЕЙЧАС</button>
+        <div class="busy" id="busy" hidden></div>
+
+        <div class="disk-row" id="disk-row" hidden>
+            <div class="disk-label" id="disk-label"></div>
+            <div class="disk-bar"><div class="disk-fill" id="disk-fill"></div></div>
+        </div>
+
+        <section class="settings" id="settings" hidden>
+            <label class="check">
+                <input type="checkbox" id="auto-enabled">
+                <span>Автоматический режим</span>
+            </label>
+            <label class="check">
+                <input type="checkbox" id="copy-enabled">
+                <span>Копировать файлы в папку проекта</span>
+            </label>
+            <label class="check">
+                <input type="checkbox" id="organize-enabled">
+                <span>Группировать в панели After Effects</span>
+            </label>
+
+            <div class="field">
+                <span>Проверять каждые</span>
+                <input type="number" id="scan-interval" min="1" max="120" step="1">
+                <span>мин</span>
+            </div>
+            <div class="field">
+                <span>Ждать перед переносом</span>
+                <input type="number" id="settle-delay" min="0" max="1440" step="1">
+                <span>мин</span>
+            </div>
+        </section>
+
+        <section class="issues-section" id="issues-section" hidden>
+            <div class="section-title" id="issues-title">ПРОБЛЕМЫ</div>
+            <div class="issues" id="issues"></div>
+        </section>
+
+        <section class="queue-section" id="queue-section" hidden>
+            <div class="section-title" id="queue-title">ОЧЕРЕДЬ</div>
+            <div class="queue" id="queue"></div>
+        </section>
+
+        <section class="stats-section" id="stats-section" hidden>
+            <div class="section-title-row">
+                <span class="section-title">ИТОГО ПО ПРОЕКТУ</span>
+                <button class="link" id="verify-all" title="Полная сверка всех защищённых файлов">Сверить всё</button>
+            </div>
+            <div class="stats" id="stats"></div>
+        </section>
+
+        <section class="log-section" id="log-section" hidden>
+            <div class="section-title">СОБЫТИЯ</div>
+            <div class="log" id="log"></div>
+        </section>
+
+    </div>
+
+    <script src="disk-space.js"></script>
+    <script src="copy-queue.js"></script>
+    <script src="issues.js"></script>
+    <script src="stats.js"></script>
+    <script src="verify.js"></script>
+    <script src="updater.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>

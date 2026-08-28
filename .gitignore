@@ -1,0 +1,10 @@
+# Nothing here is generated, but keep editor and OS noise out.
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+node_modules/
+
+# Runtime artefacts written next to a PROJECT, never inside this repo.
+# Listed so an accidental copy of a workspace cannot be committed.
+.parddefender/
