@@ -1,54 +1,92 @@
 /*
- * PardDefender - update check against GitHub releases.
+ * PardDefender - update check.
  *
- * Uses the Node https module rather than fetch/XHR from the page: the panel
- * already has Node enabled, and going through Node sidesteps cross-origin
- * handling entirely.
+ * Two sources are tried in order, first usable answer wins:
  *
- * Failure here is always silent. A panel that cannot reach GitHub is a panel
- * that protects files exactly as well as one that can, and an update banner is
- * never worth interrupting the owner with an error.
+ *   1. A release feed - one small public JSON containing nothing but a version
+ *      number, a one-sentence summary and a link. This is the channel that works
+ *      while the code repository is PRIVATE: the panel only needs to learn that
+ *      1.1.0 exists, which does not require access to the source.
+ *   2. The GitHub releases API for the repository itself. This answers only for
+ *      a public repository - the unauthenticated API cannot see a private one.
  *
- * Release-notes convention: the FIRST non-empty line of the release body is the
- * one-sentence summary shown in the panel. Everything after it is detail for the
- * GitHub page and is not displayed here.
+ * No credential is ever embedded. A token shipped inside an extension is a token
+ * published to everyone who installs it, so the private-repository case is
+ * solved with a public feed rather than with a secret.
+ *
+ * Failure is always silent. A panel that cannot reach the network protects files
+ * exactly as well as one that can, and an update banner is never worth
+ * interrupting the owner with an error.
+ *
+ * Feed shape:
+ *   { "version": "1.1.0",
+ *     "summary": "Одно предложение о том, что нового.",
+ *     "url": "https://github.com/daarnix-anim/PardDefender/releases" }
+ *
+ * GitHub release-notes convention: the FIRST non-empty line of the release body
+ * is the one-sentence summary shown in the panel.
  */
 var PardUpdater = (function () {
     var api = {};
 
     var OWNER = "daarnix-anim";
     var REPO = "PardDefender";
+
+    /*
+     * Set this to a public raw-JSON URL to enable update notices while the
+     * repository stays private; a public Gist raw link works well. Empty means
+     * the feed channel is skipped.
+     *
+     * It can also be set without editing this file, by adding "feedUrl" to
+     * %APPDATA%/PardDefender/update.json.
+     */
+    var FEED_URL = "";
+
+    /* Only these hosts are ever contacted, whatever a response claims. */
+    var ALLOWED_HOSTS = [
+        "api.github.com",
+        "github.com",
+        "raw.githubusercontent.com",
+        "gist.githubusercontent.com",
+        "objects.githubusercontent.com"
+    ];
+
     var CHECK_INTERVAL_MS = 86400000;   /* once a day is plenty */
     var REQUEST_TIMEOUT_MS = 8000;
+    var MAX_BODY_BYTES = 262144;
 
-    var https = null, os = null, path = null;
+    var https = null, os = null;
     try { https = require("https"); } catch (e) {}
     try { os = require("os"); } catch (e2) {}
-    try { path = require("path"); } catch (e3) {}
 
     var currentVersion = "0.0.0";
     var cache = null;
 
     api.releasesUrl = function () {
-        return "https://github.com/" + OWNER + "/" + REPO + "/releases/latest";
+        return "https://github.com/" + OWNER + "/" + REPO + "/releases";
     };
 
+    /* --------------------------------------------------------------- state */
+
     /*
-     * Update state is application-level, not project-level: checking once a day
-     * should mean once a day, not once per project opened, and dismissing a
+     * Update state is application-level, not project-level: once a day should
+     * mean once a day rather than once per project opened, and dismissing a
      * version in one project should dismiss it everywhere.
      */
     function statePath() {
         var base = "";
-        if (process && process.env && process.env.APPDATA) base = process.env.APPDATA;
-        else if (os && os.homedir) base = os.homedir();
+        if (typeof process !== "undefined" && process.env && process.env.APPDATA) {
+            base = process.env.APPDATA;
+        } else if (os && os.homedir) {
+            base = os.homedir();
+        }
         if (!base) return "";
         return String(base).replace(/\\/g, "/") + "/PardDefender/update.json";
     }
 
     function loadState() {
         if (cache) return cache;
-        cache = { lastCheckAt: 0, dismissedVersion: "", latest: null };
+        cache = { lastCheckAt: 0, dismissedVersion: "", latest: null, feedUrl: "" };
         var target = statePath();
         if (!target) return cache;
         var raw = PardCopyQueue.readText(target);
@@ -58,6 +96,7 @@ var PardUpdater = (function () {
             if (parsed && typeof parsed === "object") {
                 cache.lastCheckAt = Number(parsed.lastCheckAt) || 0;
                 cache.dismissedVersion = String(parsed.dismissedVersion || "");
+                cache.feedUrl = String(parsed.feedUrl || "");
                 cache.latest = parsed.latest || null;
             }
         } catch (e) {}
@@ -68,6 +107,8 @@ var PardUpdater = (function () {
         var target = statePath();
         if (target && cache) PardCopyQueue.writeText(target, JSON.stringify(cache));
     }
+
+    /* ------------------------------------------------------------ helpers */
 
     /* Numeric, segment by segment: "1.10.0" is newer than "1.9.3". */
     function compareVersions(a, b) {
@@ -86,7 +127,7 @@ var PardUpdater = (function () {
 
     api.compareVersions = compareVersions;
 
-    /* The convention that makes the banner readable: one line, one sentence. */
+    /* The convention that keeps the banner to one readable line. */
     function summaryFrom(body) {
         var lines = String(body || "").split(/\r?\n/), i, line;
         for (i = 0; i < lines.length; i++) {
@@ -101,40 +142,58 @@ var PardUpdater = (function () {
 
     api.summaryFrom = summaryFrom;
 
+    function parseUrl(url) {
+        var match = /^https:\/\/([A-Za-z0-9.\-]+)(\/[^\s]*)?$/.exec(String(url || ""));
+        if (!match) return null;
+        var host = match[1].toLowerCase(), i;
+        for (i = 0; i < ALLOWED_HOSTS.length; i++) {
+            if (host === ALLOWED_HOSTS[i]) {
+                return { hostname: host, path: match[2] || "/" };
+            }
+        }
+        return null;
+    }
+
+    api.parseUrl = parseUrl;
+
     api.configure = function (version) {
         currentVersion = String(version || "0.0.0");
     };
 
-    function request(callback) {
-        if (!https) { callback(null); return; }
-        var settled = false;
+    /* ------------------------------------------------------------ requests */
 
+    function getJson(url, callback) {
+        var target = parseUrl(url);
+        if (!https || !target) { callback(null); return; }
+
+        var settled = false;
         function done(value) {
             if (settled) return;
             settled = true;
             callback(value);
         }
 
-        var options = {
-            hostname: "api.github.com",
-            path: "/repos/" + OWNER + "/" + REPO + "/releases/latest",
-            method: "GET",
-            headers: {
-                /* GitHub rejects requests without a User-Agent outright. */
-                "User-Agent": "PardDefender/" + currentVersion,
-                "Accept": "application/vnd.github+json"
-            }
-        };
-
         var req;
         try {
-            req = https.request(options, function (res) {
+            req = https.request({
+                hostname: target.hostname,
+                path: target.path,
+                method: "GET",
+                headers: {
+                    /* GitHub rejects requests without a User-Agent outright. */
+                    "User-Agent": "PardDefender/" + currentVersion,
+                    "Accept": "application/vnd.github+json, application/json"
+                }
+            }, function (res) {
                 var body = "";
                 res.setEncoding("utf8");
                 res.on("data", function (chunk) {
                     body += chunk;
-                    /* A malformed or hostile response must not grow without bound. */
-                    if (body.length > 262144) { try { res.destroy(); } catch (e) {} done(null); }
+                    /* A malformed or hostile response must not grow unbounded. */
+                    if (body.length > MAX_BODY_BYTES) {
+                        try { res.destroy(); } catch (e) {}
+                        done(null);
+                    }
                 });
                 res.on("end", function () {
                     if (res.statusCode !== 200) { done(null); return; }
@@ -152,36 +211,50 @@ var PardUpdater = (function () {
         req.end();
     }
 
-    /*
-     * callback receives null when there is nothing to show - no network, no
-     * release, already current, or this version was dismissed.
-     */
-    api.check = function (force, callback) {
-        var state = loadState();
+    function normalizeFeed(payload) {
+        if (!payload || !payload.version) return null;
+        return {
+            version: String(payload.version).replace(/^v/i, ""),
+            summary: summaryFrom(payload.summary || payload.notes || ""),
+            url: parseUrl(payload.url) ? String(payload.url) : api.releasesUrl(),
+            publishedAt: payload.publishedAt || ""
+        };
+    }
 
-        if (!force && state.latest &&
-            (Date.now() - state.lastCheckAt) < CHECK_INTERVAL_MS) {
-            callback(evaluate(state.latest, state));
-            return;
+    api.normalizeFeed = normalizeFeed;
+
+    function normalizeRelease(payload) {
+        if (!payload || !payload.tag_name) return null;
+        return {
+            version: String(payload.tag_name).replace(/^v/i, ""),
+            summary: summaryFrom(payload.body),
+            url: parseUrl(payload.html_url) ? String(payload.html_url) : api.releasesUrl(),
+            publishedAt: payload.published_at || ""
+        };
+    }
+
+    api.normalizeRelease = normalizeRelease;
+
+    /*
+     * Feed first, then the releases API. Neither answering is a normal, silent
+     * outcome - most often it just means the machine is offline.
+     */
+    function fetchLatest(feedUrl, callback) {
+        function fromReleases() {
+            getJson(
+                "https://api.github.com/repos/" + OWNER + "/" + REPO + "/releases/latest",
+                function (payload) { callback(normalizeRelease(payload)); }
+            );
         }
 
-        request(function (release) {
-            if (!release || !release.tag_name) {
-                /* Fall back to whatever the last successful check found. */
-                callback(state.latest ? evaluate(state.latest, state) : null);
-                return;
-            }
-            state.lastCheckAt = Date.now();
-            state.latest = {
-                version: String(release.tag_name).replace(/^v/i, ""),
-                summary: summaryFrom(release.body),
-                url: release.html_url || api.releasesUrl(),
-                publishedAt: release.published_at || ""
-            };
-            saveState();
-            callback(evaluate(state.latest, state));
+        if (!feedUrl) { fromReleases(); return; }
+
+        getJson(feedUrl, function (payload) {
+            var fromFeed = normalizeFeed(payload);
+            if (fromFeed) { callback(fromFeed); return; }
+            fromReleases();
         });
-    };
+    }
 
     function evaluate(latest, state) {
         if (!latest || !latest.version) return null;
@@ -197,23 +270,55 @@ var PardUpdater = (function () {
         };
     }
 
+    api.evaluate = evaluate;
+
+    /*
+     * callback receives null when there is nothing to show - no network, no
+     * release, already current, or this version was dismissed.
+     */
+    api.check = function (force, callback) {
+        var state = loadState();
+
+        if (!force && state.latest &&
+            (Date.now() - state.lastCheckAt) < CHECK_INTERVAL_MS) {
+            callback(evaluate(state.latest, state));
+            return;
+        }
+
+        fetchLatest(state.feedUrl || FEED_URL, function (latest) {
+            if (!latest) {
+                /* Fall back to whatever the last successful check found. */
+                callback(state.latest ? evaluate(state.latest, state) : null);
+                return;
+            }
+            state.lastCheckAt = Date.now();
+            state.latest = latest;
+            saveState();
+            callback(evaluate(latest, state));
+        });
+    };
+
     api.dismiss = function (version) {
         var state = loadState();
         state.dismissedVersion = String(version || "");
         saveState();
     };
 
+    api.setFeedUrl = function (url) {
+        var state = loadState();
+        state.feedUrl = parseUrl(url) ? String(url) : "";
+        state.lastCheckAt = 0;
+        saveState();
+        return state.feedUrl;
+    };
+
     api.openReleasePage = function (url) {
-        var target = url || api.releasesUrl();
         /*
-         * The URL arrives from a network response, and it is about to be handed
-         * to a shell. Only an https github.com address is ever opened, so a
-         * compromised or spoofed response cannot turn this into command
-         * execution.
+         * The URL arrives from a network response and is about to be handed to a
+         * shell. Re-checking it against the host allowlist here means a spoofed
+         * or compromised response cannot turn this into command execution.
          */
-        if (!/^https:\/\/github\.com\/[A-Za-z0-9._\-\/]*$/.test(target)) {
-            target = api.releasesUrl();
-        }
+        var target = parseUrl(url) ? String(url) : api.releasesUrl();
         try {
             require("child_process").execFile(
                 "cmd.exe", ["/c", "start", "", target],

@@ -329,6 +329,60 @@ check("пустое тело не роняет",
 check("длинная строка обрезается",
     Updater.summaryFrom(new Array(300).join("a")).length, 160);
 
+group("Источники обновления и безопасность URL");
+(function () {
+    check("свой хост разрешён",
+        !!Updater.parseUrl("https://gist.githubusercontent.com/u/1/raw/f.json"), true);
+    check("чужой хост отклонён",
+        Updater.parseUrl("https://evil.example.com/f.json"), null);
+    check("http отклонён",
+        Updater.parseUrl("http://github.com/x"), null);
+    check("подделка поддомена отклонена",
+        Updater.parseUrl("https://github.com.evil.tld/x"), null);
+
+    var feed = Updater.normalizeFeed({
+        version: "v1.2.0",
+        summary: "Добавлены метрики и повторы.",
+        url: "https://evil.example.com/pwn"
+    });
+    check("версия нормализована", feed.version, "1.2.0");
+    check("описание взято", feed.summary, "Добавлены метрики и повторы.");
+    check("недоверенная ссылка заменена на страницу релизов",
+        feed.url, "https://github.com/daarnix-anim/PardDefender/releases");
+
+    var release = Updater.normalizeRelease({
+        tag_name: "v1.3.0",
+        body: "# Заголовок\nПервая строка описания.",
+        html_url: "https://github.com/daarnix-anim/PardDefender/releases/tag/v1.3.0"
+    });
+    check("релиз: версия", release.version, "1.3.0");
+    check("релиз: первая непустая строка как описание", release.summary, "Заголовок");
+    check("релиз: своя ссылка сохранена",
+        release.url, "https://github.com/daarnix-anim/PardDefender/releases/tag/v1.3.0");
+
+    check("пустой ответ не роняет", Updater.normalizeFeed(null), null);
+    check("ответ без версии не роняет", Updater.normalizeFeed({ summary: "x" }), null);
+})();
+
+group("Показывать ли баннер");
+(function () {
+    Updater.configure("1.0.0");
+    var state = { dismissedVersion: "" };
+
+    check("новее — показываем",
+        !!Updater.evaluate({ version: "1.1.0", summary: "s" }, state), true);
+    check("та же версия — молчим",
+        Updater.evaluate({ version: "1.0.0", summary: "s" }, state), null);
+    check("старее — молчим",
+        Updater.evaluate({ version: "0.9.0", summary: "s" }, state), null);
+    check("скрытая версия — молчим",
+        Updater.evaluate({ version: "1.1.0", summary: "s" },
+            { dismissedVersion: "1.1.0" }), null);
+    check("следующая после скрытой — показываем",
+        !!Updater.evaluate({ version: "1.2.0", summary: "s" },
+            { dismissedVersion: "1.1.0" }), true);
+})();
+
 /* ------------------------------------------------------------------ итог */
 
 try { fs.rmSync(root.replace(/\//g, path.sep), { recursive: true, force: true }); }
