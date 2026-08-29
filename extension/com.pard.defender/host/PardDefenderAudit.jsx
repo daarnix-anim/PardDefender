@@ -131,6 +131,25 @@
     }
 
     /*
+     * Where the item sits in the Project panel right now, as a "/" path from the
+     * root. The client compares this against the target and drops the move when
+     * they match. Without it every pass re-sends every eligible item, the host
+     * dutifully skips them all as no-ops, and the pass reports "done" - which
+     * schedules another audit, which builds the same moves again. That loop ran
+     * 1873 times in thirteen minutes on a real project.
+     */
+    function panelPathOf(item) {
+        var parts = [], folder, depth = 0;
+        try { folder = item.parentFolder; } catch (e) { return ""; }
+        while (folder && folder !== app.project.rootFolder && depth < 12) {
+            parts.unshift(str(folder.name));
+            try { folder = folder.parentFolder; } catch (e2) { break; }
+            depth++;
+        }
+        return parts.join("/");
+    }
+
+    /*
      * An item may be reorganised only from the Project root or from inside a
      * folder tree PardDefender itself created. Anything the owner filed by hand -
      * 02_ASSETS/IMAGES/Houses, or any folder of their own - is left alone
@@ -243,6 +262,7 @@
                         isRender: true,
                         branch: "",
                         panelTarget: "",
+                        panelPath: panelPathOf(item),
                         eligible: true
                     });
                     continue;
@@ -260,6 +280,7 @@
                     panelTarget: compBranch
                         ? host.PANEL_COMPS + "/" + compBranch
                         : host.PANEL_COMPS,
+                    panelPath: panelPathOf(item),
                     eligible: true
                 });
             }
@@ -345,9 +366,22 @@
                     size: size,
                     state: state,
                     destRel: destRel,
-                    destPath: report.workspace ? report.workspace + "/" + destRel : "",
+                    destFile: isSequence ? "" : baseName(path),
+                    /*
+                     * A route names a FOLDER. For an ordinary file the original
+                     * file name has to be appended, or the copy lands as a file
+                     * literally called "VIDEO" with no extension - which After
+                     * Effects then refuses to relink, because a file with no
+                     * extension is not a recognised type. A sequence is the one
+                     * exception: its destination really is the folder, and the
+                     * copy layer fills it frame by frame.
+                     */
+                    destPath: !report.workspace ? "" : (isSequence
+                        ? report.workspace + "/" + destRel
+                        : report.workspace + "/" + destRel + "/" + baseName(path)),
                     panelTarget: panelTargetForFootage(
                         category, isSequence, routeKey, branch),
+                    panelPath: panelPathOf(item),
                     panelEligible: panelEligible(item, settings, managed),
                     hasProxy: false
                 };

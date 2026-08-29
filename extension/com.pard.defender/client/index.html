@@ -10,7 +10,7 @@
 
         <header class="head">
             <span class="brand">PardDefender</span>
-            <span class="version" id="version">v1.0.0</span>
+            <span class="version" id="version">v1.0.1</span>
         </header>
 
         <div class="update" id="update" hidden>
@@ -42,7 +42,17 @@
         <div class="disk-row" id="disk-row" hidden>
             <div class="disk-label" id="disk-label"></div>
             <div class="disk-bar"><div class="disk-fill" id="disk-fill"></div></div>
+            <div class="disk-project" id="disk-project"></div>
         </div>
+
+        <section class="unused-section" id="unused-section" hidden>
+            <div class="unused-head">
+                <span class="unused-title" id="unused-title"></span>
+                <button class="icon" id="unused-reveal" title="Открыть папку 00_UNUSED">&#128194;</button>
+            </div>
+            <div class="unused-note">Эти файлы не используются ни в одной композиции.</div>
+            <button class="danger-line" id="clean-unused">УБРАТЬ НЕИСПОЛЬЗУЕМЫЕ В КОРЗИНУ</button>
+        </section>
 
         <section class="settings" id="settings" hidden>
             <label class="check">
@@ -100,6 +110,7 @@
     <script src="issues.js"></script>
     <script src="stats.js"></script>
     <script src="verify.js"></script>
+    <script src="housekeeping.js"></script>
     <script src="updater.js"></script>
     <script src="main.js"></script>
 </body>

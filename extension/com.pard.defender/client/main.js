@@ -3,8 +3,15 @@
  *
  * Owns the clock and every decision about WHEN to act. The host reports state;
  * only this side knows how long an element has been sitting in the project,
- * whether its bytes have stopped changing, and how many times it has already
- * failed.
+ * whether its bytes have stopped changing, and how many times it has failed.
+ *
+ * Two rules learned the hard way on a live project:
+ *
+ *   - Never send a move the host will treat as a no-op. Doing so made every
+ *     pass report "work done", which scheduled another audit, which built the
+ *     same moves again: 1873 passes in thirteen minutes.
+ *   - Never rebuild a list that has not changed. innerHTML resets scroll
+ *     position, so a five-second repaint made the panel impossible to scroll.
  */
 (function () {
     "use strict";
@@ -20,6 +27,8 @@
     var STABILITY_MS = 5000;
     var MAX_LOG_ROWS = 60;
     var BREAKER_THRESHOLD = 3;
+    var WEIGH_INTERVAL_MS = 300000;
+    var CONFIRM_WINDOW_MS = 6000;
 
     var state = {
         hostReady: false,
@@ -31,14 +40,18 @@
         projectPath: "",
         seen: {},
         disk: null,
+        weight: null,
+        lastWeighAt: 0,
         lastAuditAt: 0,
         log: [],
         paused: null,
         update: null,
-        version: "1.0.0"
+        version: "1.0.0",
+        confirmCleanupUntil: 0
     };
 
     var el = {};
+    var painted = {};
 
     /* ------------------------------------------------------------- plumbing */
 
@@ -82,6 +95,20 @@
     }
 
     function formatBytes(n) { return PardDiskSpace.formatBytes(n); }
+
+    /*
+     * Repaints a section only when its content actually changed. Every list in
+     * this panel is rebuilt with innerHTML, which resets scrollTop - so a
+     * repaint on an unchanged list is not merely wasted work, it is the thing
+     * that makes the panel jitter while the owner is trying to scroll it.
+     */
+    function changed(name, signature) {
+        if (painted[name] === signature) return false;
+        painted[name] = signature;
+        return true;
+    }
+
+    function invalidate(name) { delete painted[name]; }
 
     /* --------------------------------------------------------- host loading */
 
@@ -184,23 +211,33 @@
         PardIssues.pruneMissing(alive);
     }
 
-    /*
-     * An element is ready when it has settled AND its branch is known. One that
-     * is still not used in any composition waits far longer before it is filed
-     * into _INBOX: the owner usually drops footage into its composition within a
-     * minute or two, and waiting means the destination is right the first time
-     * and never has to be moved again.
-     */
-    function isReady(key, unassigned, force) {
+    function settled(key, force) {
         var record = state.seen[key];
         if (!record) return false;
         if (force) return true;
-        var settings = state.settings;
         if (Date.now() - record.stableSince < STABILITY_MS) return false;
-        var age = Date.now() - record.firstSeen;
-        if (unassigned) return age >= settings.inboxTimeoutMs;
-        return age >= settings.settleDelayMs;
+        return Date.now() - record.firstSeen >= state.settings.settleDelayMs;
     }
+
+    /*
+     * Copying waits for the branch to be known. An element still not used in any
+     * composition waits far longer, because the owner usually drops footage into
+     * its composition within a minute or two - and waiting means the destination
+     * is right the first time and never has to be moved again.
+     */
+    function readyToCopy(key, unassigned, force) {
+        if (!settled(key, force)) return false;
+        if (force || !unassigned) return true;
+        var record = state.seen[key];
+        return Date.now() - record.firstSeen >= state.settings.inboxTimeoutMs;
+    }
+
+    /*
+     * Filing in the Project panel does NOT wait for the inbox timeout. Moving an
+     * unused item into 00_UNUSED is precisely how the owner finds out it is
+     * unused, and making them wait an hour for that defeats the purpose.
+     */
+    function readyToFile(key, force) { return settled(key, force); }
 
     /* ------------------------------------------------------------ the pass */
 
@@ -220,7 +257,7 @@
              */
             if (!force && !PardIssues.isDue(key)) continue;
             if (force && PardIssues.get(key)) PardIssues.retryNow(key);
-            if (!isReady(key, item.unassigned, force)) continue;
+            if (!readyToCopy(key, item.unassigned, force)) continue;
 
             tasks.push({
                 id: item.id,
@@ -240,19 +277,25 @@
 
     function buildPanelMoves(report, force) {
         var moves = [], i, item, comp;
+
         for (i = 0; i < report.comps.length; i++) {
             comp = report.comps[i];
             if (!comp.eligible) continue;
-            if (!isReady("c" + comp.id, false, force)) continue;
+            /* Already where it belongs - sending it would be a no-op, and a pass
+             * made only of no-ops is what caused the audit loop. */
+            if (comp.panelPath === comp.panelTarget) continue;
+            if (!readyToFile("c" + comp.id, force)) continue;
             /* A render composition has an empty target, which the host reads as
              * "the Project root" - that is how one gets pulled back out of COMPS. */
             moves.push({ id: comp.id, target: comp.panelTarget });
         }
+
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
             if (!item.panelEligible) continue;
             if (item.state === "missing") continue;
-            if (!isReady("i" + item.id, item.unassigned, force)) continue;
+            if (item.panelPath === item.panelTarget) continue;
+            if (!readyToFile("i" + item.id, force)) continue;
             moves.push({ id: item.id, target: item.panelTarget });
         }
         return moves;
@@ -350,17 +393,6 @@
         return null;
     }
 
-    function nameFor(tasks, id) {
-        var task = taskById(tasks, id);
-        return task ? task.name : "элемент " + id;
-    }
-
-    /*
-     * Recording copy outcomes. Success clears any standing issue for that
-     * element; failure advances its attempt counter. Both go through the issue
-     * store rather than the log, so a problem is one row that ages, not a new
-     * line every three minutes.
-     */
     function absorbCopyResults(tasks, results) {
         var i, r, task, copied = 0, bytes = 0, reused = 0, saved = 0;
         var sequences = 0, errors = 0;
@@ -504,17 +536,14 @@
                 if (totals.copied || totals.reused) {
                     log("Скопировано " + totals.copied + " файл. (" +
                         formatBytes(totals.bytes) + ")" +
-                        (totals.reused
-                            ? ", переиспользовано " + totals.reused
-                            : ""), "good");
+                        (totals.reused ? ", переиспользовано " + totals.reused : ""), "good");
                 }
 
                 recordManifest(tasks, results);
 
                 var breaker = PardIssues.evaluateBreaker(results, BREAKER_THRESHOLD);
                 if (breaker.tripped) {
-                    trip(breaker.code, breaker.reason,
-                        "Подряд неудач: " + breaker.count);
+                    trip(breaker.code, breaker.reason, "Подряд неудач: " + breaker.count);
                 }
 
                 commitRelink(tasks, results, function (commit, error, entries) {
@@ -531,6 +560,7 @@
                     }
                     /* The manifest just grew, so verification needs the new rows. */
                     PardVerify.attach(state.workspace);
+                    state.lastWeighAt = 0;
                     organiseThen(moves);
                 });
             }
@@ -579,15 +609,9 @@
 
     /* ------------------------------------------------------- verification */
 
-    /*
-     * Turns "protected" from a claim about the past into a claim about the
-     * present. After Effects will not notice a protected file deleted outside
-     * the application until it next tries to read the frames - typically at
-     * render, which is far too late.
-     */
     function sweepProtected(full) {
-        if (!state.report || !state.report.items || !state.workspace) return;
-        if (!PardCopyQueue.available()) return;
+        if (!state.report || !state.report.items || !state.workspace) return null;
+        if (!PardCopyQueue.available()) return null;
 
         var outcome = full
             ? PardVerify.sweepAll(state.report.items)
@@ -618,6 +642,121 @@
         return outcome;
     }
 
+    /* --------------------------------------------------------- unused files */
+
+    /*
+     * A cleanup candidate has to satisfy three independent conditions:
+     *
+     *   1. the project does not use it in any composition;
+     *   2. its file currently sits inside the workspace;
+     *   3. the manifest says PardDefender put it there.
+     *
+     * The third is what protects the owner's own files. An asset they had
+     * already filed in 01_assets before protection started has no manifest row,
+     * so cleanup cannot reach it. And because only the copy inside the workspace
+     * is ever touched, the original the file came from is never affected.
+     */
+    function unusedCandidates() {
+        var out = [], i, item, record;
+        var report = state.report;
+        if (!report || !report.items) return out;
+
+        for (i = 0; i < report.items.length; i++) {
+            item = report.items[i];
+            if (!item.unassigned) continue;
+            if (item.state !== "protected") continue;
+            record = PardVerify.recordFor(item.path);
+            if (!record) continue;
+
+            /*
+             * If the original is gone, this copy is the last surviving instance.
+             * That still gets deleted if the owner confirms - it is unused, and
+             * they asked - but it is counted separately and said out loud.
+             */
+            var onlyCopy = !PardCopyQueue.statOf(record.sourcePath);
+
+            out.push({
+                id: item.id,
+                name: item.name,
+                path: item.path,
+                size: item.size,
+                sourcePath: record.sourcePath,
+                onlyCopy: onlyCopy
+            });
+        }
+        return out;
+    }
+
+    function unusedTotals() {
+        var list = unusedCandidates(), i, bytes = 0, onlyCopies = 0;
+        for (i = 0; i < list.length; i++) {
+            bytes += list[i].size || 0;
+            if (list[i].onlyCopy) onlyCopies++;
+        }
+        return { list: list, count: list.length, bytes: bytes, onlyCopies: onlyCopies };
+    }
+
+    function cleanUnused() {
+        var totals = unusedTotals();
+        if (!totals.count) { log("Неиспользуемых защищённых файлов нет.", "neutral"); return; }
+        if (!PardHousekeeping.available()) {
+            log("Node недоступен — удаление невозможно.", "bad");
+            return;
+        }
+
+        var paths = [], ids = [], i;
+        for (i = 0; i < totals.list.length; i++) {
+            paths.push(totals.list[i].path);
+            ids.push(totals.list[i].id);
+        }
+
+        state.busy = true;
+        setBusyLabel("Отправляю в корзину " + paths.length + " файл.…");
+        render();
+
+        PardHousekeeping.recycle(paths, function (result) {
+            if (!result.ok) {
+                state.busy = false;
+                setBusyLabel("");
+                log("Корзина: " + result.error, "bad");
+                render();
+                return;
+            }
+
+            log("В корзину отправлено: " + result.recycled +
+                (result.failed ? ", не удалось: " + result.failed : "") +
+                " (" + formatBytes(totals.bytes) + ")", "good");
+
+            /* The files are gone; the project items would now be offline
+             * footage, so they go too - but only the ones still unused. */
+            var planPath = tempRoot() + "/remove-plan.json";
+            if (!PardCopyQueue.writeText(planPath, JSON.stringify({ ids: ids }))) {
+                state.busy = false;
+                setBusyLabel("");
+                tick(true);
+                return;
+            }
+
+            evalScript(
+                "$.global.PardDefenderHost.removeItemsFromFileJson('" +
+                escapeForExtendScript(planPath) + "');",
+                function (raw) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
+                    if (parsed && parsed.ok && parsed.removed) {
+                        log("Убрано из проекта: " + parsed.removed, "good");
+                    } else if (parsed && !parsed.ok) {
+                        log("Не удалось убрать из проекта: " + parsed.error, "warn");
+                    }
+                    state.busy = false;
+                    setBusyLabel("");
+                    state.lastWeighAt = 0;
+                    tick(true);
+                }
+            );
+        });
+    }
+
     /* ---------------------------------------------------------------- tick */
 
     function tick(force) {
@@ -638,15 +777,14 @@
             }
             state.hostError = report.ok ? "" : report.error;
 
-            if (report.projectPath !== state.projectPath) {
-                onProjectChanged(report);
-            }
+            if (report.projectPath !== state.projectPath) onProjectChanged(report);
 
             state.report = report;
             state.settings = report.settings || state.settings;
             state.workspace = report.workspace;
             refreshTracking(report);
             refreshDisk();
+            maybeWeigh();
             sweepProtected(false);
             render();
 
@@ -664,15 +802,18 @@
         state.seen = {};
         state.log = [];
         state.paused = null;
+        state.weight = null;
+        state.lastWeighAt = 0;
         state.projectPath = report.projectPath;
+        painted = {};
 
-        PardIssues.attach(report.workspaceIssue ? "" : report.workspace);
-        PardStats.attach(report.workspaceIssue ? "" : report.workspace);
-        PardVerify.attach(report.workspaceIssue ? "" : report.workspace);
+        var workspace = report.workspaceIssue ? "" : report.workspace;
+        PardIssues.attach(workspace);
+        PardStats.attach(workspace);
+        PardVerify.attach(workspace);
 
-        if (report.workspace && !report.workspaceIssue) {
-            var recovered = PardCopyQueue.recoverJournal(
-                report.workspace + "/.parddefender/pending.tsv");
+        if (workspace) {
+            var recovered = PardCopyQueue.recoverJournal(workspace + "/.parddefender/pending.tsv");
             if (recovered.removedPartials) {
                 log("После сбоя убрано незавершённых копий: " +
                     recovered.removedPartials, "warn");
@@ -685,6 +826,15 @@
         PardDiskSpace.query(state.workspace, function (info) {
             state.disk = info;
             renderDisk();
+        });
+    }
+
+    function maybeWeigh() {
+        if (!state.workspace || !PardHousekeeping.available()) return;
+        if (Date.now() - state.lastWeighAt < WEIGH_INTERVAL_MS) return;
+        state.lastWeighAt = Date.now();
+        PardHousekeeping.measure(state.workspace, function (result) {
+            if (result.ok) { state.weight = result; renderDisk(); }
         });
     }
 
@@ -746,34 +896,32 @@
 
     function render() {
         var status = statusFor();
-        el.status.textContent = status.label;
-        el.status.className = "status " + status.tone;
-        el.note.textContent = status.note || "";
-        el.note.hidden = !status.note;
+        if (changed("status", status.label + "|" + status.tone + "|" + status.note)) {
+            el.status.textContent = status.label;
+            el.status.className = "status " + status.tone;
+            el.note.textContent = status.note || "";
+            el.note.hidden = !status.note;
+        }
         el.resume.hidden = !state.paused;
 
         var report = state.report;
         if (report && report.workspace) {
-            el.workspace.textContent = report.workspace.replace(/^.*\//, "");
-            el.workspace.title = report.workspace;
+            if (changed("workspace", report.workspace)) {
+                el.workspace.textContent = report.workspace.replace(/^.*\//, "");
+                el.workspace.title = report.workspace;
+            }
             el.workspaceRow.hidden = false;
         } else {
             el.workspaceRow.hidden = true;
         }
 
         if (report && report.counts) {
-            /*
-             * "Отслеживается" is a different claim from "защищено": it counts
-             * every file element the panel is watching, protected or not.
-             */
-            el.counts.textContent =
+            var countsText =
                 "Защищено " + report.counts.protected_ +
                 " · Отслеживается " + report.counts.total +
                 " · В очереди " + report.counts.pending +
-                " · Потеряно " + report.counts.missing +
-                (report.counts.unassigned
-                    ? " · Без композиции " + report.counts.unassigned
-                    : "");
+                " · Потеряно " + report.counts.missing;
+            if (changed("counts", countsText)) el.counts.textContent = countsText;
             el.counts.hidden = false;
         } else {
             el.counts.hidden = true;
@@ -784,8 +932,9 @@
             for (i = 0; i < report.renderComps.length && i < 6; i++) {
                 names.push(report.renderComps[i].name);
             }
-            el.renderComps.textContent = "Рендер-композиции в корне: " + names.join(", ") +
+            var compsText = "Рендер-композиции в корне: " + names.join(", ") +
                 (report.renderComps.length > 6 ? " …" : "");
+            if (changed("renderComps", compsText)) el.renderComps.textContent = compsText;
             el.renderComps.hidden = false;
         } else {
             el.renderComps.hidden = true;
@@ -810,6 +959,7 @@
         el.settingsBlock.hidden = !(report && report.projectSaved);
 
         renderDisk();
+        renderUnused();
         renderIssues();
         renderQueue();
         renderStats();
@@ -821,7 +971,11 @@
             el.diskRow.hidden = true;
             return;
         }
+        var signature = state.disk.freeBytes + "|" + state.disk.totalBytes + "|" +
+            (state.weight ? state.weight.bytes + "|" + state.weight.files : "-");
         el.diskRow.hidden = false;
+        if (!changed("disk", signature)) return;
+
         el.diskLabel.textContent =
             "Диск " + PardDiskSpace.volumeOf(state.workspace) + " — свободно " +
             formatBytes(state.disk.freeBytes) +
@@ -830,6 +984,35 @@
         el.diskFill.className = "disk-fill" +
             (state.disk.usedRatio > 0.95 ? " critical"
                 : (state.disk.usedRatio > 0.85 ? " warn" : ""));
+
+        el.diskProject.textContent = state.weight
+            ? "Проект весит " + formatBytes(state.weight.bytes) +
+                " · " + state.weight.files + " файл."
+            : "Проект взвешивается…";
+    }
+
+    function renderUnused() {
+        var totals = unusedTotals();
+        var signature = totals.count + "|" + totals.bytes + "|" + totals.onlyCopies +
+            "|" + (state.confirmCleanupUntil > Date.now() ? "confirm" : "idle") +
+            "|" + (state.busy ? "busy" : "free");
+
+        el.unusedSection.hidden = totals.count === 0;
+        if (totals.count === 0) { state.confirmCleanupUntil = 0; return; }
+        if (!changed("unused", signature)) return;
+
+        el.unusedTitle.textContent = "Не используется: " + totals.count +
+            " файл. · " + formatBytes(totals.bytes);
+
+        var confirming = state.confirmCleanupUntil > Date.now();
+        el.cleanUnused.className = "danger-line" + (confirming ? " confirming" : "");
+        el.cleanUnused.disabled = state.busy;
+        el.cleanUnused.textContent = confirming
+            ? "ПОДТВЕРДИТЬ: " + totals.count + " файл. В КОРЗИНУ" +
+                (totals.onlyCopies
+                    ? " (из них " + totals.onlyCopies + " без оригинала)"
+                    : "")
+            : "УБРАТЬ НЕИСПОЛЬЗУЕМЫЕ В КОРЗИНУ";
     }
 
     function toneForIssue(record) {
@@ -841,22 +1024,51 @@
 
     function iconButton(glyph, title, handler) {
         var button = document.createElement("button");
-        button.className = "icon";
+        button.className = "icon act";
         button.textContent = glyph;
         button.title = title;
         button.onclick = handler;
         return button;
     }
 
+    function showInProject(id, name) {
+        evalScript("$.global.PardDefenderHost.selectItemById('" +
+            escapeForExtendScript(id) + "');", function (raw) {
+            var text = String(raw || "");
+            if (text.indexOf("ERROR|") === 0) { log(text.substring(6), "bad"); return; }
+            /*
+             * There is no ExtendScript call that expands a collapsed folder, so
+             * when the item is buried the panel says where it is instead of
+             * pretending the selection was enough.
+             */
+            var parts = text.split("|");
+            var folder = parts.length > 2 ? parts[2] : "";
+            log("В проекте: " + (name || parts[1] || "") +
+                (folder ? "  →  " + folder : "  →  корень проекта"), "work");
+        });
+    }
+
     function renderIssues() {
         var list = PardIssues.all();
-        el.issues.innerHTML = "";
         el.issuesSection.hidden = list.length === 0;
         if (!list.length) return;
 
-        el.issuesTitle.textContent = "ПРОБЛЕМЫ (" + PardIssues.openCount() + ")";
+        /*
+         * The retry countdown is bucketed to whole minutes on purpose: a
+         * per-second signature would repaint the list every tick and put the
+         * scroll jitter straight back.
+         */
+        var parts = [], i;
+        for (i = 0; i < list.length && i < 20; i++) {
+            parts.push(list[i].key + ":" + list[i].code + ":" + list[i].attempts +
+                ":" + (list[i].ignored ? 1 : 0) +
+                ":" + Math.round((list[i].nextAttemptAt || 0) / 60000));
+        }
+        var signature = PardIssues.openCount() + "|" + parts.join(",");
+        if (!changed("issues", signature)) return;
 
-        var i;
+        el.issuesTitle.textContent = "ПРОБЛЕМЫ (" + PardIssues.openCount() + ")";
+        el.issues.innerHTML = "";
         for (i = 0; i < list.length && i < 20; i++) {
             el.issues.appendChild(issueRow(list[i]));
         }
@@ -877,10 +1089,7 @@
         name.className = "issue-name";
         name.textContent = record.name;
         if (record.id) {
-            name.onclick = function () {
-                evalScript("$.global.PardDefenderHost.selectItemById('" +
-                    escapeForExtendScript(record.id) + "');", function () {});
-            };
+            name.onclick = function () { showInProject(record.id, record.name); };
         }
 
         head.appendChild(dot);
@@ -902,19 +1111,32 @@
 
         var actions = document.createElement("span");
         actions.className = "issue-actions";
+
         actions.appendChild(iconButton("↻", "Повторить сейчас", function () {
             PardIssues.retryNow(record.key);
             PardIssues.save();
+            invalidate("issues");
             log("Повтор: " + record.name, "work");
             runPass(true);
         }));
-        if (record.path) {
-            actions.appendChild(iconButton("…", "Показать файл в проводнике",
-                function () { revealPath(record.path); }));
+
+        if (record.id) {
+            actions.appendChild(iconButton("🔎", "Показать в панели Project",
+                function () { showInProject(record.id, record.name); }));
         }
+        if (record.path) {
+            actions.appendChild(iconButton("📁", "Показать файл в проводнике",
+                function () {
+                    if (!PardHousekeeping.reveal(record.path)) {
+                        log("Не удалось открыть проводник.", "bad");
+                    }
+                }));
+        }
+
         actions.appendChild(iconButton("✕", "Убрать из списка", function () {
             PardIssues.ignore(record.key);
             PardIssues.save();
+            invalidate("issues");
             renderIssues();
         }));
 
@@ -927,20 +1149,8 @@
         return row;
     }
 
-    function revealPath(target) {
-        try {
-            require("child_process").execFile(
-                "explorer.exe", ["/select,", String(target).replace(/\//g, "\\")],
-                { windowsHide: true }, function () {}
-            );
-        } catch (e) {
-            log("Не удалось открыть проводник.", "bad");
-        }
-    }
-
     function renderQueue() {
         var report = state.report;
-        el.queue.innerHTML = "";
         if (!report || !report.items) { el.queueSection.hidden = true; return; }
 
         var rows = [], i, item;
@@ -950,7 +1160,16 @@
             rows.push(item);
         }
         el.queueSection.hidden = rows.length === 0;
+        if (!rows.length) return;
+
+        var parts = [];
+        for (i = 0; i < rows.length; i++) {
+            parts.push(rows[i].id + ":" + rows[i].state + ":" + rows[i].branchResolved);
+        }
+        if (!changed("queue", parts.join(","))) return;
+
         el.queueTitle.textContent = "ОЧЕРЕДЬ (" + rows.length + ")";
+        el.queue.innerHTML = "";
 
         for (i = 0; i < rows.length; i++) {
             var row = document.createElement("div");
@@ -969,17 +1188,14 @@
             target.className = "queue-target";
             target.textContent = rows[i].state === "missing"
                 ? "нет на диске"
-                : (rows[i].unassigned ? "ждёт композицию" : rows[i].branchResolved);
+                : (rows[i].unassigned ? "не в композициях" : rows[i].branchResolved);
 
             row.appendChild(dot);
             row.appendChild(name);
             row.appendChild(target);
-            row.onclick = (function (id) {
-                return function () {
-                    evalScript("$.global.PardDefenderHost.selectItemById('" +
-                        escapeForExtendScript(id) + "');", function () {});
-                };
-            })(rows[i].id);
+            row.onclick = (function (id, itemName) {
+                return function () { showInProject(id, itemName); };
+            })(rows[i].id, rows[i].name);
 
             el.queue.appendChild(row);
         }
@@ -1004,8 +1220,12 @@
 
         var total = PardStats.total();
         var session = PardStats.session();
-        el.stats.innerHTML = "";
+        var signature = [total.filesProcessed, total.bytesCopied, total.filesReused,
+            total.bytesSaved, total.panelMoves, total.sequencesProcessed,
+            total.errorsTotal, PardIssues.openCount(), total.lastPassAt].join("|");
+        if (!changed("stats", signature)) return;
 
+        el.stats.innerHTML = "";
         el.stats.appendChild(statLine(
             "Обработано <b>" + total.filesProcessed + "</b> файл. · <b>" +
             formatBytes(total.bytesCopied) + "</b>",
@@ -1037,12 +1257,18 @@
     function renderUpdate() {
         if (!state.update) { el.update.hidden = true; return; }
         el.update.hidden = false;
+        if (!changed("update", state.update.version)) return;
         el.updateVersion.textContent = state.update.version;
         el.updateSummary.textContent = state.update.summary;
     }
 
     function renderLog() {
         if (!el.log) return;
+        var signature = state.log.length +
+            (state.log.length ? "|" + state.log[0].time.getTime() : "");
+        el.logSection.hidden = state.log.length === 0;
+        if (!state.log.length || !changed("log", signature)) return;
+
         el.log.innerHTML = "";
         var i, entry, row;
         for (i = 0; i < state.log.length && i < 12; i++) {
@@ -1053,7 +1279,6 @@
                 pad(entry.time.getMinutes()) + "  " + entry.message;
             el.log.appendChild(row);
         }
-        el.logSection.hidden = state.log.length === 0;
     }
 
     function pad(n) { return (n < 10 ? "0" : "") + n; }
@@ -1104,14 +1329,17 @@
             autoEnabled: "auto-enabled", copyEnabled: "copy-enabled",
             organizeEnabled: "organize-enabled", scanInterval: "scan-interval",
             settleDelay: "settle-delay", diskRow: "disk-row", diskLabel: "disk-label",
-            diskFill: "disk-fill", queueSection: "queue-section",
-            queueTitle: "queue-title", queue: "queue", logSection: "log-section",
-            log: "log", openFolder: "open-folder", version: "version",
-            issuesSection: "issues-section", issuesTitle: "issues-title",
-            issues: "issues", statsSection: "stats-section", stats: "stats",
-            verifyAll: "verify-all", resume: "resume", update: "update",
-            updateVersion: "update-version", updateSummary: "update-summary",
-            updateOpen: "update-open", updateDismiss: "update-dismiss"
+            diskFill: "disk-fill", diskProject: "disk-project",
+            queueSection: "queue-section", queueTitle: "queue-title", queue: "queue",
+            logSection: "log-section", log: "log", openFolder: "open-folder",
+            version: "version", issuesSection: "issues-section",
+            issuesTitle: "issues-title", issues: "issues",
+            statsSection: "stats-section", stats: "stats", verifyAll: "verify-all",
+            resume: "resume", update: "update", updateVersion: "update-version",
+            updateSummary: "update-summary", updateOpen: "update-open",
+            updateDismiss: "update-dismiss", unusedSection: "unused-section",
+            unusedTitle: "unused-title", unusedReveal: "unused-reveal",
+            cleanUnused: "clean-unused"
         };
         var key;
         for (key in ids) {
@@ -1135,6 +1363,8 @@
         el.verifyAll.onclick = function () {
             log("Полная сверка защищённых файлов…", "work");
             sweepProtected(true);
+            state.lastWeighAt = 0;
+            maybeWeigh();
             render();
         };
 
@@ -1143,6 +1373,35 @@
                 var text = String(raw || "");
                 if (text.indexOf("ERROR|") === 0) log(text.substring(6), "bad");
             });
+        };
+
+        el.unusedReveal.onclick = function () {
+            var totals = unusedTotals();
+            if (totals.count) PardHousekeeping.reveal(totals.list[0].path);
+        };
+
+        /*
+         * Two presses, not a modal. The first arms the button and spells out
+         * exactly how many files and how many of them have no surviving
+         * original; the second commits. The arming lapses on its own so a stray
+         * click cannot sit there waiting to be completed later.
+         */
+        el.cleanUnused.onclick = function () {
+            if (state.confirmCleanupUntil > Date.now()) {
+                state.confirmCleanupUntil = 0;
+                invalidate("unused");
+                cleanUnused();
+                return;
+            }
+            state.confirmCleanupUntil = Date.now() + CONFIRM_WINDOW_MS;
+            invalidate("unused");
+            renderUnused();
+            window.setTimeout(function () {
+                if (state.confirmCleanupUntil <= Date.now()) {
+                    invalidate("unused");
+                    renderUnused();
+                }
+            }, CONFIRM_WINDOW_MS + 200);
         };
 
         el.updateOpen.onclick = function () {

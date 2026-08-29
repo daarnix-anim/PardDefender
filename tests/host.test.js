@@ -218,12 +218,25 @@ group("Маршруты на диске");
         itemNamed(r, "track.wav").destRel, "03_audio/music");
     check("короткое аудио - в sfx, без ветки",
         itemNamed(r, "whoosh.wav").destRel, "03_audio/sfx");
-    check("без композиции - в _INBOX",
-        itemNamed(r, "loose.mp4").destRel, "01_assets/_INBOX/VIDEO");
+    check("без композиции - в отдельную папку",
+        itemNamed(r, "loose.mp4").destRel, "01_assets/00_UNUSED/VIDEO");
 
-    check("полный путь строится от рабочей папки",
+    /*
+     * Регресс на живой баг 2026-08-29: маршрут задаёт ПАПКУ, и без имени
+     * файла копия ложится файлом с именем "VIDEO" без расширения. After
+     * Effects такой файл перелинковать отказывается, а следующие файлы
+     * разводятся как "VIDEO (2)", "VIDEO (3)" — именно это и произошло.
+     */
+    check("полный путь включает имя файла",
         itemNamed(r, "intro.mp4").destPath,
-        "D:/Projects/2026/Soul/01_assets/Интро/VIDEO");
+        "D:/Projects/2026/Soul/01_assets/Интро/VIDEO/intro.mp4");
+    check("маршрут остаётся папкой",
+        itemNamed(r, "intro.mp4").destRel, "01_assets/Интро/VIDEO");
+    check("имя файла сохранено отдельно",
+        itemNamed(r, "intro.mp4").destFile, "intro.mp4");
+    check("аудио тоже с именем файла",
+        itemNamed(r, "track.wav").destPath,
+        "D:/Projects/2026/Soul/03_audio/music/track.wav");
 })();
 
 group("Секвенции");
@@ -236,6 +249,10 @@ group("Секвенции");
     check("распознана как секвенция", item.isSequence, true);
     check("папка названа по шаблону, а не по первому кадру",
         item.destRel, "01_assets/Интро/SEQUENCES/shot_a");
+    /* У секвенции назначение — именно папка: кадры кладёт слой копирования. */
+    check("у секвенции destPath — папка, без имени файла",
+        item.destPath, "D:/Projects/2026/Soul/01_assets/Интро/SEQUENCES/shot_a");
+    check("у секвенции имени файла нет", item.destFile, "");
     check("шаблон нумерации разобран",
         [item.sequence.prefix, item.sequence.padding, item.sequence.suffix],
         ["shot_a_", 5, ".png"]);
@@ -284,6 +301,58 @@ group("Границы группировки в панели");
 
     check("цель в панели для видео",
         itemNamed(r, "root.mp4").panelTarget, "02_ASSETS/Интро/VIDEO");
+})();
+
+group("Текущее положение в панели");
+(function () {
+    /*
+     * Регресс на живой баг 2026-08-29: без panelPath клиент каждый проход
+     * шлёт все элементы, хост честно пропускает их как no-op, проход считается
+     * выполненным и тут же запускает следующий. На живом проекте это дало
+     * 1873 прохода за 13 минут.
+     */
+    var s = buildProject();
+    var assets = s.project.add(new mock.FolderItem("02_ASSETS"));
+    var branch = s.project.add(new mock.FolderItem("Интро"), assets);
+    var video = s.project.add(new mock.FolderItem("VIDEO"), branch);
+
+    var atRoot = addFootage(s, "root.mp4", "E:/Downloads/root.mp4", [s.intro]);
+    var filed = addFootage(s, "filed.mp4", "E:/Downloads/filed.mp4", [s.intro]);
+    filed.parentFolder = video;
+
+    var r = auditOf(s);
+    check("в корне — пустой путь", itemNamed(r, "root.mp4").panelPath, "");
+    check("уже разложенный знает свой путь",
+        itemNamed(r, "filed.mp4").panelPath, "02_ASSETS/Интро/VIDEO");
+    check("разложенный уже на месте — перемещать нечего",
+        itemNamed(r, "filed.mp4").panelPath === itemNamed(r, "filed.mp4").panelTarget,
+        true);
+    check("лежащий в корне — перемещать надо",
+        itemNamed(r, "root.mp4").panelPath === itemNamed(r, "root.mp4").panelTarget,
+        false);
+
+    function compNamed(name) {
+        var i;
+        for (i = 0; i < r.comps.length; i++) {
+            if (r.comps[i].name === name) return r.comps[i];
+        }
+        return null;
+    }
+    check("рендерная в корне уже на месте",
+        compNamed("MAIN").panelPath === compNamed("MAIN").panelTarget, true);
+})();
+
+group("Неиспользуемые в панели");
+(function () {
+    var s = buildProject();
+    addFootage(s, "loose.mp4", "E:/Downloads/loose.mp4", []);
+    addFootage(s, "loose.png", "E:/Downloads/loose.png", []);
+    var r = auditOf(s);
+    check("неиспользуемое видео — в отдельную папку",
+        itemNamed(r, "loose.mp4").panelTarget, "02_ASSETS/00_UNUSED/VIDEO");
+    check("неиспользуемая картинка — туда же",
+        itemNamed(r, "loose.png").panelTarget, "02_ASSETS/00_UNUSED/IMAGES");
+    check("счётчик нераспределённых", r.counts.unassigned, 2);
 })();
 
 group("Цели композиций в панели");

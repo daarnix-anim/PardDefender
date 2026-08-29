@@ -420,3 +420,48 @@ html, body {
 
 .stats b { color: var(--text); font-weight: 600; }
 .stats .stat-session { color: var(--green); }
+
+/* ------------------------------------------------------------ unused block */
+
+.disk-project { color: var(--text-dim); font-size: 11px; }
+
+.unused-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid #5a4620;
+    border-left: 3px solid var(--yellow);
+    border-radius: 3px;
+    background: #2b2519;
+}
+
+.unused-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.unused-title { color: var(--yellow); font-weight: 600; }
+.unused-note { color: var(--text-dim); line-height: 1.4; }
+
+.danger-line {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 3px;
+    border: 1px solid #5c2d2d;
+    background: transparent;
+    color: var(--red);
+    font: inherit;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+
+.danger-line:hover:not(:disabled) { background: #3a2323; color: #fff; }
+.danger-line:disabled { opacity: 0.4; cursor: default; }
+.danger-line.confirming { border-color: var(--red); background: #3a2323; color: #fff; }
+
+/* Action icons in an issue row read better as glyphs than as punctuation. */
+.icon.act { font-size: 13px; }

@@ -35,7 +35,14 @@
 
     /* ------------------------------------------------------------- settings */
 
-    var INBOX_BRANCH = "_INBOX";
+    /*
+     * Footage that is not used in any composition gets its own folder rather
+     * than being mixed into the branches. Sorting first ("00_") puts it at the
+     * top of the panel and of Explorer, where it is impossible to miss - which
+     * is the whole point: an unused asset is usually one the owner imported and
+     * then forgot to actually place.
+     */
+    var INBOX_BRANCH = "00_UNUSED";
     var SHARED_BRANCH = "_SHARED";
     var METADATA_FOLDER = ".parddefender";
 

@@ -60,6 +60,21 @@ var PardVerify = (function () {
     };
 
     /*
+     * The manifest is also the answer to "did WE put this file here?" - and that
+     * question gates deletion. An asset the owner had already filed in the
+     * workspace before protection started has no manifest row, so cleanup can
+     * never reach it: it is their file, in their folder, and we did not create
+     * it.
+     */
+    api.recordFor = function (destPath) {
+        return manifest[key(destPath)] || null;
+    };
+
+    api.wasCopiedByUs = function (destPath) {
+        return !!manifest[key(destPath)];
+    };
+
+    /*
      * `items` is the audit's item list. Only entries already inside the
      * workspace are checked; everything else is the copy queue's problem, not
      * this module's.

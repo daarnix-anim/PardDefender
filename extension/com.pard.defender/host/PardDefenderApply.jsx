@@ -402,14 +402,86 @@
         return "OK|" + workspace;
     };
 
+    /*
+     * Selecting an item is what makes the Project panel scroll to it and
+     * highlight it. Everything already selected is cleared first, otherwise the
+     * panel keeps the old highlight and the owner cannot tell which row is the
+     * answer.
+     *
+     * There is no ExtendScript call that expands a collapsed folder, so the
+     * folder path is returned too: when After Effects does not scroll to a row
+     * buried inside a collapsed folder, the panel can at least say where to look.
+     */
     host.selectItemById = function (id) {
-        var item = host.findItemById(id);
+        var item = host.findItemById(id), i, current;
         if (!item) return "ERROR|The item is no longer in the project.";
         try {
-            app.project.selection = [];
+            current = app.project.selection || [];
+            for (i = 0; i < current.length; i++) {
+                try { current[i].selected = false; } catch (eDeselect) {}
+            }
             item.selected = true;
         } catch (e) { return "ERROR|" + str(e); }
-        return "OK|" + str(item.name);
+
+        var parts = [], folder = null, depth = 0;
+        try { folder = item.parentFolder; } catch (eFolder) { folder = null; }
+        while (folder && folder !== app.project.rootFolder && depth < 12) {
+            parts.unshift(str(folder.name));
+            try { folder = folder.parentFolder; } catch (eUp) { break; }
+            depth++;
+        }
+        return "OK|" + str(item.name) + "|" + parts.join("/");
+    };
+
+    /*
+     * Removes items from the Project panel after their files have been dealt
+     * with on disk. Only ids the client explicitly listed are touched, and each
+     * one is re-checked: an item that acquired a use since the audit is left
+     * alone rather than removed on a stale assumption.
+     */
+    host.removeItemsFromFile = function (planPath) {
+        var result = { ok: true, removed: 0, skipped: 0, error: "" };
+        var raw = host.readTextFile(planPath);
+        if (!raw) {
+            result.ok = false;
+            result.error = "The removal plan could not be read.";
+            return result;
+        }
+
+        var plan = host.jsonDecode(raw);
+        if (!plan || !host.isArrayLike(plan.ids)) {
+            result.ok = false;
+            result.error = "The removal plan is malformed.";
+            return result;
+        }
+
+        var undoStarted = false;
+        try {
+            app.beginUndoGroup("PardDefender: Remove unused footage");
+            undoStarted = true;
+
+            var i, item, usedIn;
+            for (i = 0; i < plan.ids.length; i++) {
+                item = host.findItemById(plan.ids[i]);
+                if (!item || !host.isFootageItem(item)) { result.skipped++; continue; }
+
+                try { usedIn = item.usedIn || []; } catch (eUsed) { usedIn = null; }
+                if (!usedIn || usedIn.length > 0) { result.skipped++; continue; }
+
+                try { item.remove(); result.removed++; }
+                catch (eRemove) { result.skipped++; }
+            }
+        } catch (error) {
+            result.ok = false;
+            result.error = str(error) + " (line " + str(error.line) + ")";
+        }
+
+        if (undoStarted) { try { app.endUndoGroup(); } catch (e2) {} }
+        return result;
+    };
+
+    host.removeItemsFromFileJson = function (planPath) {
+        return host.jsonEncode(host.removeItemsFromFile(planPath));
     };
 
     $.global.PardDefenderHost = host;
