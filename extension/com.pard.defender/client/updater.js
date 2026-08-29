@@ -3,19 +3,17 @@
  *
  * @map role: Проверка обновлений: сначала публичный фид, потом GitHub
  *           Releases. Белый список хостов, токен внутрь не зашивается.
- * @map status: partial
- * @map note: Репозиторий приватный, а публичный фид ещё не задан —
- *           проверка молча ничего не находит. Нужен feedUrl в
- *           %APPDATA%/PardDefender/update.json.
+ * @map status: ready
  *
  * Two sources are tried in order, first usable answer wins:
  *
  *   1. A release feed - one small public JSON containing nothing but a version
- *      number, a one-sentence summary and a link. This is the channel that works
- *      while the code repository is PRIVATE: the panel only needs to learn that
- *      1.1.0 exists, which does not require access to the source.
- *   2. The GitHub releases API for the repository itself. This answers only for
- *      a public repository - the unauthenticated API cannot see a private one.
+ *      number, a one-sentence summary and a link. Unset by default. It exists so
+ *      that a PRIVATE repository can still announce a version: learning that
+ *      1.1.0 exists does not require access to the source.
+ *   2. The GitHub releases API for the repository itself. The repository is
+ *      public as of 1.1.0, so this is the live path; the unauthenticated API
+ *      cannot see a private one, which is what source 1 is held in reserve for.
  *
  * No credential is ever embedded. A token shipped inside an extension is a token
  * published to everyone who installs it, so the private-repository case is
@@ -40,9 +38,9 @@ var PardUpdater = (function () {
     var REPO = "PardDefender";
 
     /*
-     * Set this to a public raw-JSON URL to enable update notices while the
-     * repository stays private; a public Gist raw link works well. Empty means
-     * the feed channel is skipped.
+     * Empty, and normally stays empty: the repository is public, so source 2
+     * answers. Set it to a public raw-JSON URL (a Gist raw link works well) if
+     * the repository is ever made private again.
      *
      * It can also be set without editing this file, by adding "feedUrl" to
      * %APPDATA%/PardDefender/update.json.
