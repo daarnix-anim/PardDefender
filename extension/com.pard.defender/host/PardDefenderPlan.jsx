@@ -94,7 +94,20 @@
                 sfx: "03_audio/sfx",
                 voice: "03_audio/voice"
             },
-            trustedPaths: []
+            trustedPaths: [],
+
+            /* Forgotten disabled layers. */
+            scanLayersEnabled: true,
+            /* [{ key, comment, at }] - a comment is required, see normalize. */
+            disabledLayerExceptions: [],
+            /* Keys the owner marked as junk. */
+            disabledLayerForgotten: [],
+            /*
+             * Item ids the owner sent to 00_UNUSED by hand. The audit treats
+             * them as unassigned even though a composition still uses them, so
+             * the file moves without the layer being touched.
+             */
+            forcedUnused: []
         };
     }
 
@@ -149,6 +162,42 @@
             for (k in defaults.routes) {
                 if (!defaults.routes.hasOwnProperty(k)) continue;
                 out.routes[k] = sanitizeRoute(raw.routes[k], defaults.routes[k]);
+            }
+        }
+
+        out.scanLayersEnabled = raw.scanLayersEnabled !== false;
+
+        /*
+         * An exception without a comment is refused rather than stored. Owner's
+         * decision, 2026-08-29: a month later nobody remembers why a layer was
+         * excluded, and an unexplained exception is worse than none.
+         */
+        out.disabledLayerExceptions = [];
+        if (isArrayLike(raw.disabledLayerExceptions)) {
+            for (i = 0; i < raw.disabledLayerExceptions.length && i < 500; i++) {
+                var entry = raw.disabledLayerExceptions[i];
+                if (!entry || !str(entry.key) || !host.trimText(str(entry.comment))) continue;
+                out.disabledLayerExceptions.push({
+                    key: str(entry.key),
+                    comment: host.trimText(str(entry.comment)).substring(0, 300),
+                    at: str(entry.at)
+                });
+            }
+        }
+
+        out.disabledLayerForgotten = [];
+        if (isArrayLike(raw.disabledLayerForgotten)) {
+            for (i = 0; i < raw.disabledLayerForgotten.length && i < 500; i++) {
+                if (str(raw.disabledLayerForgotten[i])) {
+                    out.disabledLayerForgotten.push(str(raw.disabledLayerForgotten[i]));
+                }
+            }
+        }
+
+        out.forcedUnused = [];
+        if (isArrayLike(raw.forcedUnused)) {
+            for (i = 0; i < raw.forcedUnused.length && i < 500; i++) {
+                if (str(raw.forcedUnused[i])) out.forcedUnused.push(str(raw.forcedUnused[i]));
             }
         }
 
@@ -308,7 +357,7 @@
             for (i = 1; i <= queue.numItems; i++) {
                 queueItem = queue.item(i);
                 comp = queueItem ? queueItem.comp : null;
-                if (comp && !marks[comp.id]) marks[comp.id] = "render-queue";
+                if (comp) marks[comp.id] = "render-queue";
             }
         } catch (e3) {}
 

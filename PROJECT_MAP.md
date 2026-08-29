@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **28** · связей: **53** · собрано: 2026-08-29 04:09
+Файлов: **29** · связей: **57** · собрано: 2026-08-29 04:22
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -23,7 +23,7 @@
 
 ### `PardDefenderAudit.jsx`
 
-`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 450 строк · работает
+`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 467 строк · работает
 
 Один проход по проекту → один JSON-отчёт: где что лежит, куда должно попасть на диске и в панели. Решений о времени не принимает.
 
@@ -37,9 +37,17 @@
 
 Используется в: `main.js`, `mock-ae.js`
 
+### `PardDefenderLayers.jsx`
+
+`extension/com.pard.defender/host/PardDefenderLayers.jsx` · 357 строк · работает
+
+Ищет выключенные и забытые слои в композициях и композиции, которые никуда не входят и не помечены. Отсекает всё, что выключено по делу.
+
+Используется в: `main.js`, `mock-ae.js`
+
 ### `PardDefenderPlan.jsx`
 
-`extension/com.pard.defender/host/PardDefenderPlan.jsx` · 430 строк · работает
+`extension/com.pard.defender/host/PardDefenderPlan.jsx` · 479 строк · работает
 
 Рабочая папка, настройки проекта и дерево композиций: какая композиция рендерная и к какой ветке относится элемент.
 
@@ -83,11 +91,11 @@
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 1567 строк · работает
+`extension/com.pard.defender/client/main.js` · 1886 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
-Использует: `disk-space.js`, `copy-queue.js`, `issues.js`, `stats.js`, `verify.js`, `housekeeping.js`, `updater.js`, `PardDefenderAudit.jsx`, `PardDefenderApply.jsx`, `PardDefenderCore.jsx`, `PardDefenderPlan.jsx`
+Использует: `disk-space.js`, `copy-queue.js`, `issues.js`, `stats.js`, `verify.js`, `housekeeping.js`, `updater.js`, `PardDefenderAudit.jsx`, `PardDefenderApply.jsx`, `PardDefenderLayers.jsx`, `PardDefenderCore.jsx`, `PardDefenderPlan.jsx`
 
 Используется в: `index.html`
 
@@ -125,7 +133,7 @@
 
 ### `index.html`
 
-`extension/com.pard.defender/client/index.html` · 119 строк · работает
+`extension/com.pard.defender/client/index.html` · 124 строк · работает
 
 Разметка панели: статус, настройки, неиспользуемые, проблемы, очередь, метрики, события. Порядок script-тегов задаёт загрузку модулей.  @map status: ready  @map layer: ui -->
 
@@ -133,7 +141,7 @@
 
 ### `styles.css`
 
-`extension/com.pard.defender/client/styles.css` · 469 строк · работает
+`extension/com.pard.defender/client/styles.css` · 555 строк · работает
 
 Оформление панели под тёмный интерфейс After Effects.  @map status: ready  @map layer: ui */
 
@@ -161,7 +169,7 @@
 
 ### `host.test.js`
 
-`tests/host.test.js` · 410 строк · работает
+`tests/host.test.js` · 546 строк · работает
 
 77 проверок хоста: рабочая папка, ветки, маршруты, секвенции, границы раскладки.
 
@@ -171,11 +179,11 @@
 
 ### `mock-ae.js`
 
-`tests/mock-ae.js` · 203 строк · работает
+`tests/mock-ae.js` · 282 строк · работает
 
 Мок объектной модели After Effects: настоящие .jsx загружаются через vm.
 
-Использует: `PardDefenderCore.jsx`, `PardDefenderPlan.jsx`, `PardDefenderAudit.jsx`, `PardDefenderApply.jsx`
+Использует: `PardDefenderCore.jsx`, `PardDefenderPlan.jsx`, `PardDefenderAudit.jsx`, `PardDefenderApply.jsx`, `PardDefenderLayers.jsx`
 
 Используется в: `host.test.js`
 
@@ -235,7 +243,7 @@
 
 ### `CLAUDE.md`
 
-`CLAUDE.md` · 251 строк · работает
+`CLAUDE.md` · 252 строк · работает
 
 Точка входа для любого агента и нового чата: правила, архитектура, команды.  @map status: ready  @map layer: docs -->
 
@@ -243,13 +251,13 @@
 
 ### `PROJECT_MAP.md`
 
-`PROJECT_MAP.md` · 256 строк · работает
+`PROJECT_MAP.md` · 264 строк · работает
 
 _Описание не задано._
 
 ### `README.md`
 
-`README.md` · 653 строк · работает
+`README.md` · 736 строк · работает
 
 Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
 

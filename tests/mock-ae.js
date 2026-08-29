@@ -33,20 +33,96 @@ Object.defineProperty(Item.prototype, "usedIn", {
             comp = project.items[i];
             if (!(comp instanceof CompItem)) continue;
             for (j = 0; j < comp.layers.length; j++) {
-                if (comp.layers[j] === this) { out.push(comp); break; }
+                if (comp.layers[j].source === this) { out.push(comp); break; }
             }
         }
         return out;
     }
 });
 
+/*
+ * Only the surface the scan touches: the switches that decide whether a
+ * disabled layer is forgotten or disabled on purpose, plus a property tree
+ * shallow enough to carry an effect layer-reference or an expression.
+ */
+function MockProperty(options) {
+    var o = options || {};
+    this.name = o.name || "prop";
+    this.expressionEnabled = o.expression ? true : false;
+    this.expression = o.expression || "";
+    this.propertyValueType = o.propertyValueType;
+    this.value = o.value;
+    this._children = o.children || [];
+}
+
+Object.defineProperty(MockProperty.prototype, "numProperties", {
+    get: function () { return this._children.length; }
+});
+
+MockProperty.prototype.property = function (i) { return this._children[i - 1]; };
+
+function MockLayer(comp, source, options) {
+    var o = options || {};
+    this.containingComp = comp;
+    this.source = source || null;
+    this.name = o.name || (source ? source.name : "layer");
+    this.enabled = o.enabled === undefined ? true : o.enabled;
+    this.adjustmentLayer = o.adjustmentLayer === true;
+    this.guideLayer = o.guideLayer === true;
+    this.isTrackMatte = o.isTrackMatte === true;
+    this.parent = o.parent || null;
+    this.label = o.label || 0;
+    this.selected = false;
+    this._children = [];
+}
+
+Object.defineProperty(MockLayer.prototype, "index", {
+    get: function () { return this.containingComp.layers.indexOf(this) + 1; }
+});
+
+Object.defineProperty(MockLayer.prototype, "numProperties", {
+    get: function () { return this._children.length; }
+});
+
+MockLayer.prototype.property = function (i) { return this._children[i - 1]; };
+
+/* An effect parameter that points at another layer by index - Set Matte,
+ * Displacement Map, Element 3D and the rest. */
+MockLayer.prototype.referenceLayer = function (index) {
+    this._children.push(new MockProperty({
+        name: "Layer",
+        propertyValueType: PropertyValueType.LAYER_INDEX,
+        value: index
+    }));
+    return this;
+};
+
+MockLayer.prototype.addExpression = function (text) {
+    this._children.push(new MockProperty({ name: "Opacity", expression: text }));
+    return this;
+};
+
+var PropertyValueType = { LAYER_INDEX: 6 };
+
 function CompItem(name) {
     Item.call(this, name);
     this.layers = [];
     this.duration = 10;
 }
+
 CompItem.prototype = Object.create(Item.prototype);
 CompItem.prototype.constructor = CompItem;
+/* Adds a layer whose source is the given item and returns the LAYER. */
+CompItem.prototype.addLayer = function (source, options) {
+    var layer = new MockLayer(this, source, options);
+    this.layers.push(layer);
+    return layer;
+};
+
+CompItem.prototype.layer = function (i) { return this.layers[i - 1]; };
+
+CompItem.prototype.openInViewer = function () { this._opened = true; return this; };
+
 
 Object.defineProperty(CompItem.prototype, "numLayers", {
     get: function () { return this.layers.length; }
@@ -172,6 +248,7 @@ function loadHost(projectPath) {
         FileSource: FileSource,
         SolidSource: SolidSource,
         PlaceholderSource: PlaceholderSource,
+        PropertyValueType: PropertyValueType,
         File: MockFile,
         Folder: MockFolder,
         console: console
@@ -181,8 +258,8 @@ function loadHost(projectPath) {
     vm.createContext(sandbox);
 
     var dir = path.join(__dirname, "..", "extension", "com.pard.defender", "host");
-    ["PardDefenderCore.jsx", "PardDefenderPlan.jsx",
-        "PardDefenderAudit.jsx", "PardDefenderApply.jsx"].forEach(function (name) {
+    ["PardDefenderCore.jsx", "PardDefenderPlan.jsx", "PardDefenderAudit.jsx",
+        "PardDefenderApply.jsx", "PardDefenderLayers.jsx"].forEach(function (name) {
         var code = fs.readFileSync(path.join(dir, name), "utf8");
         vm.runInContext(code, sandbox, { filename: name });
     });
@@ -195,6 +272,8 @@ module.exports = {
     CompItem: CompItem,
     FootageItem: FootageItem,
     FolderItem: FolderItem,
+    MockLayer: MockLayer,
+    PropertyValueType: PropertyValueType,
     virtualFiles: virtualFiles,
     registerFile: function (p, size) {
         virtualFiles[String(p).replace(/\\/g, "/").toLowerCase()] = size || 1024;

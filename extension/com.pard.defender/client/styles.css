@@ -466,3 +466,89 @@ html, body {
 
 /* Action icons in an issue row read better as glyphs than as punctuation. */
 .icon.act { font-size: 13px; }
+
+/* ------------------------------------------------------- forgotten layers */
+
+.layers {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface);
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.layer-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    min-width: 0;
+}
+
+.layer-row:last-child { border-bottom: none; }
+.layer-row.forgotten { opacity: 0.6; }
+
+.layer-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+
+.layer-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.layer-name:hover { color: #fff; text-decoration: underline; }
+
+.layer-where {
+    flex: none;
+    color: var(--text-dim);
+    font-size: 11px;
+    max-width: 48%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.layer-text {
+    color: var(--text-dim);
+    line-height: 1.4;
+    padding-left: 13px;
+}
+
+.layer-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding-left: 13px;
+}
+
+.layer-size { color: var(--grey); font-size: 11px; }
+
+.layer-more {
+    padding: 6px 8px;
+    color: var(--text-dim);
+    font-size: 11px;
+}
+
+/* The comment is mandatory, so the field takes the whole row when it opens. */
+.comment-box { display: flex; align-items: center; gap: 4px; width: 100%; }
+
+.comment-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 4px 6px;
+    background: var(--bg);
+    border: 1px solid var(--yellow);
+    border-radius: 2px;
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+}
+
+.comment-input:focus { outline: none; border-color: var(--blue); }

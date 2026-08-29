@@ -312,7 +312,17 @@
                 var ext = extensionOf(path);
                 var category = host.categoryForExtension(ext);
                 var isSequence = isSequenceItem(item, category);
-                var branch = host.branchForItem(item, ctx);
+                /*
+                 * An element the owner sent to 00_UNUSED by hand is treated as
+                 * unassigned even though a composition still uses it. That is
+                 * the whole point of the action: the FILE moves out of the way
+                 * while the layer stays exactly where it is.
+                 */
+                var forced = false, fu;
+                for (fu = 0; fu < settings.forcedUnused.length; fu++) {
+                    if (settings.forcedUnused[fu] === str(item.id)) { forced = true; break; }
+                }
+                var branch = forced ? "" : host.branchForItem(item, ctx);
                 var routeKey = routeKeyForItem(category, isSequence, item, settings);
 
                 var missing = false;
@@ -368,6 +378,13 @@
                     branch: branch,
                     branchResolved: effectiveBranch,
                     unassigned: branch === "",
+                    /*
+                     * Forced elements look unassigned so they file into
+                     * 00_UNUSED, but a composition still USES them - deleting
+                     * one would tear a hole in the project. The cleanup button
+                     * must be able to tell the two apart.
+                     */
+                    forcedUnused: forced,
                     size: size,
                     state: state,
                     destRel: destRel,

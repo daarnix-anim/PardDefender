@@ -24,7 +24,8 @@
         "PardDefenderCore.jsx",
         "PardDefenderPlan.jsx",
         "PardDefenderAudit.jsx",
-        "PardDefenderApply.jsx"
+        "PardDefenderApply.jsx",
+        "PardDefenderLayers.jsx"
     ];
 
     var TICK_MS = 5000;
@@ -50,6 +51,9 @@
         log: [],
         paused: null,
         update: null,
+        layers: null,
+        lastLayerScanAt: 0,
+        commentFor: "",
         version: "1.0.0",
         confirmCleanupUntil: 0
     };
@@ -670,6 +674,11 @@
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
             if (!item.unassigned) continue;
+            /*
+             * Sent to 00_UNUSED by hand, but a composition still uses it.
+             * Deleting one would tear a hole in the project.
+             */
+            if (item.forcedUnused) continue;
             if (item.state !== "protected") continue;
             record = PardVerify.recordFor(item.path);
             if (!record) continue;
@@ -763,6 +772,294 @@
         });
     }
 
+    /* ------------------------------------------------ forgotten layers */
+
+    /*
+     * The layer sweep is a separate host call rather than part of the audit: it
+     * walks every property of every composition that has a candidate, and the
+     * audit runs often enough that doubling its cost would be felt. It shares
+     * the audit's cadence but is skipped entirely while the setting is off.
+     */
+    function runLayerScan(callback) {
+        evalScript("$.global.PardDefenderHost.scanLayersToFile();", function (raw) {
+            var text = String(raw || "");
+            if (text.indexOf("OK|") !== 0) { callback(null); return; }
+            var body = PardCopyQueue.readText(text.substring(3));
+            if (!body) { callback(null); return; }
+            var parsed = null;
+            try { parsed = JSON.parse(body); } catch (e) { parsed = null; }
+            callback(parsed && parsed.ok ? parsed : null);
+        });
+    }
+
+    function layerFindings() {
+        return state.layers && state.layers.findings ? state.layers.findings : [];
+    }
+
+    function openFindingCount() {
+        var list = layerFindings(), i, count = 0;
+        for (i = 0; i < list.length; i++) {
+            if (list[i].status !== "forgotten") count++;
+        }
+        return count;
+    }
+
+    function settingsList(name) {
+        if (!state.settings) return [];
+        if (!state.settings[name]) state.settings[name] = [];
+        return state.settings[name];
+    }
+
+    function markForgotten(finding) {
+        var list = settingsList("disabledLayerForgotten"), i;
+        for (i = 0; i < list.length; i++) { if (list[i] === finding.key) return; }
+        list.push(finding.key);
+        finding.status = "forgotten";
+        invalidate("layers");
+        pushSettings({ disabledLayerForgotten: list });
+        log("Помечено забытым: " + (finding.layerName || finding.compName), "work");
+    }
+
+    function unmarkForgotten(finding) {
+        var list = settingsList("disabledLayerForgotten"), out = [], i;
+        for (i = 0; i < list.length; i++) {
+            if (list[i] !== finding.key) out.push(list[i]);
+        }
+        finding.status = "open";
+        invalidate("layers");
+        pushSettings({ disabledLayerForgotten: out });
+    }
+
+    /*
+     * An exception without a comment is refused. A month from now the comment is
+     * the only thing that explains why a layer is allowed to sit there switched
+     * off, and an unexplained exception is worse than no exception at all.
+     */
+    function addException(finding, comment) {
+        var text = String(comment || "").replace(/^\s+|\s+$/g, "");
+        if (!text) {
+            log("Исключение без комментария не сохраняется — напишите, почему.", "warn");
+            return false;
+        }
+        var list = settingsList("disabledLayerExceptions"), out = [], i;
+        for (i = 0; i < list.length; i++) {
+            if (list[i] && list[i].key !== finding.key) out.push(list[i]);
+        }
+        out.push({ key: finding.key, comment: text, at: new Date().toISOString() });
+
+        /* Drop it from the visible list immediately; the next scan agrees. */
+        var findings = layerFindings(), remaining = [];
+        for (i = 0; i < findings.length; i++) {
+            if (findings[i].key !== finding.key) remaining.push(findings[i]);
+        }
+        if (state.layers) state.layers.findings = remaining;
+
+        invalidate("layers");
+        pushSettings({ disabledLayerExceptions: out });
+        log("В исключения: " + (finding.layerName || finding.compName) + " — " + text, "good");
+        return true;
+    }
+
+    /*
+     * Moves the FILE into 00_UNUSED while leaving the layer exactly where it is.
+     * The audit honours forcedUnused by treating the element as unassigned; the
+     * composition is never touched.
+     */
+    function forceUnused(finding) {
+        if (!finding.itemId) return;
+        var list = settingsList("forcedUnused"), i;
+        for (i = 0; i < list.length; i++) { if (list[i] === finding.itemId) return; }
+        list.push(finding.itemId);
+        pushSettings({ forcedUnused: list });
+        log("Файл уедет в 00_UNUSED, слой в композиции остаётся: " +
+            (finding.itemName || finding.layerName), "work");
+        state.lastAuditAt = 0;
+    }
+
+    function revealFinding(finding) {
+        var call = finding.kind === "comp"
+            ? "$.global.PardDefenderHost.revealComp('" +
+                escapeForExtendScript(finding.compId) + "');"
+            : "$.global.PardDefenderHost.revealLayer('" +
+                escapeForExtendScript(finding.compId) + "', " +
+                (Number(finding.layerIndex) || 0) + ", '" +
+                escapeForExtendScript(finding.layerName) + "');";
+
+        evalScript(call, function (raw) {
+            var text = String(raw || "");
+            if (text.indexOf("ERROR|") === 0) {
+                var code = text.substring(6);
+                if (code === "COMP_GONE") {
+                    log("Композиции больше нет в проекте.", "warn");
+                } else if (code === "LAYER_GONE") {
+                    log("Слоя больше нет в композиции — список обновится.", "warn");
+                    state.lastLayerScanAt = 0;
+                } else {
+                    log(code, "bad");
+                }
+                return;
+            }
+            var parts = text.split("|");
+            log("Открыл композицию «" + (parts[1] || finding.compName) + "»" +
+                (parts[2] ? ", выделил слой «" + parts[2] + "»" : ""), "work");
+        });
+    }
+
+    function renderLayers() {
+        var list = layerFindings();
+        el.layersSection.hidden = list.length === 0;
+        if (!list.length) { state.commentFor = ""; return; }
+
+        var parts = [], i;
+        for (i = 0; i < list.length && i < 30; i++) {
+            parts.push(list[i].key + ":" + list[i].status);
+        }
+        var signature = parts.join(",") + "|" + (state.commentFor || "");
+        if (!changed("layers", signature)) return;
+
+        el.layersTitle.textContent = "ВЫКЛЮЧЕНО И ЗАБЫТО (" + openFindingCount() + ")";
+        el.layers.innerHTML = "";
+        for (i = 0; i < list.length && i < 30; i++) {
+            el.layers.appendChild(layerRow(list[i]));
+        }
+        if (state.layers && state.layers.truncated) {
+            var more = document.createElement("div");
+            more.className = "layer-more";
+            more.textContent = "Показаны первые находки — их слишком много для одного прохода.";
+            el.layers.appendChild(more);
+        }
+    }
+
+    function layerRow(finding) {
+        var row = document.createElement("div");
+        row.className = "layer-row" + (finding.status === "forgotten" ? " forgotten" : "");
+
+        var head = document.createElement("div");
+        head.className = "layer-head";
+
+        var dot = document.createElement("span");
+        dot.className = "dot " + (finding.status === "forgotten" ? "red" : "yellow");
+
+        var name = document.createElement("span");
+        name.className = "layer-name";
+        name.textContent = finding.kind === "comp"
+            ? finding.compName
+            : (finding.layerName || finding.itemName);
+        name.onclick = function () { revealFinding(finding); };
+
+        var where = document.createElement("span");
+        where.className = "layer-where";
+        where.textContent = finding.kind === "comp"
+            ? "композиция"
+            : finding.compName + " · слой " + finding.layerIndex;
+
+        head.appendChild(dot);
+        head.appendChild(name);
+        head.appendChild(where);
+
+        var text = document.createElement("div");
+        text.className = "layer-text";
+        if (finding.kind === "comp") {
+            text.textContent = "Никуда не входит и не помечена — похоже, это будущая " +
+                "рендерная композиция. Пометьте её цветом или исключите.";
+        } else {
+            text.textContent = finding.status === "forgotten"
+                ? "Помечен забытым."
+                : "Слой выключен. Он не корректирующий, не маска, не родитель и " +
+                  "ни на что не влияет — похоже, про него просто забыли.";
+        }
+
+        var foot = document.createElement("div");
+        foot.className = "layer-foot";
+
+        if (state.commentFor === finding.key) {
+            foot.appendChild(commentEditor(finding));
+        } else {
+            var actions = document.createElement("span");
+            actions.className = "issue-actions";
+
+            actions.appendChild(iconButton("🔎",
+                finding.kind === "comp"
+                    ? "Открыть композицию"
+                    : "Открыть композицию и выделить слой",
+                function () { revealFinding(finding); }));
+
+            if (finding.status === "forgotten") {
+                actions.appendChild(iconButton("↺", "Снять пометку «забытый»",
+                    function () { unmarkForgotten(finding); }));
+            } else {
+                actions.appendChild(iconButton("⚑", "Пометить забытым",
+                    function () { markForgotten(finding); }));
+            }
+
+            actions.appendChild(iconButton("✎", "В исключения — с комментарием",
+                function () {
+                    state.commentFor = finding.key;
+                    invalidate("layers");
+                    renderLayers();
+                }));
+
+            if (finding.kind === "layer" && finding.itemId) {
+                actions.appendChild(iconButton("↓",
+                    "Отправить файл в 00_UNUSED, не трогая слой в композиции",
+                    function () { forceUnused(finding); }));
+            }
+
+            var size = document.createElement("span");
+            size.className = "layer-size";
+            size.textContent = finding.size ? formatBytes(finding.size) : "";
+
+            foot.appendChild(size);
+            foot.appendChild(actions);
+        }
+
+        row.appendChild(head);
+        row.appendChild(text);
+        row.appendChild(foot);
+        return row;
+    }
+
+    function commentEditor(finding) {
+        var box = document.createElement("span");
+        box.className = "comment-box";
+
+        var input = document.createElement("input");
+        input.type = "text";
+        input.className = "comment-input";
+        input.placeholder = "Почему оставляем? Комментарий обязателен";
+        input.maxLength = 300;
+
+        var save = document.createElement("button");
+        save.className = "icon act";
+        save.textContent = "✓";
+        save.title = "Сохранить исключение";
+        save.onclick = function () {
+            if (addException(finding, input.value)) state.commentFor = "";
+        };
+
+        var cancel = document.createElement("button");
+        cancel.className = "icon act";
+        cancel.textContent = "✕";
+        cancel.title = "Отмена";
+        cancel.onclick = function () {
+            state.commentFor = "";
+            invalidate("layers");
+            renderLayers();
+        };
+
+        input.onkeydown = function (event) {
+            if (event.keyCode === 13) { save.onclick(); }
+            if (event.keyCode === 27) { cancel.onclick(); }
+        };
+
+        box.appendChild(input);
+        box.appendChild(save);
+        box.appendChild(cancel);
+        /* The row was just rebuilt, so focus has to be re-applied. */
+        window.setTimeout(function () { try { input.focus(); } catch (e) {} }, 0);
+        return box;
+    }
+
     /* ---------------------------------------------------------------- tick */
 
     function tick(force) {
@@ -792,6 +1089,7 @@
             refreshDisk();
             maybeWeigh();
             sweepProtected(false);
+            maybeScanLayers();
             render();
 
             if (state.settings && state.settings.autoEnabled && !state.paused) {
@@ -810,6 +1108,9 @@
         state.paused = null;
         state.weight = null;
         state.lastWeighAt = 0;
+        state.layers = null;
+        state.lastLayerScanAt = 0;
+        state.commentFor = "";
         state.projectPath = report.projectPath;
         painted = {};
 
@@ -832,6 +1133,21 @@
         PardDiskSpace.query(state.workspace, function (info) {
             state.disk = info;
             renderDisk();
+        });
+    }
+
+    function maybeScanLayers() {
+        if (!state.settings || state.settings.scanLayersEnabled === false) {
+            state.layers = null;
+            return;
+        }
+        if (!state.workspace) return;
+        if (Date.now() - state.lastLayerScanAt < state.settings.scanIntervalMs) return;
+        state.lastLayerScanAt = Date.now();
+        runLayerScan(function (report) {
+            state.layers = report;
+            invalidate("layers");
+            renderLayers();
         });
     }
 
@@ -966,6 +1282,7 @@
 
         renderDisk();
         renderUnused();
+        renderLayers();
         renderIssues();
         renderQueue();
         renderStats();
@@ -1423,6 +1740,8 @@
             version: "version", issuesSection: "issues-section",
             issuesTitle: "issues-title", issues: "issues",
             statsSection: "stats-section", stats: "stats", verifyAll: "verify-all",
+            layersSection: "layers-section", layersTitle: "layers-title",
+            layers: "layers",
             resume: "resume", update: "update", updateVersion: "update-version",
             updateSummary: "update-summary", updateOpen: "update-open",
             updateDismiss: "update-dismiss", unusedSection: "unused-section",

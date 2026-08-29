@@ -110,11 +110,13 @@ function buildProject(options) {
     var case1bg = p.add(new mock.CompItem("Кейс_1_фон"));
     var final = p.add(new mock.CompItem("Финал"));
 
-    main.layers = [intro, case1, final];
-    teaser.layers = [intro];
-    case1.layers = [case1bg];
+    main.addLayer(intro);
+    main.addLayer(case1);
+    main.addLayer(final);
+    teaser.addLayer(intro);
+    case1.addLayer(case1bg);
 
-    if (opts.teaserNested) { main.layers.push(teaser); }
+    if (opts.teaserNested) { main.addLayer(teaser); }
 
     return {
         env: env, project: p, host: env.host,
@@ -126,7 +128,7 @@ function buildProject(options) {
 function addFootage(scope, name, filePath, comps, options) {
     var item = scope.project.add(new mock.FootageItem(name, filePath, options));
     mock.registerFile(filePath, (options && options.size) || 4096);
-    (comps || []).forEach(function (c) { c.layers.push(item); });
+    (comps || []).forEach(function (c) { c.addLayer(item, options); });
     return item;
 }
 
@@ -398,6 +400,140 @@ group("Настройки");
         "01_assets/{branch}/IMAGES");
     check("корень диска не может быть доверенным путём",
         normalized.trustedPaths, ["D:/Stock/Library"]);
+})();
+
+group("Забытые выключенные слои");
+(function () {
+    /*
+     * Каждая проверка ниже — про ОТСЕЧЕНИЕ. Найти выключенный слой легко;
+     * ценность списка в том, чтобы в нём не было слоёв, выключенных по делу.
+     */
+    var s = buildProject();
+
+    function put(name, file, comp, layerOptions) {
+        var item = s.project.add(new mock.FootageItem(name, file, {}));
+        mock.registerFile(file, 2048);
+        return comp.addLayer(item, layerOptions);
+    }
+
+    var forgotten = put("forgotten.mp4", "E:/d/forgotten.mp4", s.intro, { enabled: false });
+    put("visible.mp4", "E:/d/visible.mp4", s.intro, { enabled: true });
+    put("adjust.mp4", "E:/d/adjust.mp4", s.intro, { enabled: false, adjustmentLayer: true });
+    put("matte.mp4", "E:/d/matte.mp4", s.intro, { enabled: false, isTrackMatte: true });
+    put("guide.mp4", "E:/d/guide.mp4", s.intro, { enabled: false, guideLayer: true });
+    put("pinned.mp4", "E:/d/pinned.mp4", s.intro, { enabled: false, label: 1 });
+
+    /* Выключен, но держит трансформацию другого слоя. */
+    var parentLayer = put("parent.mp4", "E:/d/parent.mp4", s.case1, { enabled: false });
+    put("child.mp4", "E:/d/child.mp4", s.case1, { enabled: true, parent: parentLayer });
+
+    /* Выключен, но его читает параметр эффекта (Set Matte и подобные). */
+    var effectTarget = put("setmatte.mp4", "E:/d/setmatte.mp4", s.final, { enabled: false });
+    var reader = put("reader.mp4", "E:/d/reader.mp4", s.final, { enabled: true });
+    reader.referenceLayer(effectTarget.index);
+
+    /* Выключен, но назван в выражении. */
+    put("expr.mp4", "E:/d/expr.mp4", s.case1bg, { enabled: false, name: "ExprSource" });
+    var writer = put("writer.mp4", "E:/d/writer.mp4", s.case1bg, { enabled: true });
+    writer.addExpression('thisComp.layer("ExprSource").transform.opacity');
+
+    var report = s.host.scanLayers();
+    var found = {};
+    report.findings.forEach(function (f) { found[f.layerName || f.compName] = f; });
+
+    check("выключенный и ничем не занятый — найден", !!found["forgotten.mp4"], true);
+    check("включённый — не найден", found["visible.mp4"] === undefined, true);
+    check("корректирующий — не найден", found["adjust.mp4"] === undefined, true);
+    check("трек-матовый (AE гасит его сам) — не найден",
+        found["matte.mp4"] === undefined, true);
+    check("направляющий — не найден", found["guide.mp4"] === undefined, true);
+    check("с меткой PIN — не найден", found["pinned.mp4"] === undefined, true);
+    check("родитель другого слоя — не найден", found["parent.mp4"] === undefined, true);
+    check("цель параметра эффекта — не найден",
+        found["setmatte.mp4"] === undefined, true);
+    check("назван в выражении — не найден", found["ExprSource"] === undefined, true);
+
+    check("в находке указана композиция", found["forgotten.mp4"].compName, "Интро");
+    check("и номер слоя", found["forgotten.mp4"].layerIndex, forgotten.index);
+    check("и путь к файлу", found["forgotten.mp4"].path, "E:/d/forgotten.mp4");
+    check("статус по умолчанию — не разобран", found["forgotten.mp4"].status, "open");
+})();
+
+group("Композиция, которая никуда не входит");
+(function () {
+    /* Решение владельца: это скорее будущая рендерная, которую забыли пометить
+     * цветом, чем шум — поэтому о ней сообщаем. */
+    var s = buildProject();
+    var comps = s.host.scanLayers().findings
+        .filter(function (f) { return f.kind === "comp"; })
+        .map(function (f) { return f.compName; })
+        .sort();
+    check("вершины дерева помечаются", comps, ["MAIN", "TEASER"]);
+
+    var s2 = buildProject();
+    s2.project.setRenderQueue([s2.teaser]);
+    var comps2 = s2.host.scanLayers().findings
+        .filter(function (f) { return f.kind === "comp"; })
+        .map(function (f) { return f.compName; });
+    check("та, что уже в очереди рендера, не беспокоит", comps2, ["MAIN"]);
+})();
+
+group("Исключение обязано нести комментарий");
+(function () {
+    var s = buildProject();
+    var item = s.project.add(new mock.FootageItem("spare.mp4", "E:/d/spare.mp4", {}));
+    mock.registerFile("E:/d/spare.mp4", 2048);
+    s.intro.addLayer(item, { enabled: false });
+
+    var before = s.host.scanLayers().findings
+        .filter(function (f) { return f.kind === "layer"; });
+    check("сначала находится", before.length, 1);
+    var key = before[0].key;
+
+    check("исключение без комментария отбрасывается",
+        s.host.normalizeSettings({
+            disabledLayerExceptions: [{ key: key, comment: "   " }]
+        }).disabledLayerExceptions.length, 0);
+
+    var settings = s.host.normalizeSettings({
+        disabledLayerExceptions: [{ key: key, comment: "запасной дубль, ждём правок" }]
+    });
+    check("с комментарием — сохраняется", settings.disabledLayerExceptions.length, 1);
+    check("комментарий сохранён дословно",
+        settings.disabledLayerExceptions[0].comment, "запасной дубль, ждём правок");
+
+    /* Подменяем источник настроек, чтобы не трогать диск. */
+    s.host.loadSettings = function () { return settings; };
+    var after = s.host.scanLayers().findings
+        .filter(function (f) { return f.kind === "layer"; });
+    check("исключённый слой из списка исчезает", after.length, 0);
+})();
+
+group("Отправка файла в 00_UNUSED без правки композиции");
+(function () {
+    var s = buildProject();
+    var item = s.project.add(new mock.FootageItem("keep.mp4", "E:/d/keep.mp4", {}));
+    mock.registerFile("E:/d/keep.mp4", 2048);
+    s.intro.addLayer(item, { enabled: false });
+
+    var row = itemNamed(auditOf(s), "keep.mp4");
+    check("обычно файл принадлежит своей ветке", row.branch, "Интро");
+    check("и не считается неиспользуемым", row.unassigned, false);
+
+    /* Владелец нажал «в 00_UNUSED». Слой в композиции не трогается. */
+    var forcedSettings = s.host.normalizeSettings({ forcedUnused: [String(item.id)] });
+    s.host.loadSettings = function () { return forcedSettings; };
+
+    var row2 = itemNamed(auditOf(s), "keep.mp4");
+    check("файл уезжает в 00_UNUSED", row2.destRel, "01_assets/00_UNUSED/VIDEO");
+    check("помечен как принудительный", row2.forcedUnused, true);
+    check("слой остался в композиции", s.intro.layers.length > 0, true);
+    /*
+     * Самое важное здесь: такой файл ВСЁ ЕЩЁ используется композицией.
+     * Кнопка очистки обязана отличать его от по-настоящему ненужного,
+     * иначе удаление порвёт проект.
+     */
+    check("и по-прежнему используется — удалять нельзя", item.usedIn.length > 0, true);
 })();
 
 /* ------------------------------------------------------------------ итог */

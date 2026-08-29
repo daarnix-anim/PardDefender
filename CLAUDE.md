@@ -48,7 +48,7 @@ CEP-расширение для After Effects. Копирует всё, что �
 ## Команды
 
 ```bash
-node tests/run-all.js      # 205 проверок, три набора; должно быть зелено
+node tests/run-all.js      # 231 проверка, три набора; должно быть зелено
 node tools/build-map.js    # пересобрать PROJECT_MAP.md и docs/project-map.html
 node tools/build-map.js --check   # проверить, что карта не устарела (CI/хук)
 INSTALL_DEV_WINDOWS.bat    # поставить расширение и включить PlayerDebugMode
@@ -77,6 +77,7 @@ PardDefenderCore.jsx    JSON для ES3, файлы, пути, классифи�
 PardDefenderPlan.jsx    рабочая папка, настройки, дерево композиций, ветки
 PardDefenderAudit.jsx   один проход → один JSON-отчёт (состояние, не решения)
 PardDefenderApply.jsx   relink и раскладка панели — единственные мутации
+PardDefenderLayers.jsx  забытые выключенные слои и непомеченные композиции
 ```
 
 Разделение ответственности жёсткое: **хост сообщает состояние, клиент решает,
