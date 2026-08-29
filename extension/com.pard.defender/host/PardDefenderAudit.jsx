@@ -263,8 +263,21 @@
                     report.renderComps.push({
                         id: id,
                         name: str(item.name),
-                        reason: ctx.renderMarks[item.id]
+                        reason: ctx.renderMarks[item.id],
+                        isSection: host.isSectionComp(item, settings)
                     });
+                    /*
+                     * A marked render composition still names a branch, and its
+                     * folder has to be recognised as one of ours. Without this
+                     * the folder is unmanaged: nothing could be filed out of it
+                     * later, and an emptied one would never be pruned. It only
+                     * shows up when the composition holds footage but no nested
+                     * comps - the nested comps would otherwise contribute the
+                     * name themselves.
+                     */
+                    if (host.isSectionComp(item, settings)) {
+                        branchSet[host.sanitizeSegment(item.name) || "COMP"] = true;
+                    }
                     /*
                      * A render composition belongs at the Project root and is
                      * never filed away. It is reported so the panel pass can move

@@ -1,6 +1,6 @@
 /*
  *
- * @map role: 148 проверок хоста: рабочая папка, ветки, маршруты,
+ * @map role: 163 проверки хоста: рабочая папка, ветки, маршруты,
  *           секвенции, границы раскладки.
  * @map status: ready
  * Exercises the parts of the host that decide WHERE something goes. These are
@@ -181,6 +181,134 @@ group("Метки-переопределения");
     var r2 = auditOf(s2);
     check("SECTION задаёт ветку вручную",
         itemNamed(r2, "bg.mp4").branch, "Кейс_1_фон");
+})();
+
+group("Фиолетовая метка на композиции в корне");
+(function () {
+    /*
+     * Живой случай владельца, 29.08.2026. Композиции RA_01, RO_00 и прочие
+     * лежат в корне проекта, помечены фиолетовым и никем не используются.
+     *
+     * До 1.2.2 метка не читалась ВООБЩЕ: проверка «композиция никем не
+     * используется → она рендерная» стояла раньше проверки цвета и выходила
+     * из функции. Дальше срабатывало правило «ветка = композиция сразу под
+     * рендерной», и веткой становился РЕБЁНОК, а не помеченный родитель.
+     * Композиции владельца оказывались навалом в корне 01_COMPS вместо папки
+     * с именем раздела, к которому они относятся.
+     *
+     * Проверки ниже описывают требование, а не то, что код делал раньше.
+     */
+    function build() {
+        var env = mock.loadHost("D:/Projects/2026/Soul/04_edit/Soul.aep");
+        var p = env.project;
+        var ra01 = p.add(new mock.CompItem("RA_01"));
+        var ra02 = p.add(new mock.CompItem("RA_02"));
+        ra01.label = 10;
+        ra02.label = 10;
+        var inner = p.add(new mock.CompItem("logo_prob4 Comp 1"));
+        var deep = p.add(new mock.CompItem("glass_waves"));
+        ra01.addLayer(inner);
+        inner.addLayer(deep);
+        return { env: env, project: p, host: env.host,
+            ra01: ra01, ra02: ra02, inner: inner, deep: deep };
+    }
+
+    function put(s, name, path, comps) {
+        var item = s.project.add(new mock.FootageItem(name, path, {}));
+        mock.registerFile(path, 4096);
+        (comps || []).forEach(function (c) { c.addLayer(item); });
+        return item;
+    }
+
+    var s = build();
+    put(s, "shot.mp4", "E:/raw/shot.mp4", [s.inner]);
+    put(s, "direct.mp4", "E:/raw/direct.mp4", [s.ra01]);
+    put(s, "common.mp4", "E:/raw/common.mp4", [s.ra01, s.ra02]);
+    var r = s.host.audit();
+
+    function compNamed(report, name) {
+        var i;
+        for (i = 0; i < report.comps.length; i++) {
+            if (report.comps[i].name === name) return report.comps[i];
+        }
+        return null;
+    }
+
+    /* Ответ владельца: помеченная композиция остаётся в корне. Она же
+     * рендерная, а в корне лежит только то, что рендерится. */
+    check("сама фиолетовая остаётся в корне",
+        compNamed(r, "RA_01").panelTarget, "");
+    check("и по-прежнему считается рендерной",
+        r.renderComps.map(function (c) { return c.name; }).sort(),
+        ["RA_01", "RA_02"]);
+    check("но отмечена как раздел",
+        r.renderComps[0].isSection, true);
+
+    /* Главное требование. */
+    check("композиция внутри неё уезжает в папку раздела",
+        compNamed(r, "logo_prob4 Comp 1").panelTarget, "01_COMPS/RA_01");
+    check("и вложенная на два уровня — туда же",
+        compNamed(r, "glass_waves").panelTarget, "01_COMPS/RA_01");
+
+    check("футаж внутри раздела — в папку раздела",
+        itemNamed(r, "shot.mp4").destRel, "01_assets/RA_01/VIDEO");
+    /* Раньше уезжал в _SHARED: «футаж на рендерной композиции ветки не
+     * имеет». Метка — это ровно владелец, говорящий, какая это папка. */
+    check("футаж прямо на помеченной композиции — тоже её",
+        itemNamed(r, "direct.mp4").destRel, "01_assets/RA_01/VIDEO");
+    check("а тот, что в двух разделах сразу — в общую папку",
+        itemNamed(r, "common.mp4").destRel, "01_assets/_SHARED/VIDEO");
+
+    /* Папка раздела должна считаться нашей, иначе панель не сможет ничего из
+     * неё вынести, а опустевшую — убрать. */
+    check("имя раздела попадает в список веток",
+        r.branches.indexOf("RA_01") >= 0, true);
+
+    /* Раздел, у которого только футаж и ни одной вложенной композиции: имя
+     * ветки некому подсказать, кроме самой метки. */
+    var s2 = build();
+    put(s2, "only.mp4", "E:/raw/only.mp4", [s2.ra02]);
+    var r2 = s2.host.audit();
+    check("раздел без вложенных композиций тоже даёт ветку",
+        r2.branches.indexOf("RA_02") >= 0, true);
+    check("и его футаж лежит в ней",
+        itemNamed(r2, "only.mp4").destRel, "01_assets/RA_02/VIDEO");
+})();
+
+group("Фиолетовая метка перебивает автоматику, но не отменяет её");
+(function () {
+    /*
+     * Ответ владельца: где метки нет — работает прежнее правило «ветка =
+     * композиция сразу под рендерной». Оба уживаются, фиолетовый выигрывает
+     * там, где он есть.
+     */
+    var s = buildProject();
+    addFootage(s, "auto.mp4", "E:/Downloads/auto.mp4", [s.case1bg]);
+    check("без метки ветка определяется сама",
+        itemNamed(auditOf(s), "auto.mp4").branch, "Кейс_1");
+
+    /* Та же расстановка, но третий уровень помечен. */
+    var s2 = buildProject();
+    s2.case1bg.label = 10;
+    addFootage(s2, "auto.mp4", "E:/Downloads/auto.mp4", [s2.case1bg]);
+    check("метка перебивает автоматику",
+        itemNamed(auditOf(s2), "auto.mp4").branch, "Кейс_1_фон");
+
+    /* Метка на промежуточном уровне забирает всё, что ниже. */
+    var s3 = buildProject();
+    s3.case1.label = 10;
+    addFootage(s3, "deep.mp4", "E:/Downloads/deep.mp4", [s3.case1bg]);
+    check("ближайшая метка сверху выигрывает на любой глубине",
+        itemNamed(auditOf(s3), "deep.mp4").branch, "Кейс_1");
+
+    /* Выключить метки целиком - и всё считается по-старому. */
+    var s4 = buildProject();
+    s4.case1bg.label = 10;
+    var off = s4.host.normalizeSettings({ sectionLabel: 0 });
+    s4.host.loadSettings = function () { return off; };
+    addFootage(s4, "auto.mp4", "E:/Downloads/auto.mp4", [s4.case1bg]);
+    check("sectionLabel=0 полностью отключает метку",
+        itemNamed(auditOf(s4), "auto.mp4").branch, "Кейс_1");
 })();
 
 group("Ветки для футажа");

@@ -420,11 +420,35 @@
     }
 
     /*
-     * The branch of a composition is the composition directly below a render
-     * composition on the path back up the tree. For the owner's usual shape -
-     * MAIN -> section -> detail - that resolves to the section name, at any
-     * depth, without guessing. A section label short-circuits the walk so the
-     * owner can name a branch at a level the rule would not have picked.
+     * The section label - purple by default - names a branch by hand. It is
+     * checked BEFORE anything else, including whether the composition is a
+     * render comp.
+     *
+     * That order is the whole point, and getting it wrong is what 1.2.1 and
+     * earlier did. A composition marked purple and sitting at the Project root
+     * is used by nobody, so it was classified as a render comp first and the
+     * label was never read at all. The branch rule then named the branch after
+     * the composition one level BELOW it - the child, not the marked parent -
+     * and the owner's own comps ended up loose at the top of 01_COMPS instead
+     * of inside a folder named after the section they belong to.
+     */
+    function isSectionComp(comp, settings) {
+        if (!comp || !settings || !(settings.sectionLabel > 0)) return false;
+        try { return comp.label === settings.sectionLabel; } catch (e) { return false; }
+    }
+
+    host.isSectionComp = isSectionComp;
+
+    function nameOfComp(comp) {
+        return host.sanitizeSegment(comp.name) || "COMP";
+    }
+
+    /*
+     * The branch of a composition is the nearest section label above it, and
+     * failing that the composition directly below a render composition on the
+     * path back up the tree. For the owner's usual shape - MAIN -> section ->
+     * detail - the automatic rule resolves to the section name at any depth
+     * without guessing; the label wins wherever it is present.
      */
     function branchesForComp(comp, ctx, depth) {
         var key = "c" + comp.id, cached = ctx.memo[key];
@@ -434,17 +458,15 @@
         ctx.memo[key] = {};
         var out = {}, parents, i, parent, inherited, k;
 
-        if (ctx.renderMarks[comp.id]) { ctx.memo[key] = out; return out; }
-
-        if (ctx.settings.sectionLabel > 0) {
-            var label = 0;
-            try { label = comp.label; } catch (e) { label = 0; }
-            if (label === ctx.settings.sectionLabel) {
-                out[host.sanitizeSegment(comp.name) || "COMP"] = true;
-                ctx.memo[key] = out;
-                return out;
-            }
+        /* Before the render-comp test, deliberately: a marked composition names
+         * its branch whether or not anything renders it. */
+        if (isSectionComp(comp, ctx.settings)) {
+            out[nameOfComp(comp)] = true;
+            ctx.memo[key] = out;
+            return out;
         }
+
+        if (ctx.renderMarks[comp.id]) { ctx.memo[key] = out; return out; }
 
         parents = compParents(comp);
         if (parents.length === 0) {
@@ -456,8 +478,18 @@
 
         for (i = 0; i < parents.length; i++) {
             parent = parents[i];
+            /*
+             * A marked parent names the branch itself, at any depth and even
+             * when it is also the render composition. Checked before the
+             * render-comp case, which would otherwise make THIS composition the
+             * branch and lose the name the owner chose.
+             */
+            if (isSectionComp(parent, ctx.settings)) {
+                out[nameOfComp(parent)] = true;
+                continue;
+            }
             if (ctx.renderMarks[parent.id]) {
-                out[host.sanitizeSegment(comp.name) || "COMP"] = true;
+                out[nameOfComp(comp)] = true;
                 continue;
             }
             inherited = branchesForComp(parent, ctx, depth + 1);
@@ -488,11 +520,18 @@
         for (i = 0; i < usedIn.length; i++) {
             comp = usedIn[i];
             if (!host.isCompItem(comp)) continue;
+            /* Footage laid straight onto a marked composition belongs to it -
+             * the label is exactly the owner saying which folder it is. */
+            if (isSectionComp(comp, ctx.settings)) {
+                out[nameOfComp(comp)] = true;
+                continue;
+            }
             if (ctx.renderMarks[comp.id]) {
                 /*
-                 * Footage dropped straight onto a render composition has no
-                 * section to belong to. Naming the folder after the render comp
-                 * would nest the whole project one level deeper for nothing.
+                 * Footage dropped straight onto an UNMARKED render composition
+                 * has no section to belong to. Naming the folder after the
+                 * render comp would nest the whole project one level deeper
+                 * for nothing.
                  */
                 out[SHARED_BRANCH] = true;
                 continue;
