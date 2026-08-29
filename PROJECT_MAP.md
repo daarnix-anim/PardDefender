@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **29** · связей: **57** · собрано: 2026-08-29 04:41
+Файлов: **29** · связей: **57** · собрано: 2026-08-29 08:34
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -11,7 +11,7 @@
 
 ### `PardDefenderApply.jsx`
 
-`extension/com.pard.defender/host/PardDefenderApply.jsx` · 493 строк · работает
+`extension/com.pard.defender/host/PardDefenderApply.jsx` · 560 строк · работает
 
 Две мутирующие операции: перелинковка на проверенную копию с сохранением интерпретации и раскладка панели проекта.
 
@@ -19,7 +19,7 @@
 
 ### `PardDefenderAudit.jsx`
 
-`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 467 строк · работает
+`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 631 строк · работает
 
 Один проход по проекту → один JSON-отчёт: где что лежит, куда должно попасть на диске и в панели. Решений о времени не принимает.
 
@@ -27,7 +27,7 @@
 
 ### `PardDefenderCore.jsx`
 
-`extension/com.pard.defender/host/PardDefenderCore.jsx` · 371 строк · работает
+`extension/com.pard.defender/host/PardDefenderCore.jsx` · 384 строк · работает
 
 Основа хоста: свой JSON для ES3, чтение и запись файлов, работа с путями, санитация имён папок и классификация форматов по расширению.
 
@@ -35,7 +35,7 @@
 
 ### `PardDefenderLayers.jsx`
 
-`extension/com.pard.defender/host/PardDefenderLayers.jsx` · 357 строк · работает
+`extension/com.pard.defender/host/PardDefenderLayers.jsx` · 369 строк · работает
 
 Ищет выключенные и забытые слои в композициях и композиции, которые никуда не входят и не помечены. Отсекает всё, что выключено по делу.
 
@@ -43,7 +43,7 @@
 
 ### `PardDefenderPlan.jsx`
 
-`extension/com.pard.defender/host/PardDefenderPlan.jsx` · 479 строк · работает
+`extension/com.pard.defender/host/PardDefenderPlan.jsx` · 523 строк · работает
 
 Рабочая папка, настройки проекта и дерево композиций: какая композиция рендерная и к какой ветке относится элемент.
 
@@ -53,7 +53,7 @@
 
 ### `copy-queue.js`
 
-`extension/com.pard.defender/client/copy-queue.js` · 603 строк · работает
+`extension/com.pard.defender/client/copy-queue.js` · 620 строк · работает
 
 Проверенное копирование: потоковая запись в .pdpart, сверка размера, дедуп по SHA-256, откат и коды ошибок. Оригинал не трогается никогда.
 
@@ -69,7 +69,7 @@
 
 ### `housekeeping.js`
 
-`extension/com.pard.defender/client/housekeeping.js` · 237 строк · работает
+`extension/com.pard.defender/client/housekeeping.js` · 367 строк · работает
 
 Вес проекта на диске, удаление в Корзину и открытие файла в проводнике.
 
@@ -87,17 +87,17 @@
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 1886 строк · работает
+`extension/com.pard.defender/client/main.js` · 2417 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
-Использует: `disk-space.js`, `copy-queue.js`, `issues.js`, `stats.js`, `verify.js`, `housekeeping.js`, `updater.js`, `PardDefenderAudit.jsx`, `PardDefenderApply.jsx`, `PardDefenderLayers.jsx`, `PardDefenderCore.jsx`, `PardDefenderPlan.jsx`
+Использует: `disk-space.js`, `copy-queue.js`, `issues.js`, `stats.js`, `housekeeping.js`, `verify.js`, `updater.js`, `PardDefenderAudit.jsx`, `PardDefenderApply.jsx`, `PardDefenderLayers.jsx`, `PardDefenderCore.jsx`, `PardDefenderPlan.jsx`
 
 Используется в: `index.html`
 
 ### `stats.js`
 
-`extension/com.pard.defender/client/stats.js` · 134 строк · работает
+`extension/com.pard.defender/client/stats.js` · 137 строк · работает
 
 Накопительные счётчики по проекту и дельта за текущую сессию.
 
@@ -129,7 +129,7 @@
 
 ### `index.html`
 
-`extension/com.pard.defender/client/index.html` · 124 строк · работает
+`extension/com.pard.defender/client/index.html` · 149 строк · работает
 
 Разметка панели: статус, настройки, неиспользуемые, проблемы, очередь, метрики, события. Порядок script-тегов задаёт загрузку модулей.  @map status: ready  @map layer: ui -->
 
@@ -137,7 +137,7 @@
 
 ### `styles.css`
 
-`extension/com.pard.defender/client/styles.css` · 555 строк · работает
+`extension/com.pard.defender/client/styles.css` · 660 строк · работает
 
 Оформление панели под тёмный интерфейс After Effects.  @map status: ready  @map layer: ui */
 
@@ -155,9 +155,9 @@
 
 ### `copy-queue.test.js`
 
-`tests/copy-queue.test.js` · 268 строк · работает
+`tests/copy-queue.test.js` · 313 строк · работает
 
-24 проверки копирования на настоящих файлах во временной папке.
+42 проверки копирования на настоящих файлах во временной папке.
 
 Использует: `copy-queue.js`
 
@@ -165,9 +165,9 @@
 
 ### `host.test.js`
 
-`tests/host.test.js` · 546 строк · работает
+`tests/host.test.js` · 782 строк · работает
 
-77 проверок хоста: рабочая папка, ветки, маршруты, секвенции, границы раскладки.
+148 проверок хоста: рабочая папка, ветки, маршруты, секвенции, границы раскладки.
 
 Использует: `mock-ae.js`
 
@@ -175,7 +175,7 @@
 
 ### `mock-ae.js`
 
-`tests/mock-ae.js` · 282 строк · работает
+`tests/mock-ae.js` · 352 строк · работает
 
 Мок объектной модели After Effects: настоящие .jsx загружаются через vm.
 
@@ -193,9 +193,9 @@
 
 ### `runtime.test.js`
 
-`tests/runtime.test.js` · 452 строк · работает
+`tests/runtime.test.js` · 498 строк · работает
 
-82 проверки клиентских модулей: ошибки, метрики, сверка, обновления.
+102 проверки клиентских модулей: ошибки, метрики, сверка, обновления.
 
 Использует: `issues.js`, `stats.js`, `verify.js`, `updater.js`, `copy-queue.js`, `housekeeping.js`
 
@@ -205,7 +205,7 @@
 
 ### `build-map.js`
 
-`tools/build-map.js` · 479 строк · работает
+`tools/build-map.js` · 492 строк · работает
 
 Строит карту проекта из самого кода — граф связей выводится из исходников, а не ведётся руками
 
@@ -239,7 +239,7 @@
 
 ### `CLAUDE.md`
 
-`CLAUDE.md` · 252 строк · работает
+`CLAUDE.md` · 261 строк · работает
 
 Точка входа для любого агента и нового чата: правила, архитектура, команды.  @map status: ready  @map layer: docs -->
 
@@ -253,7 +253,7 @@ _Описание не задано._
 
 ### `README.md`
 
-`README.md` · 738 строк · работает
+`README.md` · 840 строк · работает
 
 Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
 

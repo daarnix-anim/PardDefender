@@ -233,6 +233,18 @@
                     }
                 }
 
+                /*
+                 * A composition the owner has already marked forgotten answers
+                 * for everything inside it. Listing its disabled layers as well
+                 * would turn one decision into a dozen rows about a composition
+                 * that is on its way out anyway. Owner's decision, 2026-08-29.
+                 *
+                 * Only "forgotten" does this. An EXCEPTION means the opposite -
+                 * the composition is fine and should stop being mentioned - and
+                 * that says nothing about the layers inside it.
+                 */
+                if (listHas(settings.disabledLayerForgotten, compKey(comp))) continue;
+
                 /* Cheap pass first: is there anything in this comp worth the
                  * expensive reference sweep? */
                 var candidates = [];

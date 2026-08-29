@@ -34,6 +34,9 @@ var PardStats = (function () {
             sequencesProcessed: 0,
             panelMoves: 0,
             foldersPruned: 0,
+            /* Old copies the legacy pass sent to the Recycle Bin after their
+             * replacement had been verified and relinked. */
+            filesRelocated: 0,
             errorsTotal: 0,
             passes: 0
         };

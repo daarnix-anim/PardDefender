@@ -89,6 +89,14 @@
                 data: "01_assets/{branch}/DATA",
                 project: "01_assets/{branch}/PROJECTS",
                 other: "01_assets/{branch}/OTHER",
+                /*
+                 * A proxy is filed by the composition it serves, not by its
+                 * format: the owner asked for it to sit with everything else
+                 * belonging to that branch. It is deliberately its own folder
+                 * rather than mixed in with VIDEO - a proxy that looks like the
+                 * real footage is how the wrong file ends up in a master.
+                 */
+                proxy: "01_assets/{branch}/PROXY",
                 sequence: "01_assets/{branch}/SEQUENCES/{name}",
                 music: "03_audio/music",
                 sfx: "03_audio/sfx",
@@ -107,7 +115,28 @@
              * them as unassigned even though a composition still uses them, so
              * the file moves without the layer being touched.
              */
-            forcedUnused: []
+            forcedUnused: [],
+
+            /* The colour-label legend at the top of the panel, once dismissed. */
+            legendOpen: true,
+
+            /*
+             * Legacy projects - the ones where everything was dumped in the
+             * workspace root before PardDefender existed. The owner gets one
+             * answer per project and it is remembered here:
+             *
+             *   adoptedItems      ids to leave exactly where they are, on disk
+             *                     and in the panel, for good;
+             *   legacyRedistribute  keep moving misplaced files into their
+             *                     routes until none are left;
+             *   legacyRecycleOld  after a misplaced file has been copied to its
+             *                     route AND the project repointed at the copy,
+             *                     send the leftover to the Recycle Bin. Off
+             *                     leaves both, which doubles the project on disk.
+             */
+            adoptedItems: [],
+            legacyRedistribute: false,
+            legacyRecycleOld: true
         };
     }
 
@@ -198,6 +227,21 @@
         if (isArrayLike(raw.forcedUnused)) {
             for (i = 0; i < raw.forcedUnused.length && i < 500; i++) {
                 if (str(raw.forcedUnused[i])) out.forcedUnused.push(str(raw.forcedUnused[i]));
+            }
+        }
+
+        out.legendOpen = raw.legendOpen !== false;
+        out.legacyRedistribute = raw.legacyRedistribute === true;
+        out.legacyRecycleOld = raw.legacyRecycleOld !== false;
+
+        /*
+         * A legacy project can hold thousands of elements, so this list is
+         * allowed to be far longer than the hand-curated ones above.
+         */
+        out.adoptedItems = [];
+        if (isArrayLike(raw.adoptedItems)) {
+            for (i = 0; i < raw.adoptedItems.length && i < 5000; i++) {
+                if (str(raw.adoptedItems[i])) out.adoptedItems.push(str(raw.adoptedItems[i]));
             }
         }
 

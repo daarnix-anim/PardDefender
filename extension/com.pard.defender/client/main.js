@@ -55,7 +55,13 @@
         lastLayerScanAt: 0,
         commentFor: "",
         version: "1.0.0",
-        confirmCleanupUntil: 0
+        confirmCleanupUntil: 0,
+        confirmAdoptUntil: 0,
+        confirmRedistUntil: 0,
+        cloud: null,
+        pin: null,
+        pinBusy: false,
+        lastPinCheckAt: 0
     };
 
     var el = {};
@@ -201,12 +207,20 @@
         return record;
     }
 
+    /*
+     * The audit's own key, because one element can produce two rows - itself
+     * and its proxy - and both need their own settle clock and their own issue
+     * record. Older reports had no key; the item id is the right fallback.
+     */
+    function keyOf(item) { return item.key || ("i" + item.id); }
+
     function refreshTracking(report) {
-        var alive = {}, i, item;
+        var alive = {}, i, item, key;
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
-            alive["i" + item.id] = true;
-            trackItem("i" + item.id, item.size);
+            key = keyOf(item);
+            alive[key] = true;
+            trackItem(key, item.size);
         }
         for (i = 0; i < report.comps.length; i++) {
             alive["c" + report.comps[i].id] = true;
@@ -249,15 +263,25 @@
 
     /* ------------------------------------------------------------ the pass */
 
+    /*
+     * A file already inside the workspace but in the wrong folder. Normally
+     * untouchable - the whole design says a file's place on disk is decided
+     * once - but a legacy project is exactly the case that rule was not written
+     * for, and the owner has to ask for this explicitly, per project.
+     */
+    function relocating() {
+        return !!(state.settings && state.settings.legacyRedistribute);
+    }
+
     function buildCopyTasks(report, force) {
-        var tasks = [], i, item, key;
+        var tasks = [], i, item, key, misplaced;
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
-            if (item.state !== "pending") continue;
-            if (item.hasProxy) continue;
+            misplaced = relocating() && item.misplaced === true;
+            if (item.state !== "pending" && !misplaced) continue;
             if (!item.destPath) continue;
 
-            key = "i" + item.id;
+            key = keyOf(item);
             /*
              * An element with a recorded failure only comes back when its
              * backoff has expired. Without this, a locked file would be retried
@@ -265,10 +289,19 @@
              */
             if (!force && !PardIssues.isDue(key)) continue;
             if (force && PardIssues.get(key)) PardIssues.retryNow(key);
-            if (!readyToCopy(key, item.unassigned, force)) continue;
+            /*
+             * A misplaced file needs no settle delay. The delay exists to wait
+             * for bytes still arriving from an import; this file has been in
+             * the project for months and After Effects is already pointing at
+             * it. Making the owner wait ten minutes per batch would turn a
+             * legacy pass into an afternoon.
+             */
+            if (!readyToCopy(key, item.unassigned, force || misplaced)) continue;
 
             tasks.push({
+                key: key,
                 id: item.id,
+                isProxy: item.isProxy === true,
                 name: item.name,
                 sourcePath: item.path,
                 destPath: item.destPath,
@@ -276,7 +309,14 @@
                 sequence: item.sequence,
                 size: item.size,
                 branch: item.branchResolved,
-                category: item.category
+                category: item.category,
+                /*
+                 * Set only for the legacy pass. It means: this source is itself
+                 * inside the workspace, so once the copy is verified AND the
+                 * project points at it, the leftover is a duplicate rather than
+                 * somebody's original.
+                 */
+                relocated: misplaced
             });
             if (tasks.length >= state.settings.maxItemsPerPass) break;
         }
@@ -303,7 +343,7 @@
             if (!item.panelEligible) continue;
             if (item.state === "missing") continue;
             if (item.panelPath === item.panelTarget) continue;
-            if (!readyToFile("i" + item.id, force)) continue;
+            if (!readyToFile(keyOf(item), force)) continue;
             moves.push({ id: item.id, target: item.panelTarget });
         }
         return moves;
@@ -314,21 +354,34 @@
     function journalTasks(tasks) {
         var lines = [], i, now = new Date().toISOString();
         for (i = 0; i < tasks.length; i++) {
-            lines.push([now, tasks[i].id, tasks[i].sourcePath, tasks[i].destPath].join("\t"));
+            /* Column two is the element KEY, not the bare id: an element and its
+             * proxy are two rows about the same id. Only the destination column
+             * is ever read back, by recoverJournal. */
+            lines.push([now, tasks[i].key, tasks[i].sourcePath,
+                tasks[i].destPath].join("\t"));
         }
         PardCopyQueue.writeText(metadataDir() + "/pending.tsv", lines.join("\n") + "\n");
     }
 
+    function taskMap(tasks) {
+        var byKey = {}, i;
+        for (i = 0; i < tasks.length; i++) byKey[tasks[i].key] = tasks[i];
+        return byKey;
+    }
+
+    function resultTask(byKey, result) {
+        return byKey[result.key || ("i" + result.id)] || null;
+    }
+
     function recordManifest(tasks, results) {
-        var lines = [], i, r, task, byId = {};
-        for (i = 0; i < tasks.length; i++) byId[tasks[i].id] = tasks[i];
+        var lines = [], i, r, task, byKey = taskMap(tasks);
         for (i = 0; i < results.length; i++) {
             r = results[i];
             if (!r.ok) continue;
-            task = byId[r.id];
+            task = resultTask(byKey, r);
             if (!task) continue;
             lines.push([
-                new Date().toISOString(), r.id, task.sourcePath, task.size,
+                new Date().toISOString(), task.key, task.sourcePath, task.size,
                 r.destPath, task.branch, task.category
             ].join("\t"));
         }
@@ -338,15 +391,16 @@
     }
 
     function commitRelink(tasks, results, callback) {
-        var entries = [], i, r, task, byId = {};
-        for (i = 0; i < tasks.length; i++) byId[tasks[i].id] = tasks[i];
+        var entries = [], i, r, task, byKey = taskMap(tasks);
         for (i = 0; i < results.length; i++) {
             r = results[i];
             if (!r.ok || !r.destPath) continue;
-            task = byId[r.id];
+            task = resultTask(byKey, r);
             if (!task) continue;
             entries.push({
-                id: r.id,
+                key: task.key,
+                id: task.id,
+                isProxy: task.isProxy === true,
                 expectPath: task.sourcePath,
                 destPath: r.destPath,
                 isSequence: task.isSequence === true
@@ -395,21 +449,15 @@
         );
     }
 
-    function taskById(tasks, id) {
-        var i;
-        for (i = 0; i < tasks.length; i++) { if (tasks[i].id === id) return tasks[i]; }
-        return null;
-    }
-
     function absorbCopyResults(tasks, results) {
         var i, r, task, copied = 0, bytes = 0, reused = 0, saved = 0;
-        var sequences = 0, errors = 0;
+        var sequences = 0, errors = 0, byKey = taskMap(tasks);
 
         for (i = 0; i < results.length; i++) {
             r = results[i];
-            task = taskById(tasks, r.id);
+            task = resultTask(byKey, r);
             if (r.ok) {
-                PardIssues.clear("i" + r.id);
+                PardIssues.clear(r.key || ("i" + r.id));
                 copied += r.files || 0;
                 bytes += r.bytes || 0;
                 reused += r.reusedFiles || 0;
@@ -419,7 +467,7 @@
             }
             errors++;
             PardIssues.record({
-                key: "i" + r.id,
+                key: r.key || ("i" + r.id),
                 id: r.id,
                 name: task ? task.name : String(r.id),
                 path: task ? task.sourcePath : "",
@@ -451,15 +499,17 @@
      * costs nothing but the relink itself.
      */
     function absorbRelinkResult(tasks, commit, entries) {
-        var failedIds = {}, i, failure, task;
+        var failed = {}, i, failure, task, key, byKey = taskMap(tasks);
+        var settled = [];
 
         if (commit && commit.failures) {
             for (i = 0; i < commit.failures.length; i++) {
                 failure = commit.failures[i];
-                failedIds[failure.id] = true;
-                task = taskById(tasks, failure.id);
+                key = failure.key || ("i" + failure.id);
+                failed[key] = true;
+                task = byKey[key] || null;
                 PardIssues.record({
-                    key: "i" + failure.id,
+                    key: key,
                     id: failure.id,
                     name: task ? task.name : String(failure.id),
                     path: task ? task.sourcePath : "",
@@ -476,8 +526,77 @@
         }
 
         for (i = 0; i < entries.length; i++) {
-            if (!failedIds[entries[i].id]) PardIssues.clear("i" + entries[i].id);
+            if (failed[entries[i].key]) continue;
+            PardIssues.clear(entries[i].key);
+            settled.push(entries[i].key);
         }
+        return settled;
+    }
+
+    function insideWorkspace(target) {
+        if (!state.workspace) return false;
+        var p = String(target || "").replace(/\\/g, "/").toLowerCase();
+        var root = state.workspace.replace(/\\/g, "/").toLowerCase().replace(/\/$/, "");
+        return !!root && p.indexOf(root + "/") === 0;
+    }
+
+    /*
+     * The single place PardDefender removes a file it did not put there itself,
+     * and it is fenced in on every side. All of these must hold:
+     *
+     *   - the owner pressed "разложить всё по местам" on THIS project, and left
+     *     the "старые копии в корзину" switch on;
+     *   - the file was already INSIDE the workspace (an external original is
+     *     untouchable, always and without exception);
+     *   - a byte-verified copy now sits in the route folder;
+     *   - After Effects has been repointed at that copy and said so;
+     *   - and the removal is to the Recycle Bin, never an unlink.
+     *
+     * Without this step the redistribute button leaves two of everything and
+     * doubles the project on disk, which is not a redistribution at all.
+     */
+    function recycleRelocated(tasks, results, settled, done) {
+        if (!state.settings || state.settings.legacyRecycleOld === false) { done(); return; }
+        if (!settled.length || !PardHousekeeping.available()) { done(); return; }
+
+        var byKey = taskMap(tasks), byResult = {}, paths = [], i, j, r, task, src;
+        for (i = 0; i < results.length; i++) {
+            byResult[results[i].key || ("i" + results[i].id)] = results[i];
+        }
+
+        for (i = 0; i < settled.length; i++) {
+            task = byKey[settled[i]];
+            r = byResult[settled[i]];
+            if (!task || !task.relocated || !r || !r.ok) continue;
+
+            var destFolder = PardCopyQueue.toSlash(r.destPath || task.destPath)
+                .replace(/\/[^\/]*$/, "").toLowerCase();
+            var sources = r.sources && r.sources.length ? r.sources : [task.sourcePath];
+
+            for (j = 0; j < sources.length; j++) {
+                src = PardCopyQueue.toSlash(sources[j]);
+                if (!insideWorkspace(src)) continue;
+                /* Same folder means nothing actually moved - dedup reused the
+                 * file that was already there, and it IS the protected copy. */
+                if (src.replace(/\/[^\/]*$/, "").toLowerCase() === destFolder) continue;
+                paths.push(src);
+            }
+        }
+
+        if (!paths.length) { done(); return; }
+
+        setBusyLabel("Убираю старые копии: " + paths.length + " файл.…");
+        PardHousekeeping.recycle(paths, function (result) {
+            if (result.ok) {
+                log("Старые копии в корзине: " + result.recycled +
+                    (result.failed ? ", не удалось: " + result.failed : ""), "good");
+                PardStats.add({ filesRelocated: result.recycled });
+            } else {
+                log("Корзина: " + result.error +
+                    " — старые копии остались на месте.", "warn");
+            }
+            done();
+        });
     }
 
     function trip(code, reason, detail) {
@@ -559,11 +678,12 @@
                 commitRelink(tasks, results, function (commit, error, entries) {
                     PardCopyQueue.removeQuietly(metadataDir() + "/pending.tsv");
 
+                    var settled = [];
                     if (error) {
                         log("Перелинковка: " + error, "bad");
                         PardStats.add({ errorsTotal: 1 });
                     } else {
-                        absorbRelinkResult(tasks, commit, entries);
+                        settled = absorbRelinkResult(tasks, commit, entries);
                         if (commit.relinked) {
                             log("Защищено и перелинковано: " + commit.relinked, "good");
                         }
@@ -571,7 +691,9 @@
                     /* The manifest just grew, so verification needs the new rows. */
                     PardVerify.attach(state.workspace);
                     state.lastWeighAt = 0;
-                    organiseThen(moves);
+                    recycleRelocated(tasks, results, settled, function () {
+                        organiseThen(moves);
+                    });
                 });
             }
         );
@@ -673,6 +795,9 @@
 
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
+            /* A proxy belongs to an element a composition uses. It is never
+             * loose, whatever its own branch says. */
+            if (item.isProxy) continue;
             if (!item.unassigned) continue;
             /*
              * Sent to 00_UNUSED by hand, but a composition still uses it.
@@ -770,6 +895,105 @@
                 }
             );
         });
+    }
+
+    /* ------------------------------------------------------ legacy projects */
+
+    /*
+     * A project from before PardDefender existed: everything dumped in the
+     * workspace root, or filed by a scheme of its own. Two answers, and the
+     * owner gives exactly one per project:
+     *
+     *   ОСТАВИТЬ КАК ЕСТЬ    every element that is here right now is never
+     *                        touched again - not its file, not its place in the
+     *                        panel. New imports are still protected: this draws
+     *                        a line at a moment in time, it does not switch
+     *                        protection off.
+     *   РАЗЛОЖИТЬ ВСЁ        keep copying misplaced files into their route
+     *                        folders until none are left, and (unless the
+     *                        switch is off) send each leftover to the Recycle
+     *                        Bin once its replacement is verified and linked.
+     *
+     * Files OUTSIDE the workspace are never adopted. Leaving those where they
+     * are is precisely the loss this whole extension exists to prevent.
+     */
+    function misplacedItems() {
+        var out = [], i, item;
+        var report = state.report;
+        if (!report || !report.items) return out;
+        for (i = 0; i < report.items.length; i++) {
+            item = report.items[i];
+            if (item.misplaced === true) out.push(item);
+        }
+        return out;
+    }
+
+    function misplacedTotals() {
+        var list = misplacedItems(), i, bytes = 0;
+        for (i = 0; i < list.length; i++) bytes += list[i].size || 0;
+        return { list: list, count: list.length, bytes: bytes };
+    }
+
+    function adoptInPlace() {
+        var report = state.report, ids = [], i, item;
+        if (!report || !report.items) return;
+
+        for (i = 0; i < report.items.length; i++) {
+            item = report.items[i];
+            if (item.isProxy) continue;
+            /* Only what is already inside the workspace. An element still
+             * sitting in Downloads is exactly what protection is for. */
+            if (item.state !== "protected") continue;
+            ids.push(item.id);
+        }
+
+        if (!ids.length) {
+            log("Внутри рабочей папки нечего оставлять как есть.", "neutral");
+            return;
+        }
+        pushSettings({ adoptedItems: ids, legacyRedistribute: false });
+        log("Оставлено как есть: " + ids.length +
+            " элем. Новые импорты защищаются как обычно.", "good");
+        state.lastAuditAt = 0;
+    }
+
+    function startRedistribute() {
+        var totals = misplacedTotals();
+        if (!totals.count) {
+            log("Всё уже лежит по местам.", "neutral");
+            return;
+        }
+        /* Раскладывать нечем, если копирование выключено — скажем об этом
+         * вместо того, чтобы молча ничего не сделать. */
+        if (state.settings && state.settings.copyEnabled === false) {
+            log("Копирование выключено — включите «Копировать файлы в папку " +
+                "проекта», иначе раскладывать нечем.", "warn");
+            return;
+        }
+        pushSettings({ legacyRedistribute: true, adoptedItems: [] });
+        log("Раскладываю старый проект: " + totals.count + " файл. (" +
+            formatBytes(totals.bytes) + ")", "work");
+        state.lastAuditAt = 0;
+        runPass(true);
+    }
+
+    /*
+     * The pass stops itself. Leaving the flag on would mean any file the owner
+     * later files by hand gets pulled back into a route folder months later,
+     * which is precisely the surprise the "place on disk is final" rule exists
+     * to prevent.
+     */
+    function maybeFinishRedistribute() {
+        if (!relocating() || !state.report || !state.report.counts) return;
+        /*
+         * The misplaced count IS the completion test. A file that failed to
+         * copy is still misplaced, so an open problem cannot let the pass
+         * declare victory - and checking the issue store as well would leave
+         * the mode stuck on forever over an unrelated failure elsewhere.
+         */
+        if (state.report.counts.misplaced > 0) return;
+        pushSettings({ legacyRedistribute: false });
+        log("Старый проект разложен — режим перераспределения выключен.", "good");
     }
 
     /* ------------------------------------------------ forgotten layers */
@@ -1086,13 +1310,22 @@
             state.settings = report.settings || state.settings;
             state.workspace = report.workspace;
             refreshTracking(report);
+            maybeFinishRedistribute();
             refreshDisk();
             maybeWeigh();
+            maybeCheckPin();
             sweepProtected(false);
             maybeScanLayers();
             render();
 
-            if (state.settings && state.settings.autoEnabled && !state.paused) {
+            /*
+             * The legacy pass keeps going whether or not automatic mode is on:
+             * the owner asked for this project to be laid out, in as many
+             * batches as that takes, and it switches itself off when the last
+             * misplaced file is gone.
+             */
+            if (state.settings && !state.paused &&
+                (state.settings.autoEnabled || relocating())) {
                 runPass(false);
             }
         });
@@ -1112,6 +1345,13 @@
         state.lastLayerScanAt = 0;
         state.commentFor = "";
         state.projectPath = report.projectPath;
+        state.cloud = null;
+        state.pin = null;
+        state.pinBusy = false;
+        state.lastPinCheckAt = 0;
+        state.confirmCleanupUntil = 0;
+        state.confirmAdoptUntil = 0;
+        state.confirmRedistUntil = 0;
         painted = {};
 
         var workspace = report.workspaceIssue ? "" : report.workspace;
@@ -1148,6 +1388,58 @@
             state.layers = report;
             invalidate("layers");
             renderLayers();
+        });
+    }
+
+    /*
+     * A workspace on a cloud-synced drive is the owner's normal setup and is
+     * deliberately left synced - the cloud copy is the backup. The risk is the
+     * other direction: the provider evicting local files to save space. A file
+     * that has become a placeholder reads to the copy queue as a source that
+     * opens fine and then delivers no bytes, which is the SOURCE_STALLED case.
+     *
+     * The check is read-only and rare. Pinning is only ever done on a press.
+     */
+    var PIN_CHECK_INTERVAL_MS = 900000;
+
+    function maybeCheckPin() {
+        if (!state.workspace || !PardHousekeeping.available()) return;
+        state.cloud = PardHousekeeping.cloudInfo(state.workspace);
+        if (!state.cloud.cloud) { state.pin = null; return; }
+        if (state.pinBusy) return;
+        if (Date.now() - state.lastPinCheckAt < PIN_CHECK_INTERVAL_MS) return;
+        state.lastPinCheckAt = Date.now();
+        PardHousekeeping.pinState(state.workspace, function (result) {
+            state.pin = result;
+            invalidate("cloud");
+            renderCloud();
+        });
+    }
+
+    function pinWorkspace() {
+        if (!state.workspace || state.pinBusy) return;
+        state.pinBusy = true;
+        invalidate("cloud");
+        renderCloud();
+        log("Закрепляю файлы проекта на компьютере…", "work");
+        PardHousekeeping.pinAlways(state.workspace, function (result) {
+            state.pinBusy = false;
+            state.pin = result;
+            state.lastPinCheckAt = Date.now();
+            if (!result.ok) {
+                log("Закрепить не удалось: " + result.error, "bad");
+            } else if (result.allPinned) {
+                log("Файлы проекта помечены как «всегда на этом компьютере». " +
+                    "Синхронизация продолжает работать — облако остаётся копией.", "good");
+            } else {
+                log("Windows принял пометку не для всех файлов (" + result.pinned +
+                    " из " + result.sampled + "). " +
+                    (state.cloud ? state.cloud.label : "Клиент облака") +
+                    " может не поддерживать закрепление через проводник — " +
+                    "тогда включите «Всегда на этом компьютере» в его настройках.", "warn");
+            }
+            invalidate("cloud");
+            renderCloud();
         });
     }
 
@@ -1280,8 +1572,11 @@
         }
         el.settingsBlock.hidden = !(report && report.projectSaved);
 
+        renderLegend();
         renderDisk();
+        renderCloud();
         renderUnused();
+        renderLegacy();
         renderLayers();
         renderIssues();
         renderQueue();
@@ -1336,6 +1631,178 @@
                     ? " (из них " + totals.onlyCopies + " без оригинала)"
                     : "")
             : "УБРАТЬ НЕИСПОЛЬЗУЕМЫЕ В КОРЗИНУ";
+    }
+
+    /* ------------------------------------------------------- colour legend */
+
+    /*
+     * After Effects label colours, indexed the way AE indexes them. The panel
+     * shows the swatch for whatever index the settings actually use, so the
+     * legend keeps telling the truth after the owner changes pinLabel or
+     * sectionLabel in the settings file.
+     */
+    var LABEL_COLOURS = ["", "#e24b4b", "#e3d14b", "#6fd3d3", "#f0a0c8",
+        "#b7a5e0", "#f0b98a", "#9fd9b8", "#5b8fe0", "#5fb85f", "#9b5fd1",
+        "#e08a3c", "#9c6b4a", "#d94fa8", "#4fc3e8", "#c9b08a", "#3e7a4e"];
+
+    var LABEL_NAMES = ["без метки", "красный", "жёлтый", "бирюзовый", "розовый",
+        "лавандовый", "персиковый", "морская пена", "синий", "зелёный",
+        "фиолетовый", "оранжевый", "коричневый", "фуксия", "голубой",
+        "песочный", "тёмно-зелёный"];
+
+    function labelName(index) {
+        return LABEL_NAMES[index] || ("метка " + index);
+    }
+
+    function legendRule(index, title, lines) {
+        var row = document.createElement("div");
+        row.className = "legend-rule";
+
+        var head = document.createElement("div");
+        head.className = "legend-rule-head";
+
+        var swatch = document.createElement("span");
+        swatch.className = "legend-swatch";
+        swatch.style.background = LABEL_COLOURS[index] || "transparent";
+        head.appendChild(swatch);
+
+        var name = document.createElement("span");
+        name.className = "legend-name";
+        name.textContent = labelName(index).toUpperCase() + " — " + title;
+        head.appendChild(name);
+        row.appendChild(head);
+
+        var i;
+        for (i = 0; i < lines.length; i++) {
+            var line = document.createElement("div");
+            line.className = "legend-line";
+            line.textContent = lines[i];
+            row.appendChild(line);
+        }
+        return row;
+    }
+
+    function renderLegend() {
+        var settings = state.settings;
+        el.legend.hidden = !settings;
+        if (!settings) return;
+
+        var open = settings.legendOpen !== false;
+        var signature = settings.pinLabel + "|" + settings.sectionLabel + "|" + open;
+        if (!changed("legend", signature)) return;
+
+        el.legendCaret.textContent = open ? "▾" : "▸";
+        el.legendBody.hidden = !open;
+        if (!open) return;
+
+        el.legendBody.innerHTML = "";
+
+        if (settings.pinLabel > 0) {
+            el.legendBody.appendChild(legendRule(settings.pinLabel, "РУКИ ПРОЧЬ", [
+                "Композиция: считается рендерной и остаётся в корне проекта.",
+                "Файл: не переносится и не раскладывается в панели.",
+                "Слой: не попадает в «выключено и забыто»."
+            ]));
+        }
+
+        if (settings.sectionLabel > 0) {
+            el.legendBody.appendChild(legendRule(settings.sectionLabel, "РАЗДЕЛ", [
+                "Композиция: её имя становится веткой. Всё, что внутри неё, " +
+                    "ложится в папку с этим именем — и на диске, и в панели."
+            ]));
+        }
+
+        var tail = document.createElement("div");
+        tail.className = "legend-tail";
+        tail.textContent = "Без меток тоже работает: рендерной считается композиция, " +
+            "которую никто не использует или которая стоит в очереди рендера; " +
+            "веткой — композиция сразу под рендерной.";
+        el.legendBody.appendChild(tail);
+    }
+
+    /* --------------------------------------------------------- cloud folder */
+
+    function renderCloud() {
+        var cloud = state.cloud;
+        el.cloudRow.hidden = !(cloud && cloud.cloud);
+        if (!cloud || !cloud.cloud) return;
+
+        var pin = state.pin;
+        var stateText = state.pinBusy
+            ? "проверяю…"
+            : (!pin || !pin.ok
+                ? "состояние неизвестно"
+                : (pin.allPinned
+                    ? "файлы всегда на этом компьютере"
+                    : "часть файлов может выгружаться в облако"));
+
+        var signature = cloud.label + "|" + stateText + "|" + state.pinBusy;
+        if (!changed("cloud", signature)) return;
+
+        el.cloudText.textContent = cloud.label + " — " + stateText;
+        el.cloudText.title = "Синхронизация не выключается: облако остаётся " +
+            "резервной копией. Пометка означает лишь, что локальный файл не " +
+            "будет выгружен ради места на диске.";
+        el.cloudPin.hidden = !!(pin && pin.ok && pin.allPinned) || state.pinBusy;
+    }
+
+    /* -------------------------------------------------------- legacy project */
+
+    function renderLegacy() {
+        var report = state.report;
+        var totals = misplacedTotals();
+        var adopted = state.settings ? (state.settings.adoptedItems || []).length : 0;
+        var show = !!(report && report.projectSaved && !report.workspaceIssue) &&
+            (totals.count > 0 || relocating());
+
+        el.legacySection.hidden = !show;
+        if (!show) {
+            state.confirmAdoptUntil = 0;
+            state.confirmRedistUntil = 0;
+            return;
+        }
+
+        var adoptArmed = state.confirmAdoptUntil > Date.now();
+        var redistArmed = state.confirmRedistUntil > Date.now();
+        var signature = totals.count + "|" + totals.bytes + "|" + adopted + "|" +
+            relocating() + "|" + adoptArmed + "|" + redistArmed + "|" +
+            (state.busy ? "busy" : "free") + "|" +
+            (state.settings && state.settings.legacyRecycleOld !== false);
+        if (!changed("legacy", signature)) return;
+
+        el.legacyTitle.textContent = relocating()
+            ? "СТАРЫЙ ПРОЕКТ — РАСКЛАДЫВАЮ"
+            : "СТАРЫЙ ПРОЕКТ";
+
+        el.legacyNote.textContent = relocating()
+            ? "Осталось разложить: " + totals.count + " файл. · " +
+                formatBytes(totals.bytes) + ". Режим выключится сам, когда всё " +
+                "будет на местах."
+            : "Внутри рабочей папки " + totals.count + " файл. лежит не там, " +
+                "где их положило бы расширение (" + formatBytes(totals.bytes) +
+                "). Решите один раз — это запомнится для этого проекта.";
+
+        el.legacyAdopt.disabled = state.busy || relocating();
+        el.legacyAdopt.className = "wide" + (adoptArmed ? " confirming" : "");
+        el.legacyAdopt.textContent = adoptArmed
+            ? "ПОДТВЕРДИТЬ: НИЧЕГО НЕ ТРОГАТЬ В ЭТОМ ПРОЕКТЕ"
+            : "ОСТАВИТЬ КАК ЕСТЬ";
+
+        var recycling = !state.settings || state.settings.legacyRecycleOld !== false;
+        el.legacyRedistribute.disabled = state.busy || relocating();
+        el.legacyRedistribute.className = "wide danger-line" +
+            (redistArmed ? " confirming" : "");
+        el.legacyRedistribute.textContent = redistArmed
+            ? "ПОДТВЕРДИТЬ: ПЕРЕНЕСТИ " + totals.count + " ФАЙЛ." +
+                (recycling ? ", СТАРЫЕ — В КОРЗИНУ" : ", СТАРЫЕ ОСТАВИТЬ")
+            : "РАЗЛОЖИТЬ ВСЁ ПО МЕСТАМ";
+
+        el.legacyRecycle.checked = recycling;
+        el.legacyRecycleNote.textContent = recycling
+            ? "Старая копия уедет в Корзину только после того, как новая проверена " +
+                "и проект переключён на неё. Файлы за пределами рабочей папки не " +
+                "трогаются никогда."
+            : "Старые копии останутся на месте — проект будет весить вдвое больше.";
     }
 
     function toneForIssue(record) {
@@ -1627,7 +2094,8 @@
         var session = PardStats.session();
         var signature = [total.filesProcessed, total.bytesCopied, total.filesReused,
             total.bytesSaved, total.panelMoves, total.sequencesProcessed,
-            total.errorsTotal, PardIssues.openCount(), total.lastPassAt].join("|");
+            total.errorsTotal, total.filesRelocated, PardIssues.openCount(),
+            total.lastPassAt].join("|");
         if (!changed("stats", signature)) return;
 
         el.stats.innerHTML = "";
@@ -1650,6 +2118,16 @@
             "Ошибок за всё время <b>" + total.errorsTotal + "</b> · сейчас открыто <b>" +
             PardIssues.openCount() + "</b>"
         ));
+
+        /* Only shown once the legacy pass has actually removed something. It is
+         * the one counter that stands for deleted files, and it should be
+         * visible for as long as the project exists. */
+        if (total.filesRelocated) {
+            el.stats.appendChild(statLine(
+                "Старых копий убрано в Корзину <b>" + total.filesRelocated + "</b>",
+                session.filesRelocated ? "+" + session.filesRelocated : ""
+            ));
+        }
 
         var since = PardStats.formatDate(total.createdAt);
         var last = PardStats.formatTime(total.lastPassAt);
@@ -1746,7 +2224,14 @@
             updateSummary: "update-summary", updateOpen: "update-open",
             updateDismiss: "update-dismiss", unusedSection: "unused-section",
             unusedTitle: "unused-title", unusedReveal: "unused-reveal",
-            cleanUnused: "clean-unused"
+            cleanUnused: "clean-unused",
+            legend: "legend", legendToggle: "legend-toggle",
+            legendCaret: "legend-caret", legendBody: "legend-body",
+            cloudRow: "cloud-row", cloudText: "cloud-text", cloudPin: "cloud-pin",
+            legacySection: "legacy-section", legacyTitle: "legacy-title",
+            legacyNote: "legacy-note", legacyAdopt: "legacy-adopt",
+            legacyRedistribute: "legacy-redistribute",
+            legacyRecycle: "legacy-recycle", legacyRecycleNote: "legacy-recycle-note"
         };
         var key;
         for (key in ids) {
@@ -1811,6 +2296,52 @@
                     renderUnused();
                 }
             }, CONFIRM_WINDOW_MS + 200);
+        };
+
+        el.legendToggle.onclick = function () {
+            if (!state.settings) return;
+            pushSettings({ legendOpen: state.settings.legendOpen === false });
+            invalidate("legend");
+            renderLegend();
+        };
+
+        el.cloudPin.onclick = pinWorkspace;
+
+        /*
+         * Both legacy buttons are two-press, for the same reason the cleanup
+         * button is: the first press spells out exactly what the second will
+         * do, and the arming lapses on its own so a stray click cannot sit
+         * there waiting to be completed later.
+         */
+        function armed(until, invalidateName, renderFn, commit) {
+            return function () {
+                if (state[until] > Date.now()) {
+                    state[until] = 0;
+                    invalidate(invalidateName);
+                    commit();
+                    return;
+                }
+                state[until] = Date.now() + CONFIRM_WINDOW_MS;
+                invalidate(invalidateName);
+                renderFn();
+                window.setTimeout(function () {
+                    if (state[until] <= Date.now()) {
+                        invalidate(invalidateName);
+                        renderFn();
+                    }
+                }, CONFIRM_WINDOW_MS + 200);
+            };
+        }
+
+        el.legacyAdopt.onclick =
+            armed("confirmAdoptUntil", "legacy", renderLegacy, adoptInPlace);
+        el.legacyRedistribute.onclick =
+            armed("confirmRedistUntil", "legacy", renderLegacy, startRedistribute);
+
+        el.legacyRecycle.onchange = function () {
+            pushSettings({ legacyRecycleOld: el.legacyRecycle.checked });
+            invalidate("legacy");
+            renderLegacy();
         };
 
         el.updateOpen.onclick = function () {

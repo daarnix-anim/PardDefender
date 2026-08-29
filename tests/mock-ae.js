@@ -154,9 +154,38 @@ function FootageItem(name, filePath, options) {
     this.duration = opts.duration === undefined ? 0 : opts.duration;
     this.footageMissing = opts.missing === true;
     this.useProxy = opts.useProxy === true;
+    /* A proxy is its own source object with its own file, exactly as in AE. */
+    this.proxySource = opts.proxy
+        ? new FileSource(opts.proxy, opts.proxyIsStill !== false)
+        : null;
 }
 FootageItem.prototype = Object.create(Item.prototype);
 FootageItem.prototype.constructor = FootageItem;
+
+FootageItem.prototype.setProxy = function (file) {
+    this.proxySource = new FileSource(String(file.fsName).replace(/\\/g, "/"), true);
+    this.useProxy = true;
+    return this.proxySource;
+};
+
+FootageItem.prototype.setProxyWithSequence = function (file) {
+    this.proxySource = new FileSource(String(file.fsName).replace(/\\/g, "/"), false);
+    this.useProxy = true;
+    return this.proxySource;
+};
+
+FootageItem.prototype.setProxyToNone = function () {
+    this.proxySource = null;
+    this.useProxy = false;
+};
+
+FootageItem.prototype.replace = function (file) {
+    this.mainSource = new FileSource(String(file.fsName).replace(/\\/g, "/"), true);
+};
+
+FootageItem.prototype.replaceWithSequence = function (file) {
+    this.mainSource = new FileSource(String(file.fsName).replace(/\\/g, "/"), false);
+};
 
 /* --------------------------------------------------------------- File stubs */
 
@@ -187,12 +216,53 @@ Object.defineProperty(MockFile.prototype, "parent", {
     }
 });
 
+/*
+ * ExtendScript's File I/O, backed by real files in a real temp folder. The
+ * host passes every plan and every report through a file rather than through
+ * an evalScript return value, so without this the whole relink path - the
+ * riskiest code in the project - could not be exercised at all.
+ */
+MockFile.prototype.open = function (mode) {
+    this._mode = mode === "w" ? "w" : "r";
+    if (this._mode === "r") {
+        if (!fs.existsSync(this.fsName)) return false;
+        try { this._buffer = fs.readFileSync(this.fsName, "utf8"); }
+        catch (e) { return false; }
+        return true;
+    }
+    this._buffer = "";
+    return true;
+};
+
+MockFile.prototype.read = function () { return this._buffer || ""; };
+
+MockFile.prototype.write = function (text) {
+    this._buffer = (this._buffer || "") + String(text);
+    return true;
+};
+
+MockFile.prototype.close = function () {
+    if (this._mode === "w") {
+        fs.mkdirSync(path.dirname(this.fsName), { recursive: true });
+        fs.writeFileSync(this.fsName, this._buffer || "", "utf8");
+    }
+    this._mode = null;
+    return true;
+};
+
+MockFile.prototype.remove = function () {
+    try { fs.unlinkSync(this.fsName); return true; } catch (e) { return false; }
+};
+
 function MockFolder(p) {
     this.fsName = String(p || "").replace(/\//g, path.sep);
     this._slash = String(p || "").replace(/\\/g, "/");
 }
 Object.defineProperty(MockFolder.prototype, "exists", { get: function () { return true; } });
-MockFolder.prototype.create = function () { return true; };
+MockFolder.prototype.create = function () {
+    try { fs.mkdirSync(this.fsName, { recursive: true }); return true; }
+    catch (e) { return false; }
+};
 
 MockFolder.temp = new MockFolder(require("os").tmpdir());
 MockFolder.desktop = new MockFolder("C:/Users/tester/Desktop");

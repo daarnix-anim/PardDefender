@@ -401,9 +401,17 @@ var PardCopyQueue = (function () {
             ? api.expandSequence(task.sequence)
             : [task.sourcePath];
 
+        /*
+         * One element can produce two tasks - itself and its proxy - so the
+         * element id is no longer unique. Results echo the caller's key, and
+         * fall back to the id for callers that never set one.
+         */
+        var taskKey = task.key || task.id;
+
         if (!sources.length) {
             done({
                 ok: false,
+                key: taskKey,
                 id: task.id,
                 code: task.isSequence ? "SEQUENCE_EMPTY" : "SOURCE_MISSING",
                 reason: "Не найдено ни одного файла-исходника."
@@ -432,6 +440,7 @@ var PardCopyQueue = (function () {
             for (i = 0; i < created.length; i++) removeQuietly(created[i]);
             done({
                 ok: false,
+                key: taskKey,
                 id: task.id,
                 code: code || "COPY_FAILED",
                 reason: reason,
@@ -443,12 +452,19 @@ var PardCopyQueue = (function () {
             if (index >= sources.length) {
                 done({
                     ok: true,
+                    key: taskKey,
                     id: task.id,
                     destPath: firstDest,
                     files: copiedFiles,
                     bytes: copiedBytes,
                     reusedFiles: reusedFiles,
-                    reusedBytes: reusedBytes
+                    reusedBytes: reusedBytes,
+                    /*
+                     * Exactly which files were read. The legacy pass needs this:
+                     * it may only send a leftover to the Recycle Bin if that
+                     * precise file is the one just copied and verified.
+                     */
+                    sources: sources
                 });
                 return;
             }
@@ -520,6 +536,7 @@ var PardCopyQueue = (function () {
             if (freeBytes > 0 && needed + reserve > freeBytes) {
                 results.push({
                     ok: false,
+                    key: task.key || task.id,
                     id: task.id,
                     code: "DISK_FULL",
                     reason: "Не хватает свободного места с учётом резерва."

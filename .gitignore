@@ -8,3 +8,10 @@ node_modules/
 # Runtime artefacts written next to a PROJECT, never inside this repo.
 # Listed so an accidental copy of a workspace cannot be committed.
 .parddefender/
+
+# Копии-конфликты клиента облака. Репозиторий лежит внутри Папки
+# Яндекс.Диска, и он снимает копию файла, который меняется прямо
+# во время синхронизации. Такая копия — замороженная половина исходника:
+# она разбирается как код и попадает куда не надо.
+*(копия *)*
+*(conflicted copy*)*

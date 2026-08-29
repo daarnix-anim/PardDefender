@@ -11,8 +11,16 @@
 
         <header class="head">
             <span class="brand">PardDefender</span>
-            <span class="version" id="version">v1.1.0</span>
+            <span class="version" id="version">v1.2.0</span>
         </header>
+
+        <section class="legend" id="legend" hidden>
+            <button class="legend-head" id="legend-toggle" title="Свернуть или развернуть">
+                <span class="section-title">ЦВЕТА-МЕТКИ</span>
+                <span class="legend-caret" id="legend-caret">▾</span>
+            </button>
+            <div class="legend-body" id="legend-body"></div>
+        </section>
 
         <div class="update" id="update" hidden>
             <div class="update-head">
@@ -46,6 +54,11 @@
             <div class="disk-project" id="disk-project"></div>
         </div>
 
+        <div class="cloud-row" id="cloud-row" hidden>
+            <span class="cloud-text" id="cloud-text"></span>
+            <button class="link" id="cloud-pin">Закрепить на компьютере</button>
+        </div>
+
         <section class="unused-section" id="unused-section" hidden>
             <div class="unused-head">
                 <span class="unused-title" id="unused-title"></span>
@@ -53,6 +66,18 @@
             </div>
             <div class="unused-note">Эти файлы не используются ни в одной композиции.</div>
             <button class="danger-line" id="clean-unused">УБРАТЬ НЕИСПОЛЬЗУЕМЫЕ В КОРЗИНУ</button>
+        </section>
+
+        <section class="legacy-section" id="legacy-section" hidden>
+            <div class="section-title" id="legacy-title">СТАРЫЙ ПРОЕКТ</div>
+            <div class="legacy-note" id="legacy-note"></div>
+            <button class="wide" id="legacy-adopt">ОСТАВИТЬ КАК ЕСТЬ</button>
+            <button class="wide danger-line" id="legacy-redistribute">РАЗЛОЖИТЬ ВСЁ ПО МЕСТАМ</button>
+            <label class="check">
+                <input type="checkbox" id="legacy-recycle">
+                <span>Старые копии — в Корзину после переноса</span>
+            </label>
+            <div class="legacy-note small" id="legacy-recycle-note"></div>
         </section>
 
         <section class="settings" id="settings" hidden>

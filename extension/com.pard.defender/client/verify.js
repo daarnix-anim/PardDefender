@@ -104,7 +104,7 @@ var PardVerify = (function () {
 
             if (!stats) {
                 findings.push({
-                    key: "i" + item.id,
+                    key: item.key || ("i" + item.id),
                     id: item.id,
                     name: item.name,
                     path: item.path,
@@ -124,7 +124,7 @@ var PardVerify = (function () {
             var record = manifest[key(item.path)];
             if (record && record.size > 0 && stats.size !== record.size) {
                 findings.push({
-                    key: "i" + item.id,
+                    key: item.key || ("i" + item.id),
                     id: item.id,
                     name: item.name,
                     path: item.path,

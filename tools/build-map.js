@@ -72,12 +72,25 @@ function read(relative) {
     catch (e) { return null; }
 }
 
+/*
+ * Sync-conflict copies. This repository lives inside a Yandex.Disk folder, and
+ * the client snapshots a file it sees changing under it as
+ * "main (копия с компьютера HOST).js". Such a copy is a frozen half-finished
+ * state of a real source: it parses, so the generator happily read it and drew
+ * a second `main.js` into the map, wired to every module. Caught 2026-08-29,
+ * with a copy created mid-edit. Dropbox and OneDrive use the same shape in
+ * their own wording.
+ */
+var CONFLICT_COPY =
+    /\((копия|conflicted copy|конфликтующая копия|[^)]*-(PC|DESKTOP|LAPTOP))[^)]*\)/i;
+
 function listFiles(dir) {
     var out = [];
     var full = path.join(ROOT, dir);
     var names;
     try { names = fs.readdirSync(full); } catch (e) { return out; }
     names.sort().forEach(function (name) {
+        if (CONFLICT_COPY.test(name)) return;
         var rel = dir + "/" + name;
         var stats;
         try { stats = fs.statSync(path.join(ROOT, rel)); } catch (e2) { return; }

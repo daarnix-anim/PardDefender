@@ -1,6 +1,6 @@
 /*
  *
- * @map role: 24 проверки копирования на настоящих файлах во временной
+ * @map role: 42 проверки копирования на настоящих файлах во временной
  *           папке.
  * @map status: ready
  * Exercises the copy layer against real files in a scratch directory.
@@ -247,6 +247,51 @@ steps.push(function (next) {
     check("готовые файлы не тронуты", readFile(dest + "/clip.mp4"), "AAAABBBBCCCC");
     check("журнал удалён", queue.readText(journal), null);
     next();
+});
+
+steps.push(function (next) {
+    group("Ключ задачи и список прочитанных исходников");
+    /*
+     * Элемент и его прокси — две задачи с одним id. Без собственного ключа
+     * результат одной затирал бы результат другой: счётчик попыток, запись о
+     * проблеме и строка манифеста ушли бы не туда.
+     */
+    var source = writeSource("proxy_clip.mov", "PROXYBYTES");
+
+    queue.run(
+        [
+            {
+                key: "p42", id: "42", name: "proxy_clip.mov",
+                sourcePath: source, destPath: dest + "/proxy_clip.mov", size: 10
+            },
+            {
+                key: "i43", id: "43", name: "gone.mp4",
+                sourcePath: src + "/gone.mp4",
+                destPath: dest + "/gone.mp4", size: 4
+            },
+            /* Вызывающий без ключа - старый код и тесты - должен работать. */
+            {
+                id: "77", name: "nope.mp4", sourcePath: src + "/nope.mp4",
+                destPath: dest + "/nope.mp4", size: 1
+            }
+        ],
+        {}, {},
+        function (results) {
+            check("результат несёт ключ задачи, а не только id", results[0].key, "p42");
+            check("id тоже на месте", results[0].id, "42");
+            /*
+             * Именно по этому списку проход по старому проекту решает, что
+             * можно отправить в Корзину. Догадываться нельзя: удаляется файл.
+             */
+            check("и список файлов, которые были прочитаны",
+                results[0].sources, [source]);
+
+            check("у неудачи ключ тоже есть", results[1].key, "i43");
+            check("и это исчезнувший исходник", results[1].code, "SOURCE_MISSING");
+            check("задача без ключа откатывается на id", results[2].key, "77");
+            next();
+        }
+    );
 });
 
 /* ------------------------------------------------------------------- run */

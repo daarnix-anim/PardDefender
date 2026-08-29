@@ -161,6 +161,136 @@ var PardHousekeeping = (function () {
         }
     };
 
+    /* ----------------------------------------------------------- cloud sync */
+
+    /*
+     * A workspace inside a synced folder is the normal case here, not a
+     * problem: the owner wants the cloud copy as a backup. What they do NOT
+     * want is the local file being evicted to save space, because then opening
+     * last month's project means waiting for tens of gigabytes to come back
+     * down - and a placeholder that has not been rehydrated reads as a stalled
+     * source to the copy queue.
+     *
+     * Windows has one answer for every provider that uses the Cloud Files API:
+     * FILE_ATTRIBUTE_PINNED (0x00080000) means "always keep this on the
+     * device". Setting it is what Explorer's own "Always keep on this device"
+     * does, and clearing FILE_ATTRIBUTE_UNPINNED alongside it is what stops the
+     * provider from evicting the file again.
+     */
+    var PINNED = 0x00080000;
+
+    var CLOUD_PROVIDERS = [
+        { test: /(^|\/)yandex[ ._-]?disk($|\/)/i, label: "Яндекс.Диск" },
+        { test: /(^|\/)yandexdisk($|\/)/i, label: "Яндекс.Диск" },
+        { test: /(^|\/)onedrive[^\/]*($|\/)/i, label: "OneDrive" },
+        { test: /(^|\/)dropbox($|\/)/i, label: "Dropbox" },
+        { test: /(^|\/)google\s?drive($|\/)/i, label: "Google Drive" }
+    ];
+
+    /*
+     * Answers from the PATH rather than from a running process. The folder is
+     * what decides whether files get evicted, and it keeps answering correctly
+     * when the client is not running - which is exactly when the owner opens an
+     * old project and wonders why nothing loads.
+     */
+    api.cloudInfo = function (workspace) {
+        var slash = toSlash(workspace), i, match;
+        if (!slash) return { cloud: false, label: "", root: "" };
+
+        for (i = 0; i < CLOUD_PROVIDERS.length; i++) {
+            match = CLOUD_PROVIDERS[i].test.exec(slash);
+            if (!match) continue;
+            var cut = slash.indexOf(match[0]) + match[0].length;
+            return {
+                cloud: true,
+                label: CLOUD_PROVIDERS[i].label,
+                root: slash.substring(0, cut).replace(/\/$/, "")
+            };
+        }
+        return { cloud: false, label: "", root: "" };
+    };
+
+    /*
+     * Reads the attribute back on a sample of the tree rather than trusting the
+     * write. Not every provider honours the flag, and a panel that says
+     * "закреплено" when nothing was closed is worse than one that admits it
+     * could not.
+     */
+    var PIN_SCRIPT = [
+        "$root = $args[0]",
+        "$mode = $args[1]",
+        "if ($mode -eq 'set') {",
+        "  & attrib.exe +P -U \"$root\\*\" /S /D 2>$null | Out-Null",
+        "  & attrib.exe +P -U \"$root\" /D 2>$null | Out-Null",
+        "}",
+        "$pin = 524288",
+        "$total = 0",
+        "$pinned = 0",
+        "Get-ChildItem -LiteralPath $root -Recurse -Force -File " +
+            "-ErrorAction SilentlyContinue |",
+        "  Select-Object -First 300 |",
+        "  ForEach-Object {",
+        "    $total = $total + 1",
+        "    try {",
+        "      $a = [int][System.IO.File]::GetAttributes($_.FullName)",
+        "      if ($a -band $pin) { $pinned = $pinned + 1 }",
+        "    } catch { }",
+        "  }",
+        "Write-Output \"$pinned/$total\""
+    ].join("\n");
+
+    function runPin(root, mode, callback) {
+        if (!api.available() || !childProcess || !root) {
+            callback({ ok: false, pinned: 0, sampled: 0, error: "Node недоступен." });
+            return;
+        }
+
+        var scriptFile = scratchDir() + "/pin.ps1";
+        try {
+            fs.writeFileSync(toNative(scriptFile), PIN_SCRIPT, "utf8");
+        } catch (e) {
+            callback({ ok: false, pinned: 0, sampled: 0,
+                error: "Не удалось подготовить скрипт: " + e });
+            return;
+        }
+
+        try {
+            childProcess.execFile(
+                "powershell.exe",
+                ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                    "-File", toNative(scriptFile), toNative(root), mode],
+                { windowsHide: true, timeout: 600000 },
+                function (error, stdout) {
+                    var match = /(\d+)\/(\d+)/.exec(String(stdout || ""));
+                    if (!match) {
+                        callback({
+                            ok: false, pinned: 0, sampled: 0,
+                            error: "Windows не ответил" + (error ? ": " + error : ".")
+                        });
+                        return;
+                    }
+                    var pinned = Number(match[1]) || 0;
+                    var sampled = Number(match[2]) || 0;
+                    callback({
+                        ok: true,
+                        pinned: pinned,
+                        sampled: sampled,
+                        /* Nothing to judge if the folder holds no files yet. */
+                        allPinned: sampled > 0 && pinned === sampled,
+                        error: ""
+                    });
+                }
+            );
+        } catch (e2) {
+            callback({ ok: false, pinned: 0, sampled: 0,
+                error: "Не удалось запустить проверку: " + e2 });
+        }
+    }
+
+    api.PINNED = PINNED;
+    api.pinState = function (root, callback) { runPin(root, "read", callback); };
+    api.pinAlways = function (root, callback) { runPin(root, "set", callback); };
+
     /* ------------------------------------------------------------- explorer */
 
     /*

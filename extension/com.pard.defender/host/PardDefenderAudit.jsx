@@ -27,6 +27,10 @@
     }
     function lower(v) { return str(v).toLowerCase(); }
 
+    /* " - proxy" in Russian. Host sources stay pure ASCII: $.evalFile does not
+     * guarantee an encoding, and Cyrillic in a .jsx breaks silently. */
+    var PROXY_SUFFIX = " \u2014 \u043f\u0440\u043e\u043a\u0441\u0438";
+
     function baseName(path) {
         var p = host.slashes(path), i = p.lastIndexOf("/");
         return i < 0 ? p : p.substring(i + 1);
@@ -58,14 +62,18 @@
         };
     }
 
-    function isSequenceItem(item, category) {
+    function isSequenceSource(source, category) {
         if (category !== "image") return false;
         try {
-            var source = item.mainSource;
             if (!source) return false;
             if (source.isStill === true) return false;
             return true;
         } catch (e) { return false; }
+    }
+
+    function isSequenceItem(item, category) {
+        try { return isSequenceSource(item.mainSource, category); }
+        catch (e) { return false; }
     }
 
     /* -------------------------------------------------------- audio routing */
@@ -207,7 +215,8 @@
             comps: [],
             counts: {
                 total: 0, protected_: 0, pending: 0, missing: 0,
-                trusted: 0, unassigned: 0, panelMoves: 0
+                trusted: 0, unassigned: 0, panelMoves: 0,
+                misplaced: 0, adopted: 0, proxies: 0
             }
         };
 
@@ -325,12 +334,25 @@
                 var branch = forced ? "" : host.branchForItem(item, ctx);
                 var routeKey = routeKeyForItem(category, isSequence, item, settings);
 
+                /*
+                 * A legacy project the owner told us to leave alone. The element
+                 * keeps its file exactly where it is and never moves in the
+                 * panel either - "do not touch" means both. New imports are
+                 * unaffected: adoption is a line drawn at a moment in time, not
+                 * a switch that turns protection off.
+                 */
+                var adopted = false, ad;
+                for (ad = 0; ad < settings.adoptedItems.length; ad++) {
+                    if (settings.adoptedItems[ad] === str(item.id)) { adopted = true; break; }
+                }
+
                 var missing = false;
                 try { missing = item.footageMissing === true || !file.exists; }
                 catch (e4) { missing = true; }
 
                 var state = "pending";
                 if (missing) state = "missing";
+                else if (adopted) state = "trusted";
                 else if (report.workspace && host.isInside(path, report.workspace)) {
                     state = "protected";
                 } else {
@@ -367,7 +389,15 @@
                 );
 
                 var entry = {
+                    /*
+                     * The identity the client keys everything by: tracking
+                     * clocks, issue records, task results. One item can produce
+                     * TWO rows - itself and its proxy - so the item id alone is
+                     * no longer unique.
+                     */
+                    key: "i" + str(item.id),
                     id: str(item.id),
+                    isProxy: false,
                     name: str(item.name),
                     path: path,
                     ext: ext,
@@ -404,12 +434,33 @@
                     panelTarget: panelTargetForFootage(
                         category, isSequence, routeKey, branch),
                     panelPath: panelPathOf(item),
-                    panelEligible: panelEligible(item, settings, managed),
+                    panelEligible: adopted
+                        ? false
+                        : panelEligible(item, settings, managed),
+                    adopted: adopted,
                     hasProxy: false
                 };
 
                 try { entry.hasProxy = item.useProxy === true; } catch (e6) {}
 
+                /*
+                 * "Misplaced" compares FOLDERS, never whole paths. A copy that
+                 * had to take a different name to avoid a collision is still
+                 * exactly where it belongs; comparing names would report it as
+                 * misplaced forever, and the legacy pass would copy it again on
+                 * every run, each time under a new name.
+                 */
+                entry.misplaced = false;
+                if (state === "protected" && entry.destPath) {
+                    var destFolder = isSequence
+                        ? entry.destPath
+                        : entry.destPath.replace(/\/[^\/]*$/, "");
+                    entry.misplaced =
+                        lower(path.replace(/\/[^\/]*$/, "")) !== lower(destFolder);
+                }
+
+                if (entry.misplaced) report.counts.misplaced++;
+                if (adopted) report.counts.adopted++;
                 if (state === "pending") report.counts.pending++;
                 else if (state === "protected") report.counts.protected_++;
                 else if (state === "missing") report.counts.missing++;
@@ -417,6 +468,119 @@
                 if (entry.unassigned) report.counts.unassigned++;
 
                 report.items.push(entry);
+
+                /*
+                 * A proxy is a real file on a real disk and is lost exactly as
+                 * easily as anything else, so it is protected too - but it is
+                 * never a problem to report and never filed by format. Owner's
+                 * decision, 2026-08-29: a proxy is an automatic exception that
+                 * still moves inside the project, into the PROXY folder of the
+                 * branch whose composition uses it.
+                 */
+                var proxySource = null, proxyFile = null;
+                try {
+                    if (item.useProxy === true && item.proxySource) {
+                        proxySource = item.proxySource;
+                        proxyFile = proxySource.file || null;
+                    }
+                } catch (eProxy) { proxySource = null; proxyFile = null; }
+
+                if (proxyFile) {
+                    var pPath = host.slashes(proxyFile.fsName);
+                    var pExt = extensionOf(pPath);
+                    var pCategory = host.categoryForExtension(pExt);
+                    var pIsSequence = isSequenceSource(proxySource, pCategory);
+
+                    var pMissing = false;
+                    try { pMissing = !proxyFile.exists; } catch (eP1) { pMissing = true; }
+
+                    var pState = "pending";
+                    if (pMissing) pState = "missing";
+                    else if (adopted) pState = "trusted";
+                    else if (report.workspace && host.isInside(pPath, report.workspace)) {
+                        pState = "protected";
+                    } else {
+                        var pt;
+                        for (pt = 0; pt < settings.trustedPaths.length; pt++) {
+                            if (host.isInside(pPath, settings.trustedPaths[pt])) {
+                                pState = "trusted";
+                                break;
+                            }
+                        }
+                    }
+
+                    var pSize = 0;
+                    try { pSize = Number(proxyFile.length) || 0; } catch (eP2) { pSize = 0; }
+
+                    var pSequence = pIsSequence
+                        ? sequenceDescriptor(item, proxyFile)
+                        : null;
+                    var pRawName = baseName(pPath).replace(/\.[^.]+$/, "");
+                    if (pSequence) {
+                        pRawName = str(pSequence.prefix).replace(/[._\- ]+$/, "");
+                    }
+                    var pDestRel = applyRoute(
+                        settings.routes.proxy || settings.routes.other,
+                        effectiveBranch,
+                        host.sanitizeSegment(pRawName) || "PROXY"
+                    );
+                    var pDestPath = !report.workspace ? "" : (pIsSequence
+                        ? report.workspace + "/" + pDestRel
+                        : report.workspace + "/" + pDestRel + "/" + baseName(pPath));
+
+                    var pMisplaced = false;
+                    if (pState === "protected" && pDestPath) {
+                        var pDestFolder = pIsSequence
+                            ? pDestPath
+                            : pDestPath.replace(/\/[^\/]*$/, "");
+                        pMisplaced =
+                            lower(pPath.replace(/\/[^\/]*$/, "")) !== lower(pDestFolder);
+                    }
+
+                    report.counts.total++;
+                    report.counts.proxies++;
+                    if (pMisplaced) report.counts.misplaced++;
+                    if (pState === "pending") report.counts.pending++;
+                    else if (pState === "protected") report.counts.protected_++;
+                    else if (pState === "missing") report.counts.missing++;
+                    else if (pState === "trusted") report.counts.trusted++;
+
+                    report.items.push({
+                        key: "p" + str(item.id),
+                        id: str(item.id),
+                        isProxy: true,
+                        name: str(item.name) + PROXY_SUFFIX,
+                        path: pPath,
+                        ext: pExt,
+                        category: pCategory,
+                        routeKey: "proxy",
+                        isSequence: pIsSequence,
+                        sequence: pSequence,
+                        branch: branch,
+                        branchResolved: effectiveBranch,
+                        /*
+                         * Never a cleanup candidate: a composition uses the
+                         * element this proxy belongs to.
+                         */
+                        unassigned: false,
+                        forcedUnused: false,
+                        adopted: adopted,
+                        size: pSize,
+                        state: pState,
+                        destRel: pDestRel,
+                        destFile: pIsSequence ? "" : baseName(pPath),
+                        destPath: pDestPath,
+                        misplaced: pMisplaced,
+                        /*
+                         * A proxy is not an item in the Project panel - only the
+                         * footage element it hangs off is.
+                         */
+                        panelTarget: "",
+                        panelPath: "",
+                        panelEligible: false,
+                        hasProxy: false
+                    });
+                }
             }
 
             /* Panel eligibility for compositions, now that `managed` exists. */

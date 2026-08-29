@@ -1,6 +1,6 @@
 /*
  *
- * @map role: 77 проверок хоста: рабочая папка, ветки, маршруты,
+ * @map role: 148 проверок хоста: рабочая папка, ветки, маршруты,
  *           секвенции, границы раскладки.
  * @map status: ready
  * Exercises the parts of the host that decide WHERE something goes. These are
@@ -534,6 +534,242 @@ group("Отправка файла в 00_UNUSED без правки композ
      * иначе удаление порвёт проект.
      */
     check("и по-прежнему используется — удалять нельзя", item.usedIn.length > 0, true);
+})();
+
+group("Прокси");
+(function () {
+    /*
+     * До 1.2.0 элемент с прокси пропускался целиком и висел «постоянной»
+     * проблемой, с которой владельцу нечего было делать. Решение владельца:
+     * прокси — автоматическое исключение, которое всё равно переезжает
+     * внутрь проекта, в папку ветки своей композиции.
+     */
+    var s = buildProject();
+    var item = addFootage(s, "shot.mov", "E:/raw/shot.mov", [s.intro], {
+        useProxy: true,
+        proxy: "E:/raw/proxies/shot_proxy.mov"
+    });
+    mock.registerFile("E:/raw/proxies/shot_proxy.mov", 512);
+
+    var report = auditOf(s);
+    var rows = report.items.filter(function (r) { return r.id === String(item.id); });
+    check("элемент и его прокси — две строки", rows.length, 2);
+
+    var main = rows.filter(function (r) { return !r.isProxy; })[0];
+    var proxy = rows.filter(function (r) { return r.isProxy; })[0];
+
+    check("у строк разные ключи", main.key !== proxy.key, true);
+    check("ключ элемента", main.key, "i" + item.id);
+    check("ключ прокси", proxy.key, "p" + item.id);
+
+    check("сам файл идёт в VIDEO своей ветки",
+        main.destRel, "01_assets/Интро/VIDEO");
+    check("прокси — в PROXY той же ветки",
+        proxy.destRel, "01_assets/Интро/PROXY");
+    check("и путь прокси включает имя файла",
+        proxy.destPath, "D:/Projects/2026/Soul/01_assets/Интро/PROXY/shot_proxy.mov");
+    check("прокси указывает на свой файл, а не на исходник",
+        proxy.path, "E:/raw/proxies/shot_proxy.mov");
+    check("и знает свой размер", proxy.size, 512);
+
+    /*
+     * Прокси не бывает «нераспределённым»: композиция использует элемент,
+     * которому он принадлежит. Иначе кнопка очистки утащила бы его в корзину.
+     */
+    check("прокси никогда не считается неиспользуемым", proxy.unassigned, false);
+    check("и не двигается в панели проекта", proxy.panelEligible, false);
+})();
+
+group("Перелинковка прокси");
+(function () {
+    var s = buildProject();
+    var item = addFootage(s, "shot.mov", "E:/raw/shot.mov", [s.intro], {
+        useProxy: true,
+        proxy: "E:/raw/proxies/shot_proxy.mov"
+    });
+    mock.registerFile("E:/raw/proxies/shot_proxy.mov", 512);
+
+    var copyMain = "D:/Projects/2026/Soul/01_assets/Интро/VIDEO/shot.mov";
+    var copyProxy = "D:/Projects/2026/Soul/01_assets/Интро/PROXY/shot_proxy.mov";
+    mock.registerFile(copyMain, 4096);
+    mock.registerFile(copyProxy, 512);
+
+    /* Хост пишет план в настоящую временную папку, а не в мок. */
+    require("fs").mkdirSync(s.host.tempFolder(), { recursive: true });
+    var plan = s.host.tempFolder() + "/relink-test.json";
+    s.host.writeTextFile(plan, s.host.jsonEncode({
+        items: [
+            { key: "i" + item.id, id: String(item.id), isProxy: false,
+              expectPath: "E:/raw/shot.mov", destPath: copyMain, isSequence: false },
+            { key: "p" + item.id, id: String(item.id), isProxy: true,
+              expectPath: "E:/raw/proxies/shot_proxy.mov",
+              destPath: copyProxy, isSequence: false }
+        ]
+    }));
+
+    var result = s.host.commitFromFile(plan);
+    check("обе строки перелинкованы", result.relinked, 2);
+    check("отказов нет", result.failures.length, 0);
+    check("основной источник переехал на копию",
+        s.host.slashes(item.mainSource.file.fsName), copyMain);
+    check("прокси переехал на свою копию",
+        s.host.slashes(item.proxySource.file.fsName), copyProxy);
+    /* Самое важное: элемент по-прежнему СМОТРИТ в прокси. Сбросить этот
+     * флажок значит молча переключить проект на тяжёлый исходник. */
+    check("и остался включённым", item.useProxy, true);
+})();
+
+group("Старый проект: оставить как есть");
+(function () {
+    /*
+     * Решение владельца, 2026-08-29: одна кнопка объявляет всё, что сейчас
+     * лежит внутри рабочей папки, неприкосновенным — и файл, и место в
+     * панели. Новые импорты защищаются как обычно.
+     */
+    var s = buildProject();
+    var inside = addFootage(s, "old.mp4",
+        "D:/Projects/2026/Soul/old.mp4", [s.intro]);
+    var outside = addFootage(s, "new.mp4", "E:/downloads/new.mp4", [s.intro]);
+
+    var before = itemNamed(auditOf(s), "old.mp4");
+    check("до решения файл в корне считается лежащим не там",
+        before.misplaced, true);
+
+    var settings = s.host.normalizeSettings({ adoptedItems: [String(inside.id)] });
+    check("список принятых сохраняется", settings.adoptedItems.length, 1);
+    s.host.loadSettings = function () { return settings; };
+
+    var report = auditOf(s);
+    var kept = itemNamed(report, "old.mp4");
+    check("файл помечен принятым", kept.adopted, true);
+    check("и больше не считается лежащим не там", kept.misplaced, false);
+    check("состояние — доверенный, а не в очереди", kept.state, "trusted");
+    check("и в панели он не двигается", kept.panelEligible, false);
+
+    /* Файл ЗА пределами рабочей папки не принимается никогда: оставить его
+     * в «Загрузках» — это ровно та потеря, ради которой всё написано. */
+    var still = itemNamed(report, "new.mp4");
+    check("внешний файл всё равно в очереди на защиту", still.state, "pending");
+})();
+
+group("Старый проект: разложить всё по местам");
+(function () {
+    var s = buildProject();
+    addFootage(s, "dump.mp4", "D:/Projects/2026/Soul/dump.mp4", [s.intro]);
+    addFootage(s, "ok.mp4",
+        "D:/Projects/2026/Soul/01_assets/Интро/VIDEO/ok.mp4", [s.intro]);
+
+    var report = auditOf(s);
+    var dump = itemNamed(report, "dump.mp4");
+    var ok = itemNamed(report, "ok.mp4");
+
+    check("сваленный в корень — не на месте", dump.misplaced, true);
+    check("уже разложенный — на месте", ok.misplaced, false);
+    check("счётчик считает только первый", report.counts.misplaced, 1);
+
+    /*
+     * Сравниваются ПАПКИ, а не пути целиком. Копия, которой пришлось взять
+     * другое имя из-за совпадения, лежит там, где надо. Сравнение по имени
+     * держало бы её «не на месте» вечно, и проход копировал бы её снова на
+     * каждом запуске — каждый раз под новым именем.
+     */
+    var s2 = buildProject();
+    addFootage(s2, "ok.mp4",
+        "D:/Projects/2026/Soul/01_assets/Интро/VIDEO/ok (2).mp4", [s2.intro]);
+    var renamed = itemNamed(auditOf(s2), "ok.mp4");
+    check("копия с другим именем в правильной папке — на месте",
+        renamed.misplaced, false);
+})();
+
+group("Забытая композиция отвечает за то, что внутри");
+(function () {
+    /*
+     * Решение владельца, 2026-08-29: если композиция помечена забытой,
+     * перечислять её выключенные слои незачем — одно решение не должно
+     * превращаться в десяток строк о композиции, которая и так уходит.
+     */
+    var s = buildProject();
+    var item = s.project.add(new mock.FootageItem("inside.mp4", "E:/d/inside.mp4", {}));
+    mock.registerFile("E:/d/inside.mp4", 2048);
+    /* Слой внутри TEASER — композиции, которую никто не использует. */
+    s.teaser.addLayer(item, { enabled: false });
+
+    var before = s.host.scanLayers().findings;
+    check("сначала видно и композицию, и слой в ней",
+        before.filter(function (f) { return f.compName === "TEASER"; }).length, 2);
+
+    var settings = s.host.normalizeSettings({
+        disabledLayerForgotten: [s.host.compKey(s.teaser)]
+    });
+    s.host.loadSettings = function () { return settings; };
+
+    var after = s.host.scanLayers().findings
+        .filter(function (f) { return f.compName === "TEASER"; });
+    check("после пометки остаётся одна строка — сама композиция", after.length, 1);
+    check("и это композиция, а не слой", after[0].kind, "comp");
+    check("со статусом «забытая»", after[0].status, "forgotten");
+
+    /* Исключение говорит обратное — «композиция в порядке» — и о слоях
+     * внутри неё не сообщает ничего. */
+    var s3 = buildProject();
+    var item3 = s3.project.add(new mock.FootageItem("in3.mp4", "E:/d/in3.mp4", {}));
+    mock.registerFile("E:/d/in3.mp4", 2048);
+    s3.teaser.addLayer(item3, { enabled: false });
+    var excepted = s3.host.normalizeSettings({
+        disabledLayerExceptions: [
+            { key: s3.host.compKey(s3.teaser), comment: "это будущая рендерная" }
+        ]
+    });
+    s3.host.loadSettings = function () { return excepted; };
+    var rows = s3.host.scanLayers().findings
+        .filter(function (f) { return f.compName === "TEASER"; });
+    check("исключение убирает композицию, но слой остаётся виден", rows.length, 1);
+    check("и это слой", rows[0].kind, "layer");
+})();
+
+group("JSON хоста");
+(function () {
+    var host = mock.loadHost().host;
+    /*
+     * Список должен оставаться списком. Проверка instanceof Array
+     * не работает на массиве, созданном в другом контексте, и кодировщик
+     * молча выдавал {"0":..,"1":..} вместо [..]. План, собранный
+     * так, хост объявляет испорченным и не делает ничего.
+     */
+    check("массив из другого контекста остаётся массивом",
+        host.jsonEncode({ items: [1, 2] }), "{\"items\":[1,2]}");
+    check("строка массивом не становится",
+        host.jsonEncode("ab"), "\"ab\"");
+    check("вложенные объекты целы",
+        host.jsonDecode(host.jsonEncode({ a: [{ b: 1 }] })).a[0].b, 1);
+})();
+
+group("Нормализация новых настроек");
+(function () {
+    var host = mock.loadHost().host;
+    var d = host.defaultSettings();
+
+    check("маршрут прокси есть по умолчанию", d.routes.proxy, "01_assets/{branch}/PROXY");
+    check("легенда цветов открыта у нового проекта", d.legendOpen, true);
+    check("перераспределение выключено по умолчанию", d.legacyRedistribute, false);
+    check("старые копии по умолчанию уезжают в корзину", d.legacyRecycleOld, true);
+
+    var n = host.normalizeSettings({
+        legendOpen: false,
+        legacyRedistribute: true,
+        legacyRecycleOld: false,
+        adoptedItems: ["11", "", "12"]
+    });
+    check("свёрнутая легенда запоминается", n.legendOpen, false);
+    check("режим перераспределения запоминается", n.legacyRedistribute, true);
+    check("отказ от корзины запоминается", n.legacyRecycleOld, false);
+    check("пустые идентификаторы отбрасываются", n.adoptedItems, ["11", "12"]);
+
+    /* Маршрут прокси — такой же маршрут: побег вверх по дереву
+     * заменяется значением по умолчанию, а не отвергается. */
+    var escaped = host.normalizeSettings({ routes: { proxy: "../../куда-нибудь" } });
+    check("побег из рабочей папки не проходит и здесь",
+        escaped.routes.proxy, "01_assets/{branch}/PROXY");
 })();
 
 /* ------------------------------------------------------------------ итог */

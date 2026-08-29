@@ -16,7 +16,7 @@
 
 (function () {
     var host = {};
-    host.version = "1.1.0";
+    host.version = "1.2.0";
 
     /* ---------------------------------------------------------------- utils */
 
@@ -71,13 +71,26 @@
         return out + "\"";
     }
 
+    /*
+     * Duck-typed, not `instanceof Array`. An array that crossed a realm
+     * boundary - anything handed in by a caller that built it elsewhere - fails
+     * the instanceof check while behaving like an array in every way that
+     * matters, and jsonEncode would then quietly emit {"0":...,"1":...} instead
+     * of a list. The same lesson is already recorded in PardDefenderPlan.jsx
+     * for decoded settings; it belongs here too, one layer lower.
+     */
+    function looksLikeArray(value) {
+        return !!value && typeof value === "object" &&
+            typeof value.length === "number" && typeof value.split !== "function";
+    }
+
     function jsonEncode(value) {
         var i, parts, k;
         if (value === null || value === undefined) return "null";
         if (typeof value === "boolean") return value ? "true" : "false";
         if (typeof value === "number") return isFinite(value) ? String(value) : "null";
         if (typeof value === "string") return jsonString(value);
-        if (value instanceof Array) {
+        if (looksLikeArray(value)) {
             parts = [];
             for (i = 0; i < value.length; i++) parts.push(jsonEncode(value[i]));
             return "[" + parts.join(",") + "]";

@@ -99,16 +99,53 @@
         }
     }
 
+    /* -------------------------------------------------------------- proxies */
+
+    /*
+     * A proxy survives item.replace() in most builds and is quietly dropped in
+     * others, and there is no way to find out which without a live After
+     * Effects. So it is captured before every main-source relink and put back
+     * afterwards if it went missing. Restoring a proxy that never moved is a
+     * no-op; not restoring one that was dropped costs the owner their proxy.
+     */
+    function proxyFileOf(item) {
+        try {
+            if (!item.proxySource) return null;
+            return item.proxySource.file || null;
+        } catch (e) { return null; }
+    }
+
+    function captureProxy(item) {
+        var saved = { file: null, useProxy: false };
+        try { saved.useProxy = item.useProxy === true; } catch (e) {}
+        saved.file = proxyFileOf(item);
+        return saved;
+    }
+
+    function restoreProxy(item, saved) {
+        if (!saved || !saved.file) return;
+        if (proxyFileOf(item) === null) {
+            try { item.setProxy(saved.file); } catch (e) { return; }
+        }
+        try { item.useProxy = saved.useProxy; } catch (e2) {}
+    }
+
     /* ------------------------------------------------------------- relinking */
 
     /*
      * Plan shape (written by the client after every copy has been verified):
-     *   { "items": [ { "id": "12", "expectPath": "...", "destPath": "...",
+     *   { "items": [ { "key": "i12", "id": "12", "isProxy": false,
+     *                  "expectPath": "...", "destPath": "...",
      *                  "isSequence": false } ] }
      *
      * expectPath is the source path the audit saw. If the item no longer points
      * there, something changed between audit and commit and this entry is
      * skipped rather than relinked on an assumption.
+     *
+     * An entry with isProxy addresses the item's PROXY rather than its main
+     * source: same protocol, same verification, setProxy instead of replace.
+     * One item can therefore appear twice in a plan, which is why every entry
+     * carries its own key.
      */
     host.commitFromFile = function (planPath) {
         var result = { ok: true, relinked: 0, skipped: 0, failures: [], error: "" };
@@ -139,6 +176,7 @@
                 if (!item || !host.isFootageItem(item)) {
                     result.skipped++;
                     result.failures.push({
+                        key: str(entry.key),
                         id: str(entry.id),
                         code: "RELINK_ITEM_GONE",
                         reason: "The item is no longer in the project."
@@ -146,12 +184,25 @@
                     continue;
                 }
 
-                file = host.footageFile(item);
+                file = entry.isProxy === true
+                    ? proxyFileOf(item)
+                    : host.footageFile(item);
                 currentPath = file ? host.slashes(file.fsName) : "";
+                if (entry.isProxy === true && !file) {
+                    result.skipped++;
+                    result.failures.push({
+                        key: str(entry.key),
+                        id: str(entry.id),
+                        code: "PROXY_GONE",
+                        reason: "The item no longer has a proxy."
+                    });
+                    continue;
+                }
                 if (entry.expectPath &&
                     currentPath.toLowerCase() !== host.slashes(entry.expectPath).toLowerCase()) {
                     result.skipped++;
                     result.failures.push({
+                        key: str(entry.key),
                         id: str(entry.id),
                         code: "RELINK_SOURCE_CHANGED",
                         reason: "The source changed after the audit; left untouched."
@@ -163,6 +214,7 @@
                 if (!destination.exists) {
                     result.skipped++;
                     result.failures.push({
+                        key: str(entry.key),
                         id: str(entry.id),
                         code: "RELINK_MISSING_COPY",
                         reason: "The verified copy is missing: " + str(entry.destPath)
@@ -171,23 +223,36 @@
                 }
 
                 /*
-                 * A proxy-driven item would have its proxy relinked, not its
-                 * main source. That is a separate transaction and is out of
-                 * scope for this pass.
+                 * Until 1.1.0 a proxied item was refused here and reported as a
+                 * permanent problem the owner could do nothing about. Owner's
+                 * decision, 2026-08-29: a proxy is an automatic exception, not a
+                 * fault - it is repointed at its own verified copy exactly like
+                 * any other file, using setProxy instead of replace.
                  */
-                var usesProxy = false;
-                try { usesProxy = item.useProxy === true; } catch (eProxy) {}
-                if (usesProxy) {
-                    result.skipped++;
-                    result.failures.push({
-                        id: str(entry.id),
-                        code: "RELINK_PROXY",
-                        reason: "The item uses a proxy and was left untouched."
-                    });
+                if (entry.isProxy === true) {
+                    var wasUsing = false;
+                    try { wasUsing = item.useProxy === true; } catch (eUse) {}
+                    try {
+                        if (entry.isSequence === true) {
+                            item.setProxyWithSequence(destination, false);
+                        } else {
+                            item.setProxy(destination);
+                        }
+                        try { item.useProxy = wasUsing; } catch (eUse2) {}
+                        result.relinked++;
+                    } catch (proxyError) {
+                        result.failures.push({
+                            key: str(entry.key),
+                            id: str(entry.id),
+                            code: "PROXY_REJECTED",
+                            reason: str(proxyError)
+                        });
+                    }
                     continue;
                 }
 
                 saved = captureInterpretation(item);
+                var savedProxy = captureProxy(item);
                 try {
                     if (entry.isSequence === true) {
                         item.replaceWithSequence(destination, false);
@@ -195,9 +260,11 @@
                         item.replace(destination);
                     }
                     restoreInterpretation(item, saved);
+                    restoreProxy(item, savedProxy);
                     result.relinked++;
                 } catch (relinkError) {
                     result.failures.push({
+                        key: str(entry.key),
                         id: str(entry.id),
                         code: "RELINK_REJECTED",
                         reason: str(relinkError)

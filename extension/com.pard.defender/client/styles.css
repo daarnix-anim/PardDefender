@@ -422,6 +422,111 @@ html, body {
 .stats b { color: var(--text); font-weight: 600; }
 .stats .stat-session { color: var(--green); }
 
+/* ----------------------------------------------------------- colour legend */
+
+/* The legend is reference material, not a control: quiet by default, one click
+   to fold away, and it stays folded for that project. */
+.legend {
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface);
+}
+
+.legend-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 6px 10px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.legend-caret { color: var(--text-dim); font-size: 10px; }
+
+.legend-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 10px 9px;
+}
+
+.legend-rule { display: flex; flex-direction: column; gap: 3px; }
+
+.legend-rule-head { display: flex; align-items: center; gap: 6px; }
+
+.legend-swatch {
+    width: 11px;
+    height: 11px;
+    flex: none;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.45);
+}
+
+.legend-name { font-weight: 600; letter-spacing: 0.03em; font-size: 11px; }
+
+.legend-line {
+    padding-left: 17px;
+    color: var(--text-dim);
+    line-height: 1.45;
+}
+
+.legend-tail {
+    padding-top: 2px;
+    border-top: 1px solid var(--line);
+    color: var(--text-dim);
+    line-height: 1.45;
+}
+
+/* -------------------------------------------------------------- cloud row */
+
+.cloud-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.cloud-text { color: var(--text-dim); font-size: 11px; }
+
+/* ---------------------------------------------------------- legacy project */
+
+.legacy-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid #33506b;
+    border-left: 3px solid var(--blue);
+    border-radius: 3px;
+    background: #1f2733;
+}
+
+.legacy-section .section-title { color: var(--blue); }
+.legacy-note { color: var(--text-dim); line-height: 1.45; }
+.legacy-note.small { font-size: 11px; }
+
+.wide {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+}
+
+.wide:hover:not(:disabled) { border-color: var(--blue); color: #fff; }
+.wide:disabled { opacity: 0.4; cursor: default; }
+.wide.confirming { border-color: var(--blue); background: #24384f; color: #fff; }
+.wide.danger-line.confirming { border-color: var(--red); background: #3a2323; }
+
 /* ------------------------------------------------------------ unused block */
 
 .disk-project { color: var(--text-dim); font-size: 11px; }

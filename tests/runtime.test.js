@@ -2,7 +2,7 @@
  * Exercises the four client modules that decide what the owner sees and when
  * PardDefender tries again: the issue store, the counters, protected-file
  *
- * @map role: 82 проверки клиентских модулей: ошибки, метрики, сверка,
+ * @map role: 102 проверки клиентских модулей: ошибки, метрики, сверка,
  *           обновления.
  * @map status: ready
  * verification, and update-version comparison.
@@ -437,6 +437,52 @@ group("Код DEST_BLOCKED");
     Issues.attach(workspace);
     check("и переживает перезапуск",
         Issues.get("i90").destPath, "D:/ws/01_assets/A/VIDEO/blocked.mp4");
+})();
+
+group("Облачная папка и закрепление файлов");
+(function () {
+    /*
+     * Синхронизация остаётся включённой: облако — это резервная копия.
+     * Опасность в другом: клиент облака выгружает локальный файл ради места,
+     * и он превращается в заглушку, которая открывается, но не отдаёт байты.
+     */
+    var House = mod.PardHousekeeping;
+
+    var yandex = House.cloudInfo("D:/Yandex.Disk/MyPrograms/Soul");
+    check("Яндекс.Диск узнаётся по пути", yandex.cloud, true);
+    check("и называется по-человечески", yandex.label, "Яндекс.Диск");
+    check("корень синхронизации найден", yandex.root, "D:/Yandex.Disk");
+
+    check("папка с точкой в имени тоже",
+        House.cloudInfo("D:/Yandex Disk/Soul").label, "Яндекс.Диск");
+    check("OneDrive узнаётся",
+        House.cloudInfo("C:/Users/t/OneDrive - Studio/Soul").label, "OneDrive");
+
+    check("обычный диск облаком не считается",
+        House.cloudInfo("D:/Projects/2026/Soul").cloud, false);
+    /* Слово внутри имени папки — не признак синхронизации. */
+    check("совпадение в середине имени не срабатывает",
+        House.cloudInfo("D:/Projects/yandex-brandbook/Soul").cloud, false);
+    check("пустой путь не роняет", House.cloudInfo("").cloud, false);
+})();
+
+group("Сверка различает элемент и его прокси");
+(function () {
+    var dir = root + "/verify-keys";
+    fs.mkdirSync(dir.replace(/\//g, path.sep), { recursive: true });
+    Queue.writeText(dir + "/.parddefender/assets.tsv", "");
+    Verify.attach(dir);
+
+    var outcome = Verify.sweepAll([
+        { key: "i7", id: "7", name: "shot.mov", state: "protected",
+          path: dir + "/gone.mov", size: 10 },
+        { key: "p7", id: "7", name: "shot.mov — прокси", state: "protected",
+          path: dir + "/gone-proxy.mov", size: 10 }
+    ]);
+
+    check("обе пропажи замечены", outcome.findings.length, 2);
+    check("и получили разные ключи",
+        [outcome.findings[0].key, outcome.findings[1].key], ["i7", "p7"]);
 })();
 
 /* ------------------------------------------------------------------ итог */
