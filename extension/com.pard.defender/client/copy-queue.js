@@ -43,8 +43,15 @@ var PardCopyQueue = (function () {
      * do something - keys off the code, never off the message text, so a Node
      * version that rewords an error cannot change PardDefender's behaviour.
      */
-    function codeForError(error, fallback) {
+    function codeForError(error, fallback, side) {
         var errno = error && error.code ? String(error.code) : "";
+        /*
+         * The same errno means opposite things on the two sides. ENOENT while
+         * reading is a missing source; ENOENT while WRITING means the
+         * destination folder is not there - and reporting that as "исходник не
+         * найден" sent the owner looking for a file that was never lost.
+         */
+        if (errno === "ENOENT" && side === "dest") return "DEST_UNWRITABLE";
         switch (errno) {
         case "ENOENT": return "SOURCE_MISSING";
         case "EACCES":
@@ -81,21 +88,49 @@ var PardCopyQueue = (function () {
 
     api.exists = function (target) { return statOf(target) !== null; };
 
+    /*
+     * Returns { ok, code, blockedBy }. It must never answer "yes" for a path
+     * that exists but is a FILE.
+     *
+     * Found on a live project 2026-08-29: 1.0.0 had written media as a file
+     * literally called "VIDEO" (no extension), exactly where 1.0.1 then needed
+     * the VIDEO folder. mkdirSync throws EEXIST, the per-segment fallback
+     * swallows it, and the old `statOf(dir) !== null` check was happy - a file
+     * stats just fine. The copy then died with ENOENT on the write, and because
+     * ENOENT was read as a source problem the owner was told the исходник was
+     * missing while it sat there perfectly readable.
+     */
     function ensureDir(dir) {
         var native = toNative(dir);
+        var existing = statOf(dir);
+
+        if (existing) {
+            if (existing.isDirectory()) return { ok: true };
+            return { ok: false, code: "DEST_BLOCKED", blockedBy: toSlash(dir) };
+        }
+
         try {
             fs.mkdirSync(native, { recursive: true });
-            return true;
         } catch (e) {
-            /* Older Node in some CEP builds has no recursive mkdir. */
-            var parts = toSlash(dir).split("/"), current = "", i;
+            /* Older Node in some CEP builds has no recursive mkdir. Walk down
+             * and stop at the first segment that is occupied by a file. */
+            var parts = toSlash(dir).split("/"), current = "", i, segment;
             for (i = 0; i < parts.length; i++) {
                 current = current ? current + "/" + parts[i] : parts[i];
                 if (!current || /^[A-Za-z]:$/.test(current)) continue;
+                segment = statOf(current);
+                if (segment && !segment.isDirectory()) {
+                    return { ok: false, code: "DEST_BLOCKED", blockedBy: current };
+                }
+                if (segment) continue;
                 try { fs.mkdirSync(toNative(current)); } catch (e2) {}
             }
-            return statOf(dir) !== null;
         }
+
+        var made = statOf(dir);
+        if (made && made.isDirectory()) return { ok: true };
+        if (made) return { ok: false, code: "DEST_BLOCKED", blockedBy: toSlash(dir) };
+        return { ok: false, code: "DEST_UNWRITABLE" };
     }
 
     api.ensureDir = ensureDir;
@@ -236,11 +271,14 @@ var PardCopyQueue = (function () {
             });
             return;
         }
-        if (!ensureDir(toSlash(destPath).replace(/\/[^\/]*$/, ""))) {
+        var folder = ensureDir(toSlash(destPath).replace(/\/[^\/]*$/, ""));
+        if (!folder.ok) {
             onDone({
                 ok: false,
-                code: "DEST_UNWRITABLE",
-                reason: "Не удалось создать папку назначения."
+                code: folder.code,
+                reason: folder.code === "DEST_BLOCKED"
+                    ? "На месте папки лежит файл: " + folder.blockedBy
+                    : "Не удалось создать папку назначения."
             });
             return;
         }
@@ -309,11 +347,11 @@ var PardCopyQueue = (function () {
         });
 
         readStream.on("error", function (error) {
-            abort(codeForError(error, "SOURCE_UNREADABLE"), "Чтение не удалось: " + error);
+            abort(codeForError(error, "SOURCE_UNREADABLE", "source"), "Чтение не удалось: " + error);
         });
 
         writeStream.on("error", function (error) {
-            abort(codeForError(error, "DEST_UNWRITABLE"), "Запись не удалась: " + error);
+            abort(codeForError(error, "DEST_UNWRITABLE", "dest"), "Запись не удалась: " + error);
         });
 
         writeStream.on("close", function () {
@@ -336,7 +374,7 @@ var PardCopyQueue = (function () {
                 removeQuietly(partial);
                 finish({
                     ok: false,
-                    code: codeForError(renameError, "DEST_UNWRITABLE"),
+                    code: codeForError(renameError, "DEST_UNWRITABLE", "dest"),
                     reason: "Проверенную копию не удалось поставить на место: " + renameError
                 });
                 return;
@@ -452,9 +490,14 @@ var PardCopyQueue = (function () {
             });
         }
 
-        if (task.isSequence && !ensureDir(destFolder)) {
-            fail("DEST_UNWRITABLE", "Не удалось создать папку секвенции: " + destFolder);
-            return;
+        if (task.isSequence) {
+            var seqFolder = ensureDir(destFolder);
+            if (!seqFolder.ok) {
+                fail(seqFolder.code, seqFolder.code === "DEST_BLOCKED"
+                    ? "На месте папки секвенции лежит файл: " + seqFolder.blockedBy
+                    : "Не удалось создать папку секвенции: " + destFolder);
+                return;
+            }
         }
         next();
     }

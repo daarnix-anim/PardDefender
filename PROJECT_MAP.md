@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **28** · связей: **51** · собрано: 2026-08-29 03:48
+Файлов: **28** · связей: **53** · собрано: 2026-08-29 04:00
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -49,7 +49,7 @@
 
 ### `copy-queue.js`
 
-`extension/com.pard.defender/client/copy-queue.js` · 560 строк · работает
+`extension/com.pard.defender/client/copy-queue.js` · 603 строк · работает
 
 Проверенное копирование: потоковая запись в .pdpart, сверка размера, дедуп по SHA-256, откат и коды ошибок. Оригинал не трогается никогда.
 
@@ -65,15 +65,15 @@
 
 ### `housekeeping.js`
 
-`extension/com.pard.defender/client/housekeeping.js` · 191 строк · работает
+`extension/com.pard.defender/client/housekeeping.js` · 237 строк · работает
 
 Вес проекта на диске, удаление в Корзину и открытие файла в проводнике.
 
-Используется в: `index.html`, `main.js`, `CLAUDE.md`
+Используется в: `index.html`, `main.js`, `runtime.test.js`, `CLAUDE.md`
 
 ### `issues.js`
 
-`extension/com.pard.defender/client/issues.js` · 291 строк · работает
+`extension/com.pard.defender/client/issues.js` · 300 строк · работает
 
 Хранилище проблем: четыре класса ошибок, расписание повторов, предохранитель. Одна строка на элемент, а не на попытку.
 
@@ -83,7 +83,7 @@
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 1481 строк · работает
+`extension/com.pard.defender/client/main.js` · 1567 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
@@ -151,7 +151,7 @@
 
 ### `copy-queue.test.js`
 
-`tests/copy-queue.test.js` · 220 строк · работает
+`tests/copy-queue.test.js` · 268 строк · работает
 
 24 проверки копирования на настоящих файлах во временной папке.
 
@@ -189,11 +189,11 @@
 
 ### `runtime.test.js`
 
-`tests/runtime.test.js` · 400 строк · работает
+`tests/runtime.test.js` · 452 строк · работает
 
 82 проверки клиентских модулей: ошибки, метрики, сверка, обновления.
 
-Использует: `issues.js`, `stats.js`, `verify.js`, `updater.js`, `copy-queue.js`
+Использует: `issues.js`, `stats.js`, `verify.js`, `updater.js`, `copy-queue.js`, `housekeeping.js`
 
 Используется в: `run-all.js`
 
@@ -235,7 +235,7 @@
 
 ### `CLAUDE.md`
 
-`CLAUDE.md` · 244 строк · работает
+`CLAUDE.md` · 253 строк · работает
 
 Точка входа для любого агента и нового чата: правила, архитектура, команды.  @map status: ready  @map layer: docs -->
 
@@ -249,7 +249,7 @@ _Описание не задано._
 
 ### `README.md`
 
-`README.md` · 588 строк · работает
+`README.md` · 652 строк · работает
 
 Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
 

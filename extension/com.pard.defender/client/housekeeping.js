@@ -164,27 +164,73 @@ var PardHousekeeping = (function () {
     /* ------------------------------------------------------------- explorer */
 
     /*
-     * explorer.exe wants "/select,<path>" as ONE argument - the comma binds the
-     * path to the switch. Passing them as two argv entries, which is the obvious
-     * thing to write, silently opens nothing at all.
+     * Opening a file's location in Explorer, which is fiddlier than it looks.
+     *
+     * explorer.exe does not use CRT argv parsing - it reads the raw command
+     * line. `execFile("explorer.exe", ["/select," + path])` looks right and is
+     * what 1.0.1 shipped, but Node quotes any argument containing a space, so
+     * explorer receives ONE quoted token `"/select,C:\a folder\clip.mp4"`,
+     * fails to recognise the switch, and silently does nothing. Every path in
+     * this project has spaces in it, so the button never worked once.
+     *
+     * The quotes have to wrap the PATH only. That means handing cmd a raw
+     * command line rather than an argv array.
+     *
+     * Returns a reason instead of a bare boolean: the caller has to be able to
+     * tell "opened" from "that file is not there any more".
      */
-    api.reveal = function (target) {
-        if (!childProcess || !target) return false;
-        var native = toNative(target);
-        var exists = false;
-        try { exists = !!fs.statSync(native); } catch (e) { exists = false; }
+    function looksInjectable(value) {
+        /* Windows forbids " in a file name, and % would be expanded by cmd. */
+        return /["%]/.test(String(value));
+    }
 
-        var args = exists
-            ? ["/select," + native]
-            /* The file is gone - the next best thing is its folder. */
-            : [toNative(toSlash(target).replace(/\/[^\/]*$/, ""))];
-
+    function openFolder(folder) {
         try {
-            childProcess.execFile("explorer.exe", args, { windowsHide: true },
-                function () { /* explorer exits non-zero even on success */ });
+            childProcess.execFile("explorer.exe", [toNative(folder)],
+                { windowsHide: true }, function () {});
             return true;
-        } catch (e2) { return false; }
+        } catch (e) { return false; }
+    }
+
+    api.revealFile = function (target) {
+        if (!childProcess || !fs) return { ok: false, code: "unavailable" };
+        if (!target) return { ok: false, code: "none" };
+
+        var slash = toSlash(target);
+        var folder = slash.replace(/\/[^\/]*$/, "");
+        var stats = null;
+        try { stats = fs.statSync(toNative(slash)); } catch (e) { stats = null; }
+
+        if (stats) {
+            if (looksInjectable(slash)) {
+                /* Cannot quote this safely - settle for the containing folder. */
+                return openFolder(folder)
+                    ? { ok: true, code: "folder", path: folder }
+                    : { ok: false, code: "unavailable" };
+            }
+            try {
+                childProcess.exec(
+                    'explorer.exe /select,"' + toNative(slash) + '"',
+                    { windowsHide: true },
+                    function () { /* explorer always exits non-zero */ }
+                );
+                return { ok: true, code: "selected", path: slash };
+            } catch (e2) { return { ok: false, code: "unavailable" }; }
+        }
+
+        /* The file is gone. Its folder is still useful if it survived. */
+        var folderStats = null;
+        try { folderStats = fs.statSync(toNative(folder)); } catch (e3) {}
+        if (folderStats && folderStats.isDirectory()) {
+            return openFolder(folder)
+                ? { ok: false, code: "fileGone", path: slash, folder: folder }
+                : { ok: false, code: "missing", path: slash };
+        }
+        return { ok: false, code: "missing", path: slash };
     };
+
+    /* Kept for callers that only need "try to show this". */
+    api.reveal = function (target) { return api.revealFile(target).ok; };
 
     return api;
 })();

@@ -421,6 +421,7 @@
                 path: task ? task.sourcePath : "",
                 code: r.code || "COPY_FAILED",
                 detail: r.reason,
+                destPath: task ? task.destPath : "",
                 sourceSize: task ? task.size : 0
             });
         }
@@ -460,6 +461,7 @@
                     path: task ? task.sourcePath : "",
                     code: failure.code || "RELINK_REJECTED",
                     detail: failure.reason,
+                    destPath: task ? task.destPath : "",
                     sourceSize: task ? task.size : 0,
                     copied: true
                 });
@@ -1035,6 +1037,77 @@
         return button;
     }
 
+    /*
+     * Where a given element physically is, on both sides:
+     *
+     *   internal - the copy inside the workspace, if one exists yet
+     *   external - the original it came from, wherever that was
+     *
+     * A protected element has both: the manifest remembers where it came from.
+     * A pending one has only the external original - unless a copy was already
+     * made and the relink failed, in which case the copy is on disk too and is
+     * exactly what the owner will want to look at.
+     */
+    function locationsFor(id, fallbackPath, fallbackDest) {
+        var internal = "", external = "", item = null, i;
+        var items = state.report && state.report.items ? state.report.items : [];
+
+        for (i = 0; i < items.length; i++) {
+            if (items[i].id === id) { item = items[i]; break; }
+        }
+
+        if (item) {
+            if (item.state === "protected") {
+                internal = item.path;
+                var record = PardVerify.recordFor(item.path);
+                external = record ? record.sourcePath : "";
+            } else {
+                external = item.path;
+                if (item.destPath && PardCopyQueue.statOf(item.destPath)) {
+                    internal = item.destPath;
+                }
+            }
+        } else {
+            /* The element is gone from the project, but the issue row still
+             * remembers the paths it was recorded with. */
+            external = fallbackPath || "";
+            if (fallbackDest && PardCopyQueue.statOf(fallbackDest)) {
+                internal = fallbackDest;
+            }
+        }
+
+        /* Never offer one path twice under two different labels. */
+        if (internal && external &&
+            String(internal).toLowerCase() === String(external).toLowerCase()) {
+            external = "";
+        }
+        return { internal: internal, external: external };
+    }
+
+    /*
+     * Opens a location and, when it cannot, says exactly why. "Нажимаю и ничего
+     * не происходит" was the entire complaint about the previous button.
+     */
+    function revealAndReport(target, label) {
+        var result = PardHousekeeping.revealFile(target);
+        if (result.code === "selected") return;
+        if (result.code === "folder") {
+            log(label + ": открыл папку — выделить сам файл не получилось.", "work");
+            return;
+        }
+        if (result.code === "fileGone") {
+            log(label + " недоступен: файл удалён или перемещён. Открыл его папку — " +
+                result.folder, "warn");
+            return;
+        }
+        if (result.code === "missing") {
+            log(label + " недоступен: по этому пути нет ни файла, ни папки — " +
+                result.path, "warn");
+            return;
+        }
+        log(label + ": не удалось открыть проводник.", "bad");
+    }
+
     function showInProject(id, name) {
         evalScript("$.global.PardDefenderHost.selectItemById('" +
             escapeForExtendScript(id) + "');", function (raw) {
@@ -1128,13 +1201,22 @@
             actions.appendChild(iconButton("🔎", "Показать в панели Project",
                 function () { showInProject(record.id, record.name); }));
         }
-        if (record.path) {
-            actions.appendChild(iconButton("📁", "Показать файл в проводнике",
-                function () {
-                    if (!PardHousekeeping.reveal(record.path)) {
-                        log("Не удалось открыть проводник.", "bad");
-                    }
-                }));
+
+        /*
+         * Two separate destinations, because they answer different questions:
+         * "где лежит копия внутри проекта" and "где лежал оригинал". A file can
+         * have one, both, or neither, so each button only appears when there is
+         * something to open.
+         */
+        var places = locationsFor(record.id, record.path, record.destPath);
+        if (places.internal) {
+            actions.appendChild(iconButton("📁", "Внутренний источник — копия в папке проекта:\n" +
+                places.internal,
+                function () { revealAndReport(places.internal, "Внутренний источник"); }));
+        }
+        if (places.external) {
+            actions.appendChild(iconButton("📤", "Внешний источник — оригинал:\n" + places.external,
+                function () { revealAndReport(places.external, "Внешний источник"); }));
         }
 
         actions.appendChild(iconButton("✕", "Убрать из списка", function () {
@@ -1178,7 +1260,9 @@
         for (i = 0; i < rows.length; i++) {
             var row = document.createElement("div");
             row.className = "queue-row";
-            row.title = rows[i].path + "\n→ " + rows[i].destRel;
+            /* Both sides in the tooltip: where the file is now, and where it goes. */
+            row.title = (rows[i].state === "protected" ? "Внутренний: " : "Внешний: ") +
+                rows[i].path + "\n→ " + (rows[i].destPath || rows[i].destRel);
 
             var dot = document.createElement("span");
             dot.className = "dot " + (rows[i].state === "missing" ? "red"
@@ -1381,7 +1465,9 @@
 
         el.unusedReveal.onclick = function () {
             var totals = unusedTotals();
-            if (totals.count) PardHousekeeping.reveal(totals.list[0].path);
+            if (totals.count) {
+                revealAndReport(totals.list[0].path, "Папка 00_UNUSED");
+            }
         };
 
         /*

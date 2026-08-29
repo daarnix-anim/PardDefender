@@ -47,7 +47,7 @@ function loadModules() {
     vm.createContext(sandbox);
 
     var dir = path.join(__dirname, "..", "extension", "com.pard.defender", "client");
-    ["copy-queue.js", "issues.js", "stats.js", "verify.js", "updater.js"]
+    ["copy-queue.js", "issues.js", "stats.js", "verify.js", "housekeeping.js", "updater.js"]
         .forEach(function (name) {
             vm.runInContext(fs.readFileSync(path.join(dir, name), "utf8"),
                 sandbox, { filename: name });
@@ -385,6 +385,58 @@ group("Показывать ли баннер");
     check("следующая после скрытой — показываем",
         !!Updater.evaluate({ version: "1.2.0", summary: "s" },
             { dismissedVersion: "1.1.0" }), true);
+})();
+
+group("Показать в проводнике");
+(function () {
+    var House = mod.PardHousekeeping;
+    var base = workspace + "/reveal тест";
+    fs.mkdirSync(base.replace(/\//g, path.sep), { recursive: true });
+
+    var present = base + "/clip name.mp4";
+    fs.writeFileSync(present.replace(/\//g, path.sep), "x");
+
+    /*
+     * Регресс 2026-08-29: кнопка молча ничего не делала. explorer.exe
+     * читает сырую командную строку, а Node берёт в кавычки весь аргумент с пробелами,
+     * и ключ /select перестаёт распознаваться. Пробелы есть в каждом пути
+     * этого проекта, поэтому кнопка не работала ни разу.
+     */
+    check("существующий файл с пробелами — выделяется",
+        House.revealFile(present).code, "selected");
+    check("пропавший файл, папка жива — говорим об этом",
+        House.revealFile(base + "/удалён.mp4").code, "fileGone");
+    check("нет ни файла, ни папки",
+        House.revealFile(workspace + "/нету/ничего.mp4").code, "missing");
+    check("пустой путь не роняет", House.revealFile("").code, "none");
+
+    /* Кавычка или %VAR% в имени — открываем папку, а не рискуем командной строкой. */
+    var percent = base + "/100%_готово.mp4";
+    fs.writeFileSync(percent.replace(/\//g, path.sep), "x");
+    check("опасное имя — только папка, без /select",
+        House.revealFile(percent).code, "folder");
+
+    check("старый reveal продолжает работать", House.reveal(present), true);
+})();
+
+group("Код DEST_BLOCKED");
+(function () {
+    check("класс — требует владельца",
+        Issues.describe("DEST_BLOCKED").klass, "owner");
+    check("не системная — не ставит весь режим на паузу",
+        Issues.isSystem("DEST_BLOCKED"), false);
+
+    Issues.attach(workspace);
+    var r = Issues.record({
+        key: "i90", id: "90", name: "blocked.mp4", code: "DEST_BLOCKED",
+        path: "E:/src/blocked.mp4", destPath: "D:/ws/01_assets/A/VIDEO/blocked.mp4"
+    });
+    check("путь копии сохранён",
+        r.destPath, "D:/ws/01_assets/A/VIDEO/blocked.mp4");
+    Issues.save();
+    Issues.attach(workspace);
+    check("и переживает перезапуск",
+        Issues.get("i90").destPath, "D:/ws/01_assets/A/VIDEO/blocked.mp4");
 })();
 
 /* ------------------------------------------------------------------ итог */

@@ -40,6 +40,12 @@ var PardIssues = (function () {
 
         DISK_FULL:             ["system",    "на диске не хватает места"],
         DEST_UNWRITABLE:       ["system",    "папка назначения недоступна для записи"],
+        /*
+         * Not a system fault and not retryable: a FILE is sitting where a
+         * folder has to be. Nothing changes until the owner moves it, so this
+         * is an "owner" issue with the blocking path spelled out in the detail.
+         */
+        DEST_BLOCKED:          ["owner",     "на месте папки назначения лежит файл — уберите его"],
         PATH_INVALID:          ["owner",     "недопустимый путь назначения"],
         PATH_TOO_LONG:         ["owner",     "путь назначения слишком длинный"],
         SEQUENCE_EMPTY:        ["owner",     "кадры секвенции не найдены"],
@@ -133,6 +139,9 @@ var PardIssues = (function () {
         record.text = meta.text;
         record.detail = entry.detail || "";
         record.path = entry.path || record.path || "";
+        /* Where the copy was headed. Kept so the row can offer to open the
+         * internal copy even after the element left the project. */
+        record.destPath = entry.destPath || record.destPath || "";
         record.sourceSize = entry.sourceSize;
         record.copied = entry.copied === true;
         record.lastSeen = now;

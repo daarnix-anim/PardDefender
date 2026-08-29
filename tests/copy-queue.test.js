@@ -61,6 +61,8 @@ function writeSource(name, content) {
     return target;
 }
 
+function native(target) { return String(target).replace(/\//g, path.sep); }
+
 function readFile(target) {
     try { return fs.readFileSync(target.replace(/\//g, path.sep), "utf8"); }
     catch (e) { return null; }
@@ -181,6 +183,52 @@ steps.push(function (next) {
             /shot_a_00001\.png$/.test(results[0].destPath), true);
         next();
     });
+});
+
+steps.push(function (next) {
+    group("Файл на месте папки");
+    /*
+     * Регресс на живой баг 2026-08-29. 1.0.0 оставила медиафайл с именем
+     * "VIDEO" без расширения ровно там, где 1.0.1 нужна папка VIDEO. mkdir бросал
+     * EEXIST, запасной путь его глотал, а проверка "путь существует" была довольна —
+     * файл тоже существует. Копия падала с ENOENT, и это трактовалось как
+     * "исходник не найден" — про файл, который прекрасно читался.
+     */
+    var blockedDir = root + "/workspace/01_assets/Blocked/VIDEO";
+    fs.mkdirSync(native(root + "/workspace/01_assets/Blocked"), { recursive: true });
+    fs.writeFileSync(native(blockedDir), "я файл, а не папка");
+
+    var probe = queue.ensureDir(blockedDir);
+    check("ensureDir не считает файл папкой", probe.ok, false);
+    check("код называет причину", probe.code, "DEST_BLOCKED");
+    check("сказано, что именно мешает", probe.blockedBy, blockedDir);
+
+    var source = writeSource("blocked.mp4", "0123456789");
+    run([{ id: "10", sourcePath: source, destPath: blockedDir + "/blocked.mp4", size: 10 }],
+        null, function (results) {
+            check("копирование отказано", results[0].ok, false);
+            check("это не проблема исходника",
+                results[0].code !== "SOURCE_MISSING", true);
+            check("код — заблокированное назначение", results[0].code, "DEST_BLOCKED");
+            check("блокирующий файл не тронут",
+                readFile(blockedDir), "я файл, а не папка");
+            check("оригинал не тронут", readFile(source), "0123456789");
+            next();
+        });
+});
+
+steps.push(function (next) {
+    group("Сторона ошибки");
+    /* Один и тот же errno означает разное на чтении и на записи. */
+    check("ENOENT при чтении — нет исходника",
+        queue.codeForError({ code: "ENOENT" }, "COPY_FAILED", "source"), "SOURCE_MISSING");
+    check("ENOENT при записи — проблема назначения",
+        queue.codeForError({ code: "ENOENT" }, "COPY_FAILED", "dest"), "DEST_UNWRITABLE");
+    check("без указания стороны — прежнее поведение",
+        queue.codeForError({ code: "ENOENT" }, "COPY_FAILED"), "SOURCE_MISSING");
+    check("нет места — системная",
+        queue.codeForError({ code: "ENOSPC" }, "COPY_FAILED", "dest"), "DISK_FULL");
+    next();
 });
 
 steps.push(function (next) {
