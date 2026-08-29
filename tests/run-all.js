@@ -1,4 +1,7 @@
 /*
+ *
+ * @map role: Прогоняет все наборы и выдаёт один вердикт.
+ * @map status: ready
  * Runs every suite and reports one verdict.
  *   node tests/run-all.js
  */
@@ -8,6 +11,7 @@ var childProcess = require("child_process");
 var path = require("path");
 
 var suites = ["host.test.js", "copy-queue.test.js", "runtime.test.js"];
+
 var failedSuites = [];
 
 suites.forEach(function (name) {

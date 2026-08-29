@@ -1,6 +1,10 @@
 /*
  * PardDefender - the two mutating passes: relink and Project-panel organisation.
  *
+ * @map role: Две мутирующие операции: перелинковка на проверенную копию с
+ *           сохранением интерпретации и раскладка панели проекта.
+ * @map status: ready
+ *
  * Both run inside a single short undo group and both re-verify their inputs
  * immediately before touching anything. The client may have spent minutes
  * copying files since the audit that produced the plan, and the owner may have

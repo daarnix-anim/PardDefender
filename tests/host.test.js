@@ -1,4 +1,8 @@
 /*
+ *
+ * @map role: 77 проверок хоста: рабочая папка, ветки, маршруты,
+ *           секвенции, границы раскладки.
+ * @map status: ready
  * Exercises the parts of the host that decide WHERE something goes. These are
  * the rules that would quietly misfile assets across a whole project, and they
  * are the only parts that can be verified without After Effects running.

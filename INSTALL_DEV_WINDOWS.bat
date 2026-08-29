@@ -1,4 +1,7 @@
 @echo off
+rem @map role: Ставит расширение в %APPDATA%/Adobe/CEP/extensions и включает PlayerDebugMode.
+rem @map status: ready
+rem @map layer: install
 setlocal
 
 set "EXT_ID=com.pard.defender"

@@ -1,5 +1,9 @@
 /*
  * PardDefender - workspace resolution, settings, branch resolution, audit.
+ *
+ * @map role: Рабочая папка, настройки проекта и дерево композиций: какая
+ *           композиция рендерная и к какой ветке относится элемент.
+ * @map status: ready
  * Loaded after PardDefenderCore.jsx. ES3 only.
  */
 

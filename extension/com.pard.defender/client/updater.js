@@ -1,6 +1,13 @@
 /*
  * PardDefender - update check.
  *
+ * @map role: Проверка обновлений: сначала публичный фид, потом GitHub
+ *           Releases. Белый список хостов, токен внутрь не зашивается.
+ * @map status: partial
+ * @map note: Репозиторий приватный, а публичный фид ещё не задан —
+ *           проверка молча ничего не находит. Нужен feedUrl в
+ *           %APPDATA%/PardDefender/update.json.
+ *
  * Two sources are tried in order, first usable answer wins:
  *
  *   1. A release feed - one small public JSON containing nothing but a version

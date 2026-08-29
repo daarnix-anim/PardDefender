@@ -1,6 +1,11 @@
 /*
  * PardDefender - the audit pass.
  *
+ * @map role: Один проход по проекту → один JSON-отчёт: где что лежит,
+ *           куда должно попасть на диске и в панели. Решений о времени
+ *           не принимает.
+ * @map status: ready
+ *
  * Produces one JSON report describing what the project looks like right now:
  * where the workspace is, which compositions are render roots, which branch each
  * item belongs to, where every unprotected file should be copied, and where every

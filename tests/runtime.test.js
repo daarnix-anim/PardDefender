@@ -1,6 +1,10 @@
 /*
  * Exercises the four client modules that decide what the owner sees and when
  * PardDefender tries again: the issue store, the counters, protected-file
+ *
+ * @map role: 82 проверки клиентских модулей: ошибки, метрики, сверка,
+ *           обновления.
+ * @map status: ready
  * verification, and update-version comparison.
  *
  * No network is touched. The updater is tested through its pure parts only.

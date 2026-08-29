@@ -1,6 +1,10 @@
 /*
  * PardDefender - cumulative metrics, scoped to one project.
  *
+ * @map role: Накопительные счётчики по проекту и дельта за текущую
+ *           сессию.
+ * @map status: ready
+ *
  * Lives at <workspace>/.parddefender/stats.json, so it travels with the project
  * to another machine and into the archive. Nothing is written to the user
  * profile: a number that survives the project it describes is a number nobody

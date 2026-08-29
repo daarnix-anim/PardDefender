@@ -1,4 +1,8 @@
 /*
+ *
+ * @map role: Разовая починка проектов после 1.0.0: копии без расширения —
+ *           в Корзину, манифест чистится. По умолчанию — пробный прогон.
+ * @map status: ready
  * One-off repair for projects protected by PardDefender 1.0.0.
  *
  * 1.0.0 built the destination path from the route alone and never appended the

@@ -1,6 +1,10 @@
 /*
  * PardDefender - panel orchestrator.
  *
+ * @map role: Оркестратор панели: владеет таймерами, решает когда
+ *           действовать, собирает планы для хоста и рисует интерфейс.
+ * @map status: ready
+ *
  * Owns the clock and every decision about WHEN to act. The host reports state;
  * only this side knows how long an element has been sitting in the project,
  * whether its bytes have stopped changing, and how many times it has failed.

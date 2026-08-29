@@ -1,0 +1,25 @@
+#!/bin/sh
+#
+# Rebuilds the project map before every commit and stages the result.
+#
+# This is the belt to the Claude Code hook's braces: it runs no matter who
+# edited the files - an agent, another tool, or the owner in an editor - so a
+# commit can never contain source changes with a stale map beside them.
+#
+# Enable once per clone:
+#   git config core.hooksPath .githooks
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "pre-commit: node не найден, карта не пересобрана." >&2
+    exit 0
+fi
+
+node tools/build-map.js >/dev/null 2>&1 || {
+    echo "pre-commit: не удалось собрать карту, коммит продолжается." >&2
+    exit 0
+}
+
+# Only stage what the generator itself owns.
+git add PROJECT_MAP.md docs/project-map.html 2>/dev/null
+
+exit 0

@@ -1,4 +1,8 @@
 /*
+ *
+ * @map role: Свободное место на диске проекта: fs.statfs → fsutil → df.
+ *           wmic не используется.
+ * @map status: ready
  * Free-space reporting for the volume that holds the workspace.
  *
  * Three sources, in order of preference:

@@ -1,4 +1,8 @@
 /*
+ *
+ * @map role: Мок объектной модели After Effects: настоящие .jsx
+ *           загружаются через vm.
+ * @map status: ready
  * A minimal After Effects object model, just large enough to run the real host
  * modules under Node. Only the surface PardDefender actually touches is
  * implemented; anything else is deliberately absent so an accidental dependency

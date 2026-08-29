@@ -1,4 +1,8 @@
 /*
+ *
+ * @map role: 24 проверки копирования на настоящих файлах во временной
+ *           папке.
+ * @map status: ready
  * Exercises the copy layer against real files in a scratch directory.
  *
  * The properties that matter are the safety ones: an original is never touched,

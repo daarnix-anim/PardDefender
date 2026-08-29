@@ -1,6 +1,11 @@
 /*
  * PardDefender - the issue store.
  *
+ * @map role: Хранилище проблем: четыре класса ошибок, расписание
+ *           повторов, предохранитель. Одна строка на элемент, а не на
+ *           попытку.
+ * @map status: ready
+ *
  * One row per problem element, never one row per attempt. A file that has been
  * locked by another application for two hours is one line saying so, not forty
  * identical log entries.

@@ -1,6 +1,10 @@
 /*
  * PardDefender - workspace weight and reversible deletion.
  *
+ * @map role: Вес проекта на диске, удаление в Корзину и открытие файла в
+ *           проводнике.
+ * @map status: ready
+ *
  * Two jobs that both touch the whole project folder, so they share the same
  * careful walking code:
  *

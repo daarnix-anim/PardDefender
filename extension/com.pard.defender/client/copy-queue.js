@@ -1,6 +1,11 @@
 /*
  * PardDefender - the verified copy layer.
  *
+ * @map role: Проверенное копирование: потоковая запись в .pdpart, сверка
+ *           размера, дедуп по SHA-256, откат и коды ошибок. Оригинал не
+ *           трогается никогда.
+ * @map status: ready
+ *
  * Everything here runs in the CEP/Node process, never in ExtendScript. The
  * rules that matter:
  *

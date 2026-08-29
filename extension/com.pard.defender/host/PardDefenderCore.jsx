@@ -1,6 +1,11 @@
 /*
  * PardDefender - After Effects host script.
  *
+ * @map role: Основа хоста: свой JSON для ES3, чтение и запись файлов,
+ *           работа с путями, санитация имён папок и классификация
+ *           форматов по расширению.
+ * @map status: ready
+ *
  * ExtendScript is ES3 here: no JSON, no Object.keys, no Array.indexOf,
  * no let/const, no trailing commas. Everything below stays in that dialect.
  *

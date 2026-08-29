@@ -1,6 +1,11 @@
 /*
  * PardDefender - rolling verification of already-protected files.
  *
+ * @map role: Скользящая сверка защищённых файлов с манифестом — по 64 за
+ *           проход. Она же отвечает, какие файлы положило туда само
+ *           расширение.
+ * @map status: ready
+ *
  * "Protected" without this module is a claim about the past: the file was copied
  * into the workspace once. This makes it a claim about the present.
  *

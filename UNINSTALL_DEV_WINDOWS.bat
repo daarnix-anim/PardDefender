@@ -1,4 +1,7 @@
 @echo off
+rem @map role: Снимает расширение. Проекты и файлы не трогаются.
+rem @map status: ready
+rem @map layer: install
 setlocal
 
 set "EXT_ID=com.pard.defender"
