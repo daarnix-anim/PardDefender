@@ -10,7 +10,8 @@
 var childProcess = require("child_process");
 var path = require("path");
 
-var suites = ["host.test.js", "copy-queue.test.js", "runtime.test.js"];
+var suites = ["host.test.js", "copy-queue.test.js", "runtime.test.js",
+    "panel.test.js"];
 
 var failedSuites = [];
 

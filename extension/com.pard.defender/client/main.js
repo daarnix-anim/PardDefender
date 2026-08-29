@@ -1412,7 +1412,13 @@
         state.lastLayerScanAt = Date.now();
         runLayerScan(function (report) {
             state.layers = report;
-            invalidate("layers");
+            /*
+             * No invalidate() here. renderLayers builds its own signature from
+             * the findings, so an unchanged sweep repaints nothing - and an
+             * unconditional invalidate rebuilt the list on every scan, which
+             * resets scrollTop. That is the scroll-jitter bug, one section over.
+             * Caught by tests/panel.test.js, which counts innerHTML writes.
+             */
             renderLayers();
         });
     }

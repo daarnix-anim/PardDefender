@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **29** · связей: **57** · собрано: 2026-08-29 10:04
+Файлов: **31** · связей: **70** · собрано: 2026-08-29 18:03
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -57,7 +57,7 @@
 
 Проверенное копирование: потоковая запись в .pdpart, сверка размера, дедуп по SHA-256, откат и коды ошибок. Оригинал не трогается никогда.
 
-Используется в: `index.html`, `issues.js`, `main.js`, `stats.js`, `updater.js`, `verify.js`, `copy-queue.test.js`, `runtime.test.js`
+Используется в: `index.html`, `issues.js`, `main.js`, `stats.js`, `updater.js`, `verify.js`, `copy-queue.test.js`, `panel.test.js`, `runtime.test.js`
 
 ### `disk-space.js`
 
@@ -65,7 +65,7 @@
 
 Свободное место на диске проекта: fs.statfs → fsutil → df. wmic не используется.
 
-Используется в: `index.html`, `main.js`
+Используется в: `index.html`, `main.js`, `panel.test.js`
 
 ### `housekeeping.js`
 
@@ -73,7 +73,7 @@
 
 Вес проекта на диске, удаление в Корзину и открытие файла в проводнике.
 
-Используется в: `index.html`, `main.js`, `runtime.test.js`, `CLAUDE.md`
+Используется в: `index.html`, `main.js`, `panel.test.js`, `runtime.test.js`, `CLAUDE.md`
 
 ### `issues.js`
 
@@ -83,17 +83,17 @@
 
 Использует: `copy-queue.js`
 
-Используется в: `index.html`, `main.js`, `runtime.test.js`
+Используется в: `index.html`, `main.js`, `panel.test.js`, `runtime.test.js`
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 2564 строк · работает
+`extension/com.pard.defender/client/main.js` · 2570 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
 Использует: `disk-space.js`, `copy-queue.js`, `issues.js`, `stats.js`, `housekeeping.js`, `verify.js`, `updater.js`, `PardDefenderAudit.jsx`, `PardDefenderApply.jsx`, `PardDefenderLayers.jsx`, `PardDefenderCore.jsx`, `PardDefenderPlan.jsx`
 
-Используется в: `index.html`
+Используется в: `index.html`, `panel.test.js`
 
 ### `stats.js`
 
@@ -103,7 +103,7 @@
 
 Использует: `copy-queue.js`
 
-Используется в: `index.html`, `main.js`, `runtime.test.js`
+Используется в: `index.html`, `main.js`, `panel.test.js`, `runtime.test.js`
 
 ### `updater.js`
 
@@ -113,7 +113,7 @@
 
 Использует: `copy-queue.js`
 
-Используется в: `index.html`, `main.js`, `runtime.test.js`
+Используется в: `index.html`, `main.js`, `panel.test.js`, `runtime.test.js`
 
 ### `verify.js`
 
@@ -123,7 +123,7 @@
 
 Использует: `copy-queue.js`
 
-Используется в: `index.html`, `main.js`, `runtime.test.js`
+Используется в: `index.html`, `main.js`, `panel.test.js`, `runtime.test.js`
 
 ## Интерфейс панели
 
@@ -183,13 +183,31 @@
 
 Используется в: `host.test.js`
 
+### `mock-dom.js`
+
+`tests/mock-dom.js` · 285 строк · работает
+
+Крошечный DOM, чтобы панель можно было запустить без браузера: разметка читается из настоящего index.html.
+
+Используется в: `panel.test.js`
+
+### `panel.test.js`
+
+`tests/panel.test.js` · 916 строк · работает
+
+Проверки самой панели: вкладки, кнопки, места блоков и дисциплина перерисовки. Первый набор, который запускает main.js.
+
+Использует: `disk-space.js`, `housekeeping.js`, `updater.js`, `copy-queue.js`, `issues.js`, `stats.js`, `verify.js`, `main.js`, `mock-dom.js`
+
+Используется в: `run-all.js`
+
 ### `run-all.js`
 
-`tests/run-all.js` · 38 строк · работает
+`tests/run-all.js` · 39 строк · работает
 
 Прогоняет все наборы и выдаёт один вердикт.
 
-Использует: `host.test.js`, `copy-queue.test.js`, `runtime.test.js`
+Использует: `host.test.js`, `copy-queue.test.js`, `runtime.test.js`, `panel.test.js`
 
 ### `runtime.test.js`
 
@@ -239,7 +257,7 @@
 
 ### `CLAUDE.md`
 
-`CLAUDE.md` · 278 строк · работает
+`CLAUDE.md` · 287 строк · работает
 
 Точка входа для любого агента и нового чата: правила, архитектура, команды.  @map status: ready  @map layer: docs -->
 
@@ -247,13 +265,13 @@
 
 ### `PROJECT_MAP.md`
 
-`PROJECT_MAP.md` · 260 строк · работает
+`PROJECT_MAP.md` · 278 строк · работает
 
 _Описание не задано._
 
 ### `README.md`
 
-`README.md` · 907 строк · работает
+`README.md` · 913 строк · работает
 
 Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
 
