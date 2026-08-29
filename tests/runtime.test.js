@@ -2,7 +2,7 @@
  * Exercises the four client modules that decide what the owner sees and when
  * PardDefender tries again: the issue store, the counters, protected-file
  *
- * @map role: 102 проверки клиентских модулей: ошибки, метрики, сверка,
+ * @map role: 107 проверок клиентских модулей: ошибки, метрики, сверка,
  *           обновления.
  * @map status: ready
  * verification, and update-version comparison.
@@ -483,6 +483,38 @@ group("Сверка различает элемент и его прокси");
     check("обе пропажи замечены", outcome.findings.length, 2);
     check("и получили разные ключи",
         [outcome.findings[0].key, outcome.findings[1].key], ["i7", "p7"]);
+})();
+
+group("Манифест отвечает, клали ли файл мы");
+(function () {
+    /*
+     * От этого ответа зависят две вещи, и обе про то, чтобы не тронуть чужое:
+     * кнопка очистки не удаляет файл без строки в манифесте, а секция «старый
+     * проект» показывает только файлы, которые расширение не клало.
+     *
+     * Без второго переименование композиции меняло бы маршрут, файл оказывался
+     * бы «не на месте», и панель предлагала бы перекладывать то, что лежит
+     * ровно там, куда его положили. Место на диске окончательное.
+     */
+    var dir = root + "/manifest-answers";
+    var placed = dir + "/01_assets/Интро/VIDEO/ours.mp4";
+    var legacy = dir + "/dump/theirs.mp4";
+
+    Queue.writeText(dir + "/.parddefender/assets.tsv", [
+        new Date().toISOString(), "i7", "E:/raw/ours.mp4", "2048",
+        placed, "Интро", "video"
+    ].join("\t") + "\n");
+    Verify.attach(dir);
+
+    check("файл со строкой в манифесте — наш", Verify.wasCopiedByUs(placed), true);
+    check("файл без строки — не наш", Verify.wasCopiedByUs(legacy), false);
+    /* Windows не различает регистр, и манифест не должен тоже. */
+    check("регистр пути не важен",
+        Verify.wasCopiedByUs(placed.toUpperCase()), true);
+    check("обратные слеши тоже узнаются",
+        Verify.wasCopiedByUs(placed.replace(/\//g, "\\")), true);
+    check("запись доступна целиком",
+        Verify.recordFor(placed).sourcePath, "E:/raw/ours.mp4");
 })();
 
 /* ------------------------------------------------------------------ итог */

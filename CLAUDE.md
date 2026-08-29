@@ -55,7 +55,7 @@ CEP-расширение для After Effects. Копирует всё, что �
 ## Команды
 
 ```bash
-node tests/run-all.js      # 292 проверки, три набора; должно быть зелено
+node tests/run-all.js      # 297 проверок, три набора; должно быть зелено
 node tools/build-map.js    # пересобрать PROJECT_MAP.md и docs/project-map.html
 node tools/build-map.js --check   # проверить, что карта не устарела (CI/хук)
 INSTALL_DEV_WINDOWS.bat    # поставить расширение и включить PlayerDebugMode

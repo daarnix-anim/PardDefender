@@ -277,7 +277,7 @@
         var tasks = [], i, item, key, misplaced;
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
-            misplaced = relocating() && item.misplaced === true;
+            misplaced = relocating() && isLegacyMisplaced(item);
             if (item.state !== "pending" && !misplaced) continue;
             if (!item.destPath) continue;
 
@@ -917,13 +917,32 @@
      * Files OUTSIDE the workspace are never adopted. Leaving those where they
      * are is precisely the loss this whole extension exists to prevent.
      */
+    /*
+     * The host reports "this file is not in the folder its route names". That
+     * is not the same as "this file is left over from before PardDefender".
+     *
+     * A file WE copied has a manifest row, and its place on disk is final by
+     * design: renaming a composition rebuilds the folders in the Project panel
+     * but never moves the file, because a move after relink is a fresh
+     * transaction with fresh risk - and on a Yandex.Disk folder it means
+     * re-uploading the whole thing. Without this test, renaming one comp would
+     * pop the "СТАРЫЙ ПРОЕКТ" section up on a perfectly healthy project and
+     * offer to shuffle files that are exactly where they were put.
+     *
+     * So: only a misplaced file with NO manifest row is a legacy file.
+     */
+    function isLegacyMisplaced(item) {
+        if (item.misplaced !== true) return false;
+        return !PardVerify.wasCopiedByUs(item.path);
+    }
+
     function misplacedItems() {
         var out = [], i, item;
         var report = state.report;
         if (!report || !report.items) return out;
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
-            if (item.misplaced === true) out.push(item);
+            if (isLegacyMisplaced(item)) out.push(item);
         }
         return out;
     }
@@ -986,12 +1005,15 @@
     function maybeFinishRedistribute() {
         if (!relocating() || !state.report || !state.report.counts) return;
         /*
-         * The misplaced count IS the completion test. A file that failed to
-         * copy is still misplaced, so an open problem cannot let the pass
-         * declare victory - and checking the issue store as well would leave
-         * the mode stuck on forever over an unrelated failure elsewhere.
+         * The completion test is the FILTERED list, not the host's raw count.
+         * The raw count also holds files we placed ourselves whose route name
+         * changed later - a renamed composition - and those are never moved,
+         * so counting them would leave the mode stuck on forever.
+         *
+         * A file that failed to copy is still in the filtered list, so an open
+         * problem cannot let the pass declare victory either.
          */
-        if (state.report.counts.misplaced > 0) return;
+        if (misplacedItems().length > 0) return;
         pushSettings({ legacyRedistribute: false });
         log("Старый проект разложен — режим перераспределения выключен.", "good");
     }
