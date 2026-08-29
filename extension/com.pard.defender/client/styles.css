@@ -317,7 +317,33 @@ html, body {
     line-height: 1.45;
 }
 
-.update .link { align-self: flex-start; padding-left: 0; }
+.update-actions { display: flex; align-items: center; gap: 10px; }
+.update .link { padding-left: 0; }
+.link.dim { color: var(--text-dim); }
+.link.dim:hover { color: var(--text); }
+
+/*
+ * The dismiss control used to be a bare ✕ in --text-dim, and the owner could
+ * not find it. A close button has to look like one: a real outline, a real
+ * hit area, and a plain "Скрыть" next to the release link for anyone who
+ * looks for words rather than for a glyph.
+ */
+.close {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.close:hover { border-color: var(--red); color: #fff; background: #3a2323; }
 
 .icon {
     flex: none;
@@ -422,6 +448,44 @@ html, body {
 .stats b { color: var(--text); font-weight: 600; }
 .stats .stat-session { color: var(--green); }
 
+/* ------------------------------------------------------------------ tabs */
+
+/* The panel is 380px of a working screen. Everything that is not needed right
+   now lives behind a tab, and a tab with nothing in it is not shown at all. */
+.tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+}
+
+.tab {
+    padding: 4px 7px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.tab:hover { color: var(--text); background: var(--surface); }
+
+.tab.active {
+    color: var(--text);
+    background: var(--surface-2);
+    border-color: var(--line);
+}
+
+.tab .badge { margin-left: 4px; color: var(--yellow); }
+.tab.active .badge { color: var(--yellow); }
+
+.pane { display: flex; flex-direction: column; gap: 8px; }
+
 /* ----------------------------------------------------------- colour legend */
 
 /* The legend is reference material, not a control: quiet by default, one click
@@ -445,7 +509,19 @@ html, body {
     cursor: pointer;
 }
 
-.legend-caret { color: var(--text-dim); font-size: 10px; }
+.legend-head:hover { background: var(--surface-2); }
+.legend-head:hover .legend-caret { color: var(--text); }
+
+/* The fold control. It was a 10px glyph in the dim text colour and read as
+   decoration rather than as something to press. */
+.legend-caret {
+    flex: none;
+    width: 18px;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1;
+    text-align: right;
+}
 
 .legend-body {
     display: flex;

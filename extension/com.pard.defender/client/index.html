@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- @map role: Разметка панели: статус, настройки, неиспользуемые, проблемы, очередь, метрики, события. Порядок script-тегов задаёт загрузку модулей.  @map status: ready  @map layer: ui -->
+<!-- @map role: Разметка панели: шапка, вкладки и панели внутри них — главное, неиспользуемые, старый проект, журнал, настройки. Порядок script-тегов задаёт загрузку модулей.  @map status: ready  @map layer: ui -->
 <html lang="ru">
 <head>
     <meta charset="utf-8">
@@ -11,24 +11,19 @@
 
         <header class="head">
             <span class="brand">PardDefender</span>
-            <span class="version" id="version">v1.2.2</span>
+            <span class="version" id="version">v1.3.0</span>
         </header>
-
-        <section class="legend" id="legend" hidden>
-            <button class="legend-head" id="legend-toggle" title="Свернуть или развернуть">
-                <span class="section-title">ЦВЕТА-МЕТКИ</span>
-                <span class="legend-caret" id="legend-caret">▾</span>
-            </button>
-            <div class="legend-body" id="legend-body"></div>
-        </section>
 
         <div class="update" id="update" hidden>
             <div class="update-head">
                 <span class="update-title">Вышла версия <b id="update-version"></b></span>
-                <button class="icon" id="update-dismiss" title="Скрыть до следующей версии">✕</button>
+                <button class="close" id="update-dismiss" title="Больше не показывать эту версию">✕</button>
             </div>
             <div class="update-summary" id="update-summary"></div>
-            <button class="link" id="update-open">Открыть страницу релиза</button>
+            <div class="update-actions">
+                <button class="link" id="update-open">Открыть страницу релиза</button>
+                <button class="link dim" id="update-later">Скрыть</button>
+            </div>
         </div>
 
         <div class="status neutral" id="status">ЗАПУСК…</div>
@@ -36,103 +31,131 @@
 
         <button class="primary danger" id="resume" hidden>ВОЗОБНОВИТЬ</button>
 
-        <div class="workspace-row" id="workspace-row" hidden>
-            <span class="workspace-label">Рабочая папка</span>
-            <span class="workspace" id="workspace"></span>
-            <button class="link" id="open-folder" title="Открыть в проводнике">Открыть</button>
-        </div>
-
         <div class="counts" id="counts" hidden></div>
-        <div class="render-comps" id="render-comps" hidden></div>
 
         <button class="primary" id="run-now" disabled>РАЗЛОЖИТЬ СЕЙЧАС</button>
         <div class="busy" id="busy" hidden></div>
 
-        <div class="disk-row" id="disk-row" hidden>
-            <div class="disk-label" id="disk-label"></div>
-            <div class="disk-bar"><div class="disk-fill" id="disk-fill"></div></div>
-            <div class="disk-project" id="disk-project"></div>
+        <nav class="tabs" id="tabs" hidden></nav>
+
+        <!-- ------------------------------------------------------- ГЛАВНОЕ -->
+        <div class="pane" id="pane-main">
+
+            <section class="legend" id="legend" hidden>
+                <button class="legend-head" id="legend-toggle">
+                    <span class="section-title">ЦВЕТА-МЕТКИ</span>
+                    <span class="legend-caret" id="legend-caret">▾</span>
+                </button>
+                <div class="legend-body" id="legend-body"></div>
+            </section>
+
+            <div class="workspace-row" id="workspace-row" hidden>
+                <span class="workspace-label">Рабочая папка</span>
+                <span class="workspace" id="workspace"></span>
+                <button class="link" id="open-folder" title="Открыть в проводнике">Открыть</button>
+            </div>
+
+            <div class="render-comps" id="render-comps" hidden></div>
+
+            <div class="disk-row" id="disk-row" hidden>
+                <div class="disk-label" id="disk-label"></div>
+                <div class="disk-bar"><div class="disk-fill" id="disk-fill"></div></div>
+                <div class="disk-project" id="disk-project"></div>
+            </div>
+
+            <div class="cloud-row" id="cloud-row" hidden>
+                <span class="cloud-text" id="cloud-text"></span>
+                <button class="link" id="cloud-pin">Закрепить на компьютере</button>
+            </div>
+
+            <section class="layers-section" id="layers-section" hidden>
+                <div class="section-title" id="layers-title">ВЫКЛЮЧЕНО И ЗАБЫТО</div>
+                <div class="layers" id="layers"></div>
+            </section>
+
+            <section class="issues-section" id="issues-section" hidden>
+                <div class="section-title" id="issues-title">ПРОБЛЕМЫ</div>
+                <div class="issues" id="issues"></div>
+            </section>
+
+            <section class="queue-section" id="queue-section" hidden>
+                <div class="section-title" id="queue-title">ОЧЕРЕДЬ</div>
+                <div class="queue" id="queue"></div>
+            </section>
+
         </div>
 
-        <div class="cloud-row" id="cloud-row" hidden>
-            <span class="cloud-text" id="cloud-text"></span>
-            <button class="link" id="cloud-pin">Закрепить на компьютере</button>
+        <!-- ------------------------------------------------ НЕ ИСПОЛЬЗУЕТСЯ -->
+        <div class="pane" id="pane-unused" hidden>
+            <section class="unused-section" id="unused-section" hidden>
+                <div class="unused-head">
+                    <span class="unused-title" id="unused-title"></span>
+                    <button class="icon" id="unused-reveal" title="Открыть папку 00_UNUSED">&#128194;</button>
+                </div>
+                <div class="unused-note">Эти файлы не используются ни в одной композиции.</div>
+                <button class="danger-line" id="clean-unused">УБРАТЬ НЕИСПОЛЬЗУЕМЫЕ В КОРЗИНУ</button>
+            </section>
         </div>
 
-        <section class="unused-section" id="unused-section" hidden>
-            <div class="unused-head">
-                <span class="unused-title" id="unused-title"></span>
-                <button class="icon" id="unused-reveal" title="Открыть папку 00_UNUSED">&#128194;</button>
-            </div>
-            <div class="unused-note">Эти файлы не используются ни в одной композиции.</div>
-            <button class="danger-line" id="clean-unused">УБРАТЬ НЕИСПОЛЬЗУЕМЫЕ В КОРЗИНУ</button>
-        </section>
+        <!-- -------------------------------------------------- СТАРЫЙ ПРОЕКТ -->
+        <div class="pane" id="pane-legacy" hidden>
+            <section class="legacy-section" id="legacy-section" hidden>
+                <div class="section-title" id="legacy-title">СТАРЫЙ ПРОЕКТ</div>
+                <div class="legacy-note" id="legacy-note"></div>
+                <button class="wide" id="legacy-adopt">ОСТАВИТЬ КАК ЕСТЬ</button>
+                <button class="wide danger-line" id="legacy-redistribute">РАЗЛОЖИТЬ ВСЁ ПО МЕСТАМ</button>
+                <label class="check">
+                    <input type="checkbox" id="legacy-recycle">
+                    <span>Старые копии — в Корзину после переноса</span>
+                </label>
+                <div class="legacy-note small" id="legacy-recycle-note"></div>
+            </section>
+        </div>
 
-        <section class="legacy-section" id="legacy-section" hidden>
-            <div class="section-title" id="legacy-title">СТАРЫЙ ПРОЕКТ</div>
-            <div class="legacy-note" id="legacy-note"></div>
-            <button class="wide" id="legacy-adopt">ОСТАВИТЬ КАК ЕСТЬ</button>
-            <button class="wide danger-line" id="legacy-redistribute">РАЗЛОЖИТЬ ВСЁ ПО МЕСТАМ</button>
-            <label class="check">
-                <input type="checkbox" id="legacy-recycle">
-                <span>Старые копии — в Корзину после переноса</span>
-            </label>
-            <div class="legacy-note small" id="legacy-recycle-note"></div>
-        </section>
+        <!-- -------------------------------------------------------- ЖУРНАЛ -->
+        <div class="pane" id="pane-journal" hidden>
+            <section class="stats-section" id="stats-section" hidden>
+                <div class="section-title-row">
+                    <span class="section-title">ИТОГО ПО ПРОЕКТУ</span>
+                    <button class="link" id="verify-all" title="Полная сверка всех защищённых файлов">Сверить всё</button>
+                </div>
+                <div class="stats" id="stats"></div>
+            </section>
 
-        <section class="settings" id="settings" hidden>
-            <label class="check">
-                <input type="checkbox" id="auto-enabled">
-                <span>Автоматический режим</span>
-            </label>
-            <label class="check">
-                <input type="checkbox" id="copy-enabled">
-                <span>Копировать файлы в папку проекта</span>
-            </label>
-            <label class="check">
-                <input type="checkbox" id="organize-enabled">
-                <span>Группировать в панели After Effects</span>
-            </label>
+            <section class="log-section" id="log-section" hidden>
+                <div class="section-title">СОБЫТИЯ</div>
+                <div class="log" id="log"></div>
+            </section>
+        </div>
 
-            <div class="field">
-                <span>Проверять каждые</span>
-                <input type="number" id="scan-interval" min="1" max="120" step="1">
-                <span>мин</span>
-            </div>
-            <div class="field">
-                <span>Ждать перед переносом</span>
-                <input type="number" id="settle-delay" min="0" max="1440" step="1">
-                <span>мин</span>
-            </div>
-        </section>
+        <!-- ------------------------------------------------------ НАСТРОЙКИ -->
+        <div class="pane" id="pane-settings" hidden>
+            <section class="settings" id="settings" hidden>
+                <label class="check">
+                    <input type="checkbox" id="auto-enabled">
+                    <span>Автоматический режим</span>
+                </label>
+                <label class="check">
+                    <input type="checkbox" id="copy-enabled">
+                    <span>Копировать файлы в папку проекта</span>
+                </label>
+                <label class="check">
+                    <input type="checkbox" id="organize-enabled">
+                    <span>Группировать в панели After Effects</span>
+                </label>
 
-        <section class="layers-section" id="layers-section" hidden>
-            <div class="section-title" id="layers-title">ВЫКЛЮЧЕНО И ЗАБЫТО</div>
-            <div class="layers" id="layers"></div>
-        </section>
-
-        <section class="issues-section" id="issues-section" hidden>
-            <div class="section-title" id="issues-title">ПРОБЛЕМЫ</div>
-            <div class="issues" id="issues"></div>
-        </section>
-
-        <section class="queue-section" id="queue-section" hidden>
-            <div class="section-title" id="queue-title">ОЧЕРЕДЬ</div>
-            <div class="queue" id="queue"></div>
-        </section>
-
-        <section class="stats-section" id="stats-section" hidden>
-            <div class="section-title-row">
-                <span class="section-title">ИТОГО ПО ПРОЕКТУ</span>
-                <button class="link" id="verify-all" title="Полная сверка всех защищённых файлов">Сверить всё</button>
-            </div>
-            <div class="stats" id="stats"></div>
-        </section>
-
-        <section class="log-section" id="log-section" hidden>
-            <div class="section-title">СОБЫТИЯ</div>
-            <div class="log" id="log"></div>
-        </section>
+                <div class="field">
+                    <span>Проверять каждые</span>
+                    <input type="number" id="scan-interval" min="1" max="120" step="1">
+                    <span>мин</span>
+                </div>
+                <div class="field">
+                    <span>Ждать перед переносом</span>
+                    <input type="number" id="settle-delay" min="0" max="1440" step="1">
+                    <span>мин</span>
+                </div>
+            </section>
+        </div>
 
     </div>
 

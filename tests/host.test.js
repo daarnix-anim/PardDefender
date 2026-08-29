@@ -1,6 +1,6 @@
 /*
  *
- * @map role: 163 проверки хоста: рабочая папка, ветки, маршруты,
+ * @map role: 167 проверок хоста: рабочая папка, ветки, маршруты,
  *           секвенции, границы раскладки.
  * @map status: ready
  * Exercises the parts of the host that decide WHERE something goes. These are
@@ -273,6 +273,33 @@ group("Фиолетовая метка на композиции в корне")
         r2.branches.indexOf("RA_02") >= 0, true);
     check("и его футаж лежит в ней",
         itemNamed(r2, "only.mp4").destRel, "01_assets/RA_02/VIDEO");
+})();
+
+group("Фиолетовая композиция не попадает в «выключено и забыто»");
+(function () {
+    /*
+     * Решение владельца: фиолетовая метка — это утверждение о композиции,
+     * значит она же отвечает на вопрос «рендерная ли?» — да. Помеченную
+     * композицию незачем спрашивать «вы забыли её пометить?»: она помечена.
+     */
+    var s = buildProject();
+    var marked = s.project.add(new mock.CompItem("RA_01"));
+    var plain = s.project.add(new mock.CompItem("Забытая_без_метки"));
+    marked.label = 10;
+
+    var comps = s.host.scanLayers().findings
+        .filter(function (f) { return f.kind === "comp"; })
+        .map(function (f) { return f.compName; })
+        .sort();
+    check("помеченная не попадает в список", comps.indexOf("RA_01") < 0, true);
+    check("а непомеченная — попадает", comps.indexOf("Забытая_без_метки") >= 0, true);
+
+    var r = auditOf(s);
+    var reasons = {};
+    r.renderComps.forEach(function (c) { reasons[c.name] = c.reason; });
+    check("и помечена как раздел, а не как сирота", reasons["RA_01"], "section");
+    check("непомеченная остаётся сиротой",
+        reasons["Забытая_без_метки"], "orphan");
 })();
 
 group("Фиолетовая метка перебивает автоматику, но не отменяет её");

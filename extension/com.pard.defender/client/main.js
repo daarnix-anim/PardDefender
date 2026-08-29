@@ -59,6 +59,9 @@
         confirmAdoptUntil: 0,
         confirmRedistUntil: 0,
         cloud: null,
+        /* Which tab is showing. Session-local on purpose: it is where the owner
+         * happens to be looking, not a setting about the project. */
+        tab: "main",
         pin: null,
         pinBusy: false,
         lastPinCheckAt: 0
@@ -1374,6 +1377,7 @@
         state.confirmCleanupUntil = 0;
         state.confirmAdoptUntil = 0;
         state.confirmRedistUntil = 0;
+        state.tab = "main";
         painted = {};
 
         var workspace = report.workspaceIssue ? "" : report.workspace;
@@ -1599,6 +1603,7 @@
         renderCloud();
         renderUnused();
         renderLegacy();
+        renderTabs();
         renderLayers();
         renderIssues();
         renderQueue();
@@ -1719,31 +1724,32 @@
 
         el.legendBody.innerHTML = "";
 
+        /*
+         * Kept short on purpose. This is a reminder inside a 380px panel, not
+         * the manual - the full rules live in README. Every line here costs
+         * height the owner asked to get back.
+         */
         if (settings.pinLabel > 0) {
             el.legendBody.appendChild(legendRule(settings.pinLabel, "РУКИ ПРОЧЬ", [
-                "Композиция: считается рендерной и остаётся в корне проекта.",
-                "Файл: не переносится и не раскладывается в панели.",
-                "Слой: не попадает в «выключено и забыто»."
+                "Композиция — рендерная, остаётся в корне.",
+                "Файл и слой расширение не трогает."
             ]));
         }
 
         if (settings.sectionLabel > 0) {
             el.legendBody.appendChild(legendRule(settings.sectionLabel, "РАЗДЕЛ", [
-                "Композиция: её имя становится веткой. Всё, что внутри неё на " +
-                    "любой глубине, — вложенные композиции и футаж — ложится в " +
-                    "папку с этим именем, и в панели, и на диске.",
-                "Работает и на композиции в корне: она сама остаётся в корне, " +
-                    "а её содержимое уезжает в папку.",
-                "То, что входит сразу в несколько разделов, — в общую папку " +
-                    "_SHARED."
+                "Композиция — раздел и тоже остаётся в корне.",
+                "Всё внутри неё уезжает в папку с её именем — " +
+                    "и в панели, и на диске.",
+                "Что в нескольких разделах сразу — в _SHARED."
             ]));
         }
 
         var tail = document.createElement("div");
         tail.className = "legend-tail";
-        tail.textContent = "Без меток тоже работает: рендерной считается композиция, " +
-            "которую никто не использует или которая стоит в очереди рендера; " +
-            "веткой — композиция сразу под рендерной.";
+        tail.textContent = "Без меток: рендерная — та, которую никто не " +
+            "использует или которая в очереди рендера; ветка — композиция " +
+            "сразу под ней.";
         el.legendBody.appendChild(tail);
     }
 
@@ -1830,6 +1836,102 @@
                 "и проект переключён на неё. Файлы за пределами рабочей папки не " +
                 "трогаются никогда."
             : "Старые копии останутся на месте — проект будет весить вдвое больше.";
+    }
+
+    /* ------------------------------------------------------------------ tabs */
+
+    /*
+     * The panel is 380 pixels of a working screen, and most of what it can show
+     * is not needed at any given moment. Everything that is occasional lives
+     * behind a tab, and a tab whose pane has nothing in it is not drawn at all -
+     * so on a healthy project there are three tabs, not five.
+     */
+    var TABS = [
+        { name: "main", title: "ПАНЕЛЬ" },
+        { name: "unused", title: "НЕ ИСПОЛЬЗУЕТСЯ" },
+        { name: "legacy", title: "СТАРЫЙ ПРОЕКТ" },
+        { name: "journal", title: "ЖУРНАЛ" },
+        { name: "settings", title: "НАСТРОЙКИ" }
+    ];
+
+    function tabBadge(name) {
+        if (name === "unused") {
+            var count = unusedTotals().count;
+            return count ? String(count) : "";
+        }
+        if (name === "legacy") {
+            var misplaced = misplacedTotals().count;
+            return misplaced ? String(misplaced) : "";
+        }
+        return "";
+    }
+
+    function tabAvailable(name) {
+        var report = state.report;
+        var live = !!(report && report.projectSaved && !report.workspaceIssue);
+        if (name === "main") return true;
+        if (!live) return false;
+        /* These two exist only while there is something to act on. */
+        if (name === "unused") return unusedTotals().count > 0;
+        if (name === "legacy") return misplacedTotals().count > 0 || relocating();
+        return true;
+    }
+
+    function showTab(name) {
+        state.tab = name;
+        invalidate("tabs");
+        render();
+    }
+
+    function renderTabs() {
+        var i, tab, available = [], signature = [];
+
+        for (i = 0; i < TABS.length; i++) {
+            tab = TABS[i];
+            if (!tabAvailable(tab.name)) continue;
+            available.push(tab);
+            signature.push(tab.name + ":" + tabBadge(tab.name));
+        }
+
+        /* The active tab can vanish under the owner - the last unused file gets
+         * cleaned up, the legacy pass finishes. Fall back rather than showing
+         * an empty panel with no way back. */
+        var stillThere = false;
+        for (i = 0; i < available.length; i++) {
+            if (available[i].name === state.tab) { stillThere = true; break; }
+        }
+        if (!stillThere) state.tab = "main";
+
+        for (i = 0; i < TABS.length; i++) {
+            el.panes[TABS[i].name].hidden = TABS[i].name !== state.tab;
+        }
+
+        /* One tab is no choice at all; the bar only earns its height at two. */
+        el.tabs.hidden = available.length < 2;
+        if (el.tabs.hidden) return;
+        if (!changed("tabs", signature.join(",") + "|" + state.tab)) return;
+
+        el.tabs.innerHTML = "";
+        for (i = 0; i < available.length; i++) {
+            el.tabs.appendChild(tabButton(available[i]));
+        }
+    }
+
+    function tabButton(tab) {
+        var button = document.createElement("button");
+        button.className = "tab" + (tab.name === state.tab ? " active" : "");
+        button.appendChild(document.createTextNode(tab.title));
+
+        var badge = tabBadge(tab.name);
+        if (badge) {
+            var mark = document.createElement("span");
+            mark.className = "badge";
+            mark.textContent = badge;
+            button.appendChild(mark);
+        }
+
+        button.onclick = function () { showTab(tab.name); };
+        return button;
     }
 
     function toneForIssue(record) {
@@ -2258,11 +2360,18 @@
             legacySection: "legacy-section", legacyTitle: "legacy-title",
             legacyNote: "legacy-note", legacyAdopt: "legacy-adopt",
             legacyRedistribute: "legacy-redistribute",
-            legacyRecycle: "legacy-recycle", legacyRecycleNote: "legacy-recycle-note"
+            legacyRecycle: "legacy-recycle", legacyRecycleNote: "legacy-recycle-note",
+            tabs: "tabs", updateLater: "update-later"
         };
         var key;
         for (key in ids) {
             if (ids.hasOwnProperty(key)) el[key] = document.getElementById(ids[key]);
+        }
+
+        el.panes = {};
+        var t;
+        for (t = 0; t < TABS.length; t++) {
+            el.panes[TABS[t].name] = document.getElementById("pane-" + TABS[t].name);
         }
 
         el.runNow.onclick = function () {
@@ -2375,11 +2484,22 @@
             if (state.update) PardUpdater.openReleasePage(state.update.url);
         };
 
-        el.updateDismiss.onclick = function () {
+        /*
+         * Two ways out of the update notice, because one was not findable. The
+         * old dismiss was a bare glyph in the dim text colour and the owner
+         * could not close the banner at all. Now: a real close button in the
+         * corner and a plain "Скрыть" beside the release link. Both remember
+         * the version, so it does not come back tomorrow.
+         */
+        function dismissUpdate() {
             if (state.update) PardUpdater.dismiss(state.update.version);
             state.update = null;
+            invalidate("update");
             renderUpdate();
-        };
+        }
+
+        el.updateDismiss.onclick = dismissUpdate;
+        el.updateLater.onclick = dismissUpdate;
 
         el.autoEnabled.onchange = function () {
             pushSettings({ autoEnabled: el.autoEnabled.checked });

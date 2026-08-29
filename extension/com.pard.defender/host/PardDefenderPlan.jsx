@@ -389,6 +389,14 @@
             try {
                 if (!item.usedIn || item.usedIn.length === 0) { marks[item.id] = "orphan"; }
             } catch (e) {}
+            /*
+             * A section label is a deliberate statement about a composition, so
+             * it also answers "is this a render comp?" - yes. Owner's decision,
+             * 2026-08-29. Two things follow, and both are the point:
+             * the composition stays at the Project root, and it stops being
+             * nagged about in "выключено и забыто" as an unmarked orphan.
+             */
+            if (isSectionComp(item, settings)) { marks[item.id] = "section"; }
             try {
                 if (settings.pinLabel > 0 && item.label === settings.pinLabel) {
                     marks[item.id] = "pinned";
