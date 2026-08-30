@@ -18,6 +18,20 @@
 
 * { box-sizing: border-box; }
 
+/*
+ * Панель прячет блоки атрибутом `hidden`, и это единственный способ, которым
+ * она это делает. Но `hidden` живёт только в стилях браузера по умолчанию, и
+ * ЛЮБОЕ авторское `display:` его перебивает. Десять блоков здесь ставили себе
+ * `display: flex` - и вкладки, баннер обновления, легенда и панели вкладок
+ * получали `hidden`, оставаясь на экране. Снаружи это выглядело как мёртвые
+ * кнопки: разметка переключалась, картинка - нет.
+ *
+ * Это правило делает `hidden` тем, чем он назван. `!important` здесь по делу:
+ * "спрятано" не должно проигрывать оформлению ни при какой специфичности.
+ * Никакое другое `display:` в этом файле не имеет права на `!important`.
+ */
+[hidden] { display: none !important; }
+
 html, body {
     margin: 0;
     padding: 0;
@@ -485,6 +499,14 @@ html, body {
 .tab.active .badge { color: var(--yellow); }
 
 .pane { display: flex; flex-direction: column; gap: 8px; }
+
+/* The tab already names the section and carries the count, so the pane opens
+   with the one sentence the name does not give: why these are worth a look. */
+.layers-note {
+    color: var(--text-dim);
+    line-height: 1.45;
+    padding: 0 2px;
+}
 
 /* ----------------------------------------------------------- colour legend */
 

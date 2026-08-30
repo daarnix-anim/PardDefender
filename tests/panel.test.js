@@ -482,19 +482,69 @@ group("Каждый блок в своей вкладке");
     check("метрики и события — в журнале",
         [inPane("stats-section", "journal"), inPane("log-section", "journal")],
         [true, true]);
-    check("легенда, диск, облако, слои, проблемы, очередь — на главной",
-        ["legend", "disk-row", "cloud-row", "layers-section",
+    check("забытые слои — во вкладке layers",
+        inPane("layers-section", "layers"), true);
+    check("легенда, диск, облако, проблемы, очередь — на главной",
+        ["legend", "disk-row", "cloud-row",
             "issues-section", "queue-section"].map(function (b) {
             return inPane(b, "main");
-        }), [true, true, true, true, true, true]);
+        }), [true, true, true, true, true]);
 
     /* То, ради чего панель открывают, не должно прятаться ни за одной вкладкой. */
     var alwaysOn = ["status", "counts", "run-now", "update", "tabs"];
     check("статус, счётчики и «разложить сейчас» — над вкладками",
         alwaysOn.map(function (b) {
-            return ["main", "unused", "legacy", "journal", "settings"]
+            return ["main", "layers", "unused", "legacy", "journal", "settings"]
                 .some(function (n) { return p.id(b).descends(p.id("pane-" + n)); });
         }), [false, false, false, false, false]);
+})();
+
+group("«hidden» действительно прячет");
+(function () {
+    /*
+     * Самая дорогая ошибка всей панели была не в логике, а в стилях, и
+     * поэтому весь остальной набор её не видел: мок читает свойство
+     * `hidden`, а браузер — CSS. Панель честно ставила `hidden`, а авторское
+     * `display: flex` его перебивало — вкладки не переключались, баннер не
+     * закрывался, легенда не складывалась. Проверяем сам файл стилей.
+     */
+    var css = fs.readFileSync(path.join(__dirname, "..", "extension",
+        "com.pard.defender", "client", "styles.css"), "utf8");
+
+    check("есть правило, делающее hidden сильнее оформления",
+        /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/.test(css), true);
+
+    /* Оно одно такое: второй !important на display снова сделает блок
+     * нескрываемым, и уже незаметно. */
+    var forced = css.match(/display:[^;}]*!important/g) || [];
+    check("и оно единственный !important на display", forced.length, 1);
+
+    /*
+     * И оно не декорация: блоки, которые панель прячет, до сих пор
+     * ставят себе display — без правила всё вернётся точно как было.
+     */
+    function setsDisplay(cls) {
+        /* Разбираем по правилам, а не регуляркой: имя класса должно совпасть
+         * целиком, иначе «pane» найдётся внутри «pane-head». */
+        var blocks = css.split("}"), i, open, selector, body;
+        for (i = 0; i < blocks.length; i++) {
+            open = blocks[i].lastIndexOf("{");
+            if (open < 0) continue;
+            selector = blocks[i].substring(0, open);
+            body = blocks[i].substring(open + 1);
+            if (body.indexOf("display:") < 0) continue;
+            var at = selector.indexOf("." + cls);
+            while (at >= 0) {
+                var next = selector.charAt(at + cls.length + 1);
+                if (!next || " ,.:>+~\r\n\t".indexOf(next) >= 0) return true;
+                at = selector.indexOf("." + cls, at + 1);
+            }
+        }
+        return false;
+    }
+    check("правило несущее: эти классы без него не спрятать",
+        ["pane", "tabs", "update", "legend-body"].map(setsDisplay),
+        [true, true, true, true]);
 })();
 
 /* ============================================================== кнопки */

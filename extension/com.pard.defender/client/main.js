@@ -1166,7 +1166,6 @@
         var signature = parts.join(",") + "|" + (state.commentFor || "");
         if (!changed("layers", signature)) return;
 
-        el.layersTitle.textContent = "ВЫКЛЮЧЕНО И ЗАБЫТО (" + openFindingCount() + ")";
         el.layers.innerHTML = "";
         for (i = 0; i < list.length && i < 30; i++) {
             el.layers.appendChild(layerRow(list[i]));
@@ -1420,6 +1419,11 @@
              * Caught by tests/panel.test.js, which counts innerHTML writes.
              */
             renderLayers();
+            /* The findings now decide whether the tab exists at all, so the
+             * bar has to hear about a sweep that arrives between renders.
+             * renderTabs keeps its own signature - an unchanged sweep still
+             * rebuilds nothing. */
+            renderTabs();
         });
     }
 
@@ -1854,6 +1858,7 @@
      */
     var TABS = [
         { name: "main", title: "ПАНЕЛЬ" },
+        { name: "layers", title: "ВЫКЛЮЧЕНО И ЗАБЫТО" },
         { name: "unused", title: "НЕ ИСПОЛЬЗУЕТСЯ" },
         { name: "legacy", title: "СТАРЫЙ ПРОЕКТ" },
         { name: "journal", title: "ЖУРНАЛ" },
@@ -1861,6 +1866,12 @@
     ];
 
     function tabBadge(name) {
+        /* Счётчик означает "требует внимания", а не "сколько тут строк":
+         * помеченное забытым остаётся в списке, но больше не считается. */
+        if (name === "layers") {
+            var open = openFindingCount();
+            return open ? String(open) : "";
+        }
         if (name === "unused") {
             var count = unusedTotals().count;
             return count ? String(count) : "";
@@ -1877,7 +1888,8 @@
         var live = !!(report && report.projectSaved && !report.workspaceIssue);
         if (name === "main") return true;
         if (!live) return false;
-        /* These two exist only while there is something to act on. */
+        /* These three exist only while there is something to act on. */
+        if (name === "layers") return layerFindings().length > 0;
         if (name === "unused") return unusedTotals().count > 0;
         if (name === "legacy") return misplacedTotals().count > 0 || relocating();
         return true;
@@ -2353,7 +2365,7 @@
             version: "version", issuesSection: "issues-section",
             issuesTitle: "issues-title", issues: "issues",
             statsSection: "stats-section", stats: "stats", verifyAll: "verify-all",
-            layersSection: "layers-section", layersTitle: "layers-title",
+            layersSection: "layers-section",
             layers: "layers",
             resume: "resume", update: "update", updateVersion: "update-version",
             updateSummary: "update-summary", updateOpen: "update-open",

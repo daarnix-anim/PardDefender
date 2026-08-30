@@ -8,7 +8,7 @@ set "EXT_ID=com.pard.defender"
 set "SOURCE=%~dp0extension\%EXT_ID%"
 set "TARGET=%APPDATA%\Adobe\CEP\extensions\%EXT_ID%"
 
-echo Installing PardDefender 1.3.1...
+echo Installing PardDefender 1.3.2...
 
 if not exist "%SOURCE%\CSXS\manifest.xml" (
     echo ERROR: Extension files were not found next to this installer.
@@ -38,7 +38,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-findstr /C:"1.3.1" "%TARGET%\CSXS\manifest.xml" >nul
+findstr /C:"1.3.2" "%TARGET%\CSXS\manifest.xml" >nul
 if errorlevel 1 (
     echo ERROR: Installed manifest verification failed.
     pause
