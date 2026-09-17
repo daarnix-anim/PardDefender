@@ -1,8 +1,7 @@
 /*
  * PardDefender - workspace resolution, settings, branch resolution, audit.
  *
- * @map role: Рабочая папка, настройки проекта и дерево композиций: какая
- *           композиция рендерная и к какой ветке относится элемент.
+ * @map role: \u0420\u0430\u0431\u043e\u0447\u0430\u044f \u043f\u0430\u043f\u043a\u0430, \u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u043f\u0440\u043e\u0435\u043a\u0442\u0430 \u0438 \u0434\u0435\u0440\u0435\u0432\u043e \u043a\u043e\u043c\u043f\u043e\u0437\u0438\u0446\u0438\u0439: \u043a\u0430\u043a\u0430\u044f \u043a\u043e\u043c\u043f\u043e\u0437\u0438\u0446\u0438\u044f \u0440\u0435\u043d\u0434\u0435\u0440\u043d\u0430\u044f \u0438 \u043a \u043a\u0430\u043a\u043e\u0439 \u0432\u0435\u0442\u043a\u0435 \u043e\u0442\u043d\u043e\u0441\u0438\u0442\u0441\u044f \u044d\u043b\u0435\u043c\u0435\u043d\u0442.
  * @map status: ready
  * Loaded after PardDefenderCore.jsx. ES3 only.
  */
@@ -394,7 +393,7 @@
              * it also answers "is this a render comp?" - yes. Owner's decision,
              * 2026-08-29. Two things follow, and both are the point:
              * the composition stays at the Project root, and it stops being
-             * nagged about in "выключено и забыто" as an unmarked orphan.
+             * nagged about as a forgotten, unmarked orphan.
              */
             if (isSectionComp(item, settings)) { marks[item.id] = "section"; }
             try {

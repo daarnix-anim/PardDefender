@@ -243,7 +243,8 @@ function launch(options) {
 
     var dir = path.join(__dirname, "..", "extension", "com.pard.defender", "client");
     ["disk-space.js", "copy-queue.js", "issues.js", "stats.js", "verify.js",
-        "housekeeping.js", "updater.js"].forEach(function (name) {
+        "housekeeping.js", "updater.js", "host-adapter.js", "workspace-store.js",
+        "duplicate-index.js"].forEach(function (name) {
         vm.runInContext(fs.readFileSync(path.join(dir, name), "utf8"),
             sandbox, { filename: name });
     });
@@ -322,7 +323,7 @@ function launch(options) {
     }
 
     function visiblePanes() {
-        return ["main", "unused", "legacy", "journal", "settings"]
+        return ["main", "layers", "unused", "duplicates", "legacy", "journal", "settings"]
             .filter(function (n) { return !id("pane-" + n).hidden; });
     }
 
@@ -365,7 +366,7 @@ group("Кнопки: у каждой есть своё дело");
         controls.push(node);
     });
 
-    check("интерактивных элементов в разметке", controls.length, 19);
+    check("интерактивных элементов в разметке", controls.length, 24);
 
     var orphans = controls.filter(function (node) {
         return !node.onclick && !node.onchange;
@@ -476,6 +477,8 @@ group("Каждый блок в своей вкладке");
 
     check("«не используется» — во вкладке unused",
         inPane("unused-section", "unused"), true);
+    check("«дубликаты» — во вкладке duplicates",
+        inPane("duplicates-section", "duplicates"), true);
     check("«старый проект» — во вкладке legacy",
         inPane("legacy-section", "legacy"), true);
     check("настройки — во вкладке settings", inPane("settings", "settings"), true);
@@ -494,7 +497,7 @@ group("Каждый блок в своей вкладке");
     var alwaysOn = ["status", "counts", "run-now", "update", "tabs"];
     check("статус, счётчики и «разложить сейчас» — над вкладками",
         alwaysOn.map(function (b) {
-            return ["main", "layers", "unused", "legacy", "journal", "settings"]
+            return ["main", "layers", "unused", "duplicates", "legacy", "journal", "settings"]
                 .some(function (n) { return p.id(b).descends(p.id("pane-" + n)); });
         }), [false, false, false, false, false]);
 })();
@@ -719,6 +722,135 @@ group("Строки списков живые");
             last.disabledLayerForgotten.length) { flagged = true; }
     });
     check("одна из кнопок помечает слой забытым", flagged, true);
+})();
+
+group("Ручное обновление забытых слоёв");
+(function () {
+    var finding1 = {
+        kind: "layer", key: "L14|1453|Слой 3", compId: "14", compName: "Интро",
+        layerIndex: 3, layerName: "Слой 3", itemId: "1453", itemName: "spare.mp4",
+        path: "E:/raw/spare.mp4", size: 2048, status: "open"
+    };
+    var finding2 = {
+        kind: "layer", key: "L14|1454|Слой 4", compId: "14", compName: "Интро",
+        layerIndex: 4, layerName: "Слой 4", itemId: "1454", itemName: "extra.mp4",
+        path: "E:/raw/extra.mp4", size: 1024, status: "open"
+    };
+
+    /* 1. У кнопки есть обработчик и правильный title. */
+    var p = launch({
+        report: baseReport({ settings: { scanIntervalMs: 60000 } }),
+        layers: layersReport([finding1])
+    });
+    var btn = p.id("layers-refresh");
+    check("кнопка обновления списка слоёв существует", !!btn, true);
+    check("title кнопки: Обновить список", btn.title, "Обновить список");
+    check("у кнопки есть обработчик", typeof btn.onclick, "function");
+
+    /* 2. Нажатие запускает новый scan, даже если интервал ещё не истёк. */
+    var initialScans = p.calls.scripts.filter(function (s) {
+        return s.indexOf("scanLayersToFile") >= 0;
+    }).length;
+    p.tick();
+    var scansAfterTick = p.calls.scripts.filter(function (s) {
+        return s.indexOf("scanLayersToFile") >= 0;
+    }).length;
+    check("таймер аудита не сканирует раньше интервала", scansAfterTick, initialScans);
+
+    p.click("layers-refresh");
+    var scansAfterClick = p.calls.scripts.filter(function (s) {
+        return s.indexOf("scanLayersToFile") >= 0;
+    }).length;
+    check("нажатие запускает scan в обход интервала", scansAfterClick, initialScans + 1);
+
+    /* 3. Изменённый mocked layer report немедленно обновляет или скрывает секцию. */
+    /* 3a: новые находки немедленно отрисовываются */
+    write(layersPath, JSON.stringify(layersReport([finding2])));
+    p.click("layers-refresh");
+    var names = p.id("layers").all().filter(function (n) {
+        return n.hasClass("layer-name");
+    }).map(function (n) { return n.textContent; });
+    check("список обновился на новые находки", names, ["Слой 4"]);
+
+    /* 3b: пустой отчёт скрывает секцию и убирает вкладку */
+    write(layersPath, JSON.stringify(layersReport([])));
+    p.click("layers-refresh");
+    check("секция слоёв скрыта при отсутствии находок", p.id("layers-section").hidden, true);
+    check("вкладка забытых слоёв исчезла", p.tabTitles().indexOf("ВЫКЛЮЧЕНО И ЗАБЫТО"), -1);
+
+    /* 4. Повторное нажатие при pending callback не запускает параллельный scan. */
+    write(layersPath, JSON.stringify(layersReport([finding1])));
+    var p2 = launch({ layers: layersReport([finding1]) });
+    var pendingCb = null;
+    var interceptedScans = 0;
+    var originalEval = p2.sandbox.window.__adobe_cep__.evalScript;
+    p2.sandbox.window.__adobe_cep__.evalScript = function (script, cb) {
+        if (script.indexOf("scanLayersToFile") >= 0) {
+            interceptedScans++;
+            pendingCb = cb;
+            return;
+        }
+        originalEval(script, cb);
+    };
+
+    p2.click("layers-refresh");
+    check("первый scan отправлен в хост", interceptedScans, 1);
+    check("кнопка заблокирована во время запроса (disabled)", p2.id("layers-refresh").disabled, true);
+    check("на кнопке виден busy-state", p2.id("layers-refresh").hasClass("busy"), true);
+
+    p2.click("layers-refresh");
+    check("повторное нажатие не запустило параллельный scan", interceptedScans, 1);
+
+    pendingCb("OK|" + layersPath);
+    check("после завершения кнопка снова разблокирована", p2.id("layers-refresh").disabled, false);
+
+    /* 5. Ошибка оставляет прежние findings и позволяет retry. */
+    p2.sandbox.window.__adobe_cep__.evalScript = function (script, cb) {
+        if (script.indexOf("scanLayersToFile") >= 0) {
+            cb("ERROR|FAIL");
+            return;
+        }
+        originalEval(script, cb);
+    };
+
+    var logsBefore = p2.id("log").children.length;
+    p2.click("layers-refresh");
+    var layerRows = p2.id("layers").all().filter(function (n) {
+        return n.hasClass("layer-row");
+    });
+    check("ошибка сохранила прежние находки", layerRows.length, 1);
+    check("секция осталась видимой", p2.id("layers-section").hidden, false);
+    check("в журнал записано предупреждение об ошибке",
+        p2.id("log").children.length > logsBefore &&
+        p2.id("log").children[0].textContent.indexOf("Не удалось обновить список слоёв") >= 0, true);
+    check("кнопка снова разрешена для retry", p2.id("layers-refresh").disabled, false);
+
+    /* Повторная попытка (retry) успешна */
+    p2.sandbox.window.__adobe_cep__.evalScript = originalEval;
+    p2.click("layers-refresh");
+    check("retry успешно завершился без блокировки кнопки", p2.id("layers-refresh").disabled, false);
+
+    /* 6. Неизменившийся refresh не создаёт лишних записей innerHTML. */
+    dom.resetHtmlWrites();
+    p2.click("layers-refresh");
+    check("неизменившийся refresh не создаёт лишних innerHTML-записей", dom.htmlWriters(), []);
+
+    /* Защита от устаревшего callback: устаревший callback не перезаписывает результат */
+    var delayedCb = null;
+    p2.sandbox.window.__adobe_cep__.evalScript = function (script, cb) {
+        if (script.indexOf("scanLayersToFile") >= 0) {
+            delayedCb = cb;
+            return;
+        }
+        originalEval(script, cb);
+    };
+    p2.click("layers-refresh");
+    var otherProj = baseReport({ settings: { scanLayersEnabled: false } });
+    otherProj.projectPath = workspace + "/04_edit/OtherProject.aep";
+    p2.tick(otherProj);
+    delayedCb("OK|" + layersPath);
+    check("устаревший callback не восстановил список слоёв в новом проекте",
+        p2.id("layers-section").hidden, true);
 })();
 
 group("Проблемы: строка и её кнопки");
@@ -952,6 +1084,273 @@ group("Перерисовка без изменений не трогает сп
     dom.resetHtmlWrites();
     p.tick(baseReport({ items: [] }));
     check("исчезнувший файл список перестраивает", dom.htmlWrites() > 0, true);
+})();
+
+group("Копирование требует долговечного журнала и манифеста");
+(function () {
+    function pendingItem(id, name) {
+        var source = root + "/external/" + name;
+        var destination = workspace + "/01_assets/Интро/VIDEO/" + name;
+        write(source, "source-" + name);
+        return {
+            key: "i" + id, id: String(id), isProxy: false,
+            name: name, path: source, ext: "mp4", category: "video",
+            routeKey: "video", isSequence: false, sequence: null,
+            branch: "Интро", branchResolved: "Интро", unassigned: false,
+            forcedUnused: false, adopted: false, size: 12, state: "pending",
+            destRel: "01_assets/Интро/VIDEO", destFile: name,
+            destPath: destination, misplaced: false,
+            panelTarget: "02_ASSETS/Интро/VIDEO", panelPath: "",
+            panelEligible: false, hasProxy: false
+        };
+    }
+
+    var journalItem = pendingItem("90", "journal.mp4");
+    var p = launch({ report: baseReport({ items: [journalItem] }) });
+    var originalWrite = p.sandbox.PardCopyQueue.writeText;
+    var runs = 0;
+    p.sandbox.PardCopyQueue.writeText = function (target, content) {
+        if (/pending\.tsv$/.test(target)) return false;
+        return originalWrite(target, content);
+    };
+    p.sandbox.PardCopyQueue.run = function () { runs++; };
+    p.click("run-now");
+    check("без pending.tsv копирование не начинается", runs, 0);
+    check("без журнала хост не получает relink",
+        p.calls.scripts.some(function (s) { return s.indexOf("commitFromFileJson") >= 0; }), false);
+
+    var manifestItem = pendingItem("91", "manifest.mp4");
+    var p2 = launch({ report: baseReport({ items: [manifestItem] }) });
+    p2.sandbox.PardCopyQueue.run = function (tasks, options, hooks, done) {
+        done([{
+            ok: true, key: "i91", id: "91", destPath: manifestItem.destPath,
+            files: 1, bytes: 12, reusedFiles: 0, reusedBytes: 0,
+            records: [{ sourcePath: manifestItem.path, destPath: manifestItem.destPath,
+                size: 12, created: true }], sources: [manifestItem.path]
+        }]);
+    };
+    p2.sandbox.PardCopyQueue.appendText = function () { return false; };
+    p2.click("run-now");
+    check("при ошибке assets.tsv relink не выполняется",
+        p2.calls.scripts.some(function (s) { return s.indexOf("commitFromFileJson") >= 0; }), false);
+    check("pending.tsv оставлен для диагностики",
+        fs.existsSync(native(meta + "/pending.tsv")), true);
+
+    /* Equal bytes at an unowned path are useful for relink, but they are not
+     * proof that PardDefender created the file. */
+    write(meta + "/assets.tsv", "");
+    var reusedItem = pendingItem("92", "preexisting.mp4");
+    write(reusedItem.destPath, "source-preexisting.mp4");
+    var p3 = launch({ report: baseReport({ items: [reusedItem] }) });
+    p3.sandbox.PardCopyQueue.run = function (tasks, options, hooks, done) {
+        done([{
+            ok: true, key: "i92", id: "92", destPath: reusedItem.destPath,
+            files: 0, bytes: 0, reusedFiles: 1, reusedBytes: 22,
+            records: [{ sourcePath: reusedItem.path, destPath: reusedItem.destPath,
+                size: 22, created: false }], sources: [reusedItem.path]
+        }]);
+    };
+    p3.click("run-now");
+    check("чужой переиспользованный файл не попал в assets.tsv",
+        fs.readFileSync(native(meta + "/assets.tsv"), "utf8"), "");
+})();
+
+group("Очистка секвенции забирает все принадлежащие нам кадры");
+(function () {
+    var seqDir = workspace + "/01_assets/00_UNUSED/SEQUENCES/shot";
+    var frame1 = seqDir + "/shot_0001.png";
+    var frame2 = seqDir + "/shot_0002.png";
+    write(frame1, "one");
+    write(frame2, "two");
+    write(meta + "/assets.tsv", [
+        ["2026-08-30", "i93", root + "/raw/shot_0001.png", "3", frame1,
+            "00_UNUSED", "image"].join("\t"),
+        ["2026-08-30", "i93", root + "/raw/shot_0002.png", "3", frame2,
+            "00_UNUSED", "image"].join("\t")
+    ].join("\n") + "\n");
+    var item = {
+        key: "i93", id: "93", isProxy: false, name: "shot_[0001-0002].png",
+        path: frame1, category: "image", isSequence: true,
+        branch: "", branchResolved: "00_UNUSED", unassigned: true,
+        forcedUnused: false, state: "protected", size: 3,
+        destPath: seqDir, panelEligible: false, misplaced: false
+    };
+    var p = launch({ report: baseReport({ items: [item] }) });
+    p.click("clean-unused");
+    p.click("clean-unused");
+    check("в Корзину переданы оба кадра", p.calls.recycled[0].sort(),
+        [frame1, frame2].sort());
+})();
+
+/* ============================================================= дубликаты */
+
+group("Отчёт о дубликатах: вкладка, скан, progress/cancel, canonical, stale и безопасность");
+(function () {
+    function pendingItem(id, name) {
+        var source = root + "/external/" + name;
+        var destination = workspace + "/01_assets/Интро/VIDEO/" + name;
+        write(source, "source-" + name);
+        return {
+            key: "i" + id, id: String(id), isProxy: false,
+            name: name, path: source, ext: "mp4", category: "video",
+            routeKey: "video", isSequence: false, sequence: null,
+            branch: "Интро", branchResolved: "Интро", unassigned: false,
+            forcedUnused: false, adopted: false, size: 12, state: "pending",
+            destRel: "01_assets/Интро/VIDEO", destFile: name,
+            destPath: destination, misplaced: false,
+            panelTarget: "02_ASSETS/Интро/VIDEO", panelPath: "",
+            panelEligible: false, hasProxy: false
+        };
+    }
+
+    var d1 = pendingItem("101", "file_a.mp4");
+    var d2 = pendingItem("102", "file_b.mp4");
+    write(d1.path, "IDENTICAL_DUPLICATE_BYTES_12345");
+    write(d2.path, "IDENTICAL_DUPLICATE_BYTES_12345");
+
+    var p = launch({ report: baseReport({ items: [d1, d2] }) });
+
+    // 1. До первого скана вкладки дубликатов нет
+    check("до первого скана вкладки дубликатов нет",
+        p.tabTitles().some(function (t) { return t.indexOf("ДУБЛИКАТЫ") >= 0; }), false);
+    check("кнопка поиска дубликатов в панели активна",
+        p.id("duplicates-scan").disabled, false);
+
+    // 2. Запуск сканирования через mock PardDuplicateIndex.scan
+    p.sandbox.PardDuplicateIndex.scan = function (opts, cb) {
+        cb(null, {
+            ok: true,
+            scannedFiles: 2,
+            hashedFiles: 2,
+            scannedSequences: 0,
+            duplicateGroups: [{
+                groupId: "group-1",
+                kind: "file",
+                contentId: "hash_abc_123",
+                size: 1024,
+                reclaimableBytes: 1024,
+                recommendedCanonical: d1.path,
+                reasons: ["Файл проверен и принадлежит проекту (assets.tsv)"],
+                files: [
+                    { path: d1.path, isOwned: true, inWorkspace: true, references: ["101"] },
+                    { path: d2.path, isOwned: false, inWorkspace: false, references: ["102"] }
+                ]
+            }],
+            errors: [
+                { code: "MISSING", path: root + "/missing.mp4", message: "Файл отсутствует" }
+            ],
+            reclaimableBytes: 1024
+        });
+    };
+
+    p.click("duplicates-scan");
+    check("после скана появилась вкладка ДУБЛИКАТЫ с бейджем 1",
+        p.tabTitles().indexOf("ДУБЛИКАТЫ1") >= 0, true);
+
+    // Переключение на вкладку дубликатов
+    var tabs = p.id("tabs");
+    var dupTabBtn = null;
+    tabs.children.forEach(function (b) {
+        if (b.textContent.indexOf("ДУБЛИКАТЫ") >= 0) dupTabBtn = b;
+    });
+    check("кнопка вкладки дубликатов создана", !!dupTabBtn, true);
+    if (dupTabBtn) dupTabBtn.onclick();
+    check("активная вкладка ДУБЛИКАТЫ", p.activeTab(), "ДУБЛИКАТЫ1");
+    check("видна панель duplicates", p.visiblePanes(), ["duplicates"]);
+
+    // 3. Отображение группы и каноникала
+    var dupList = p.id("duplicates-list");
+    var groupEl = dupList.children[0];
+    check("в списке есть группа", !!groupEl, true);
+    check("в группе 2 файла", groupEl.all().filter(function (n) {
+        return n.className && n.className.indexOf("duplicate-file-row") >= 0;
+    }).length, 2);
+
+    var canonicalBadges = groupEl.all().filter(function (n) {
+        return n.className === "canonical-badge";
+    });
+    check("ровно один каноникал помечен бейджем", canonicalBadges.length, 1);
+
+    // 4. Ручной выбор каноникала
+    var radios = groupEl.all().filter(function (n) {
+        return n.tagName === "INPUT" && (n.type === "radio" || n.attributes.type === "radio");
+    });
+    check("в группе 2 радиокнопки выбора каноникала", radios.length, 2);
+    var uncheckedRadio = radios.filter(function (r) { return !r.checked; })[0];
+    check("нашли неактивный файл для каноникала", !!uncheckedRadio, true);
+    if (uncheckedRadio) {
+        uncheckedRadio.checked = true;
+        if (uncheckedRadio.onchange) uncheckedRadio.onchange();
+    }
+
+    check("переопределение каноникала сохранено в настройках",
+        p.calls.settings.length > 0 && !!p.calls.settings[p.calls.settings.length - 1].duplicateCanonicalOverrides, true);
+
+    // 5. Устаревание после изменения аудита проекта
+    check("до изменения аудита отчёт свежий", p.id("duplicates-stale").hidden, true);
+    var d3 = pendingItem("103", "file_c.mp4");
+    p.tick(baseReport({ items: [d1, d2, d3] }));
+    check("после изменения аудита отчёт помечен как устаревший",
+        p.id("duplicates-stale").hidden, false);
+    check("кнопка предлагает обновить",
+        p.id("duplicates-scan").textContent, "ОБНОВИТЬ ДУБЛИКАТЫ");
+
+    // 6. Прогресс и токен отмены
+    var scanOptsReceived = null;
+    p.sandbox.PardDuplicateIndex.scan = function (opts, cb) {
+        scanOptsReceived = opts;
+        opts.onProgress({
+            phase: "hash", current: 1, total: 2, percent: 50,
+            scannedFiles: 1, totalFiles: 2, scannedBytes: 100, totalBytes: 200
+        });
+        check("progress заполняет процент", p.id("duplicates-progress-fill").style.width, "50%");
+        p.click("duplicates-cancel");
+        check("токен отмены выставлен", opts.cancelToken.cancelled, true);
+        cb(new Error("CANCELLED"), null);
+    };
+    p.click("duplicates-scan");
+    check("после отмены группа не потеряна (прежний результат сохранён)",
+        p.id("duplicates-list").children.length > 0, true);
+
+    // 7. Ошибка скана без потери последнего результата
+    p.sandbox.PardDuplicateIndex.scan = function (opts, cb) {
+        cb(new Error("DISK_FAULT"), null);
+    };
+    p.click("duplicates-scan");
+    check("при ошибке скана список групп не очищен",
+        p.id("duplicates-list").children.length > 0, true);
+    check("ошибка записана в журнал",
+        p.id("log").children[0].textContent.indexOf("DISK_FAULT") >= 0, true);
+
+    // 8. Дисциплина перерисовки: неизменившийся скан не трогает innerHTML списка
+    p.sandbox.PardDuplicateIndex.scan = function (opts, cb) {
+        cb(null, {
+            ok: true, scannedFiles: 2, hashedFiles: 2, scannedSequences: 0,
+            duplicateGroups: [{
+                groupId: "group-1", kind: "file", contentId: "hash123",
+                size: 100, reclaimableBytes: 100, recommendedCanonical: d1.path,
+                reasons: ["проверен"], files: [
+                    { path: d1.path, isOwned: true, references: ["101"] },
+                    { path: d2.path, isOwned: false, references: ["102"] }
+                ]
+            }],
+            errors: [],
+            reclaimableBytes: 100
+        });
+    };
+    p.click("duplicates-scan"); // sets the group
+    dom.resetHtmlWrites();
+    p.tick(); // re-render
+    var writers = dom.htmlWriters();
+    check("неизменившийся рендер не трогает duplicates-list innerHTML",
+        writers.filter(function (w) { return w === "duplicates-list"; }).length, 0);
+
+    // 9. Read-only: никаких relink/recycle/delete вызовов
+    var relinkCalls = p.calls.scripts.filter(function (s) {
+        return s.indexOf("replace") >= 0 || s.indexOf("commitFromFileJson") >= 0 || s.indexOf("removeItems") >= 0;
+    });
+    check("read-only UI дубликатов ни разу не вызывал relink в хосте", relinkCalls.length, 0);
+    check("read-only UI дубликатов ни разу не вызывал recycle", p.calls.recycled.length, 0);
 })();
 
 /* ------------------------------------------------------------------ итог */

@@ -372,6 +372,8 @@ html, body {
 }
 
 .icon:hover { color: var(--text); background: var(--surface-2); }
+.icon:disabled { opacity: 0.4; cursor: default; }
+.icon.busy { opacity: 0.4; cursor: default; }
 
 .primary.danger { border-color: #5c2d2d; color: var(--red); }
 .primary.danger:hover:not(:disabled) { border-color: var(--red); color: #fff; }
@@ -672,6 +674,13 @@ html, body {
 
 /* ------------------------------------------------------- forgotten layers */
 
+.layers-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
 .layers {
     display: flex;
     flex-direction: column;
@@ -755,3 +764,256 @@ html, body {
 }
 
 .comment-input:focus { outline: none; border-color: var(--blue); }
+
+/* -------------------------------------------------------------- duplicates */
+
+.duplicates-section {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.duplicates-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.duplicates-note {
+    color: var(--text-dim);
+    line-height: 1.4;
+    font-size: 11px;
+}
+
+.duplicates-stale {
+    background: #3b2c14;
+    border: 1px solid var(--yellow);
+    color: var(--yellow);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
+.duplicates-progress-box {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.duplicates-progress-label {
+    font-size: 11px;
+    color: var(--text);
+    font-weight: 600;
+}
+
+.duplicates-progress-bar {
+    height: 4px;
+    background: var(--surface-2);
+    border-radius: 2px;
+    overflow: hidden;
+}
+
+.duplicates-progress-fill {
+    height: 100%;
+    background: var(--blue);
+    width: 0%;
+}
+
+.duplicates-progress-stats {
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+.duplicates-summary {
+    font-size: 11px;
+    color: var(--text-dim);
+    padding: 2px 0;
+}
+
+.duplicates-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.duplicate-group {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.duplicate-group-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+}
+
+.duplicate-group-title {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.duplicate-group-reclaim {
+    color: var(--green);
+    font-weight: 600;
+}
+
+.duplicate-group-rec {
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.3;
+}
+
+.duplicate-files {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.duplicate-file-row {
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 5px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.duplicate-file-row.is-canonical {
+    border-color: #385e33;
+    background: #232b22;
+}
+
+.duplicate-file-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.canonical-badge {
+    background: var(--green);
+    color: #121212;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 2px;
+    flex: none;
+}
+
+.duplicate-file-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text);
+}
+
+.duplicate-file-meta {
+    font-size: 10px;
+    color: var(--text-dim);
+    padding-left: 20px;
+}
+
+.duplicates-empty {
+    color: var(--text-dim);
+    font-size: 11px;
+    padding: 8px 0;
+    text-align: center;
+}
+
+.duplicates-errors-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+}
+
+.duplicates-errors {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.duplicate-error-row {
+    background: var(--surface);
+    border: 1px solid #5c2d2d;
+    border-radius: 3px;
+    padding: 5px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.duplicate-error-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.error-code-badge {
+    background: var(--red);
+    color: #fff;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 4px;
+    border-radius: 2px;
+    flex: none;
+}
+
+.duplicate-error-path {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text);
+}
+
+.duplicate-error-msg {
+    font-size: 10px;
+    color: var(--text-dim);
+    padding-left: 4px;
+}
+
+.duplicates-settings-row {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+}
+
+.duplicate-group-actions {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line);
+}
+
+.duplicates-recoverable {
+    background: #3b2c14;
+    border: 1px solid var(--yellow);
+    color: var(--yellow);
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}

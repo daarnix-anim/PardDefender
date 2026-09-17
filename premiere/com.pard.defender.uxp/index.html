@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<!--
+  @map role: Разметка UXP-панели для Premiere Pro: вкладки Защита, Дубликаты и Журнал.
+  @map status: ready
+  @map layer: ui
+-->
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>PardDefender for Premiere Pro</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app" class="panel-root">
+        <header class="panel-header">
+            <div class="header-left">
+                <span class="logo-icon">&#128737;</span>
+                <span class="app-name">PardDefender</span>
+            </div>
+            <span class="host-badge">Premiere Pro UXP</span>
+        </header>
+
+        <section class="project-card" id="project-card">
+            <div class="card-row">
+                <span class="label">Проект:</span>
+                <span class="val bold" id="proj-title">—</span>
+                <span class="status-badge" id="proj-status">—</span>
+            </div>
+            <div class="card-row">
+                <span class="label">Рабочая папка:</span>
+                <span class="val mono" id="proj-workspace" title="">—</span>
+            </div>
+            <div class="card-row">
+                <span class="label">GUID проекта:</span>
+                <span class="val mono small" id="proj-guid">—</span>
+            </div>
+        </section>
+
+        <!-- Navigation Tabs -->
+        <nav class="tabs-bar" id="tabs">
+            <button class="tab-btn is-active" data-tab="protect" id="tab-protect">ЗАЩИТА</button>
+            <button class="tab-btn" data-tab="duplicates" id="tab-duplicates">ДУБЛИКАТЫ<span class="tab-badge" id="badge-duplicates" hidden>0</span></button>
+            <button class="tab-btn" data-tab="log" id="tab-log">ЖУРНАЛ</button>
+        </nav>
+
+        <div id="banner-no-project" class="alert-banner alert-info" hidden>
+            Нет открытого проекта в Premiere Pro. Откройте проект для работы с медиафайлами.
+        </div>
+
+        <div id="banner-unsaved" class="alert-banner alert-warn" hidden>
+            Проект ещё не сохранён на диск. Сохраните проект (.prproj), чтобы определить рабочую папку.
+        </div>
+
+        <!-- TAB: PROTECT -->
+        <div class="tab-pane is-active" id="pane-protect">
+            <div class="actions-bar">
+                <button id="btn-protect" class="btn btn-primary">ЗАЩИТИТЬ СЕЙЧАС</button>
+                <button id="btn-scan" class="btn">ОБНОВИТЬ АУДИТ</button>
+                <span id="scan-indicator" class="scan-indicator" hidden>Выполняется…</span>
+            </div>
+
+            <section class="stats-bar" id="stats-bar">
+                <div class="stat-pill"><span class="stat-num" id="stat-clips">0</span> клипов</div>
+                <div class="stat-pill"><span class="stat-num" id="stat-seqs">0</span> секвенций</div>
+                <div class="stat-pill"><span class="stat-num" id="stat-offline">0</span> offline</div>
+                <div class="stat-pill"><span class="stat-num" id="stat-gen">0</span> generated</div>
+            </section>
+
+            <section class="items-section">
+                <div class="section-title">Элементы проекта (<span id="items-count">0</span>)</div>
+                <div class="items-list" id="items-list">
+                    <div class="empty-state" id="empty-state">Нет данных аудита. Нажмите «ОБНОВИТЬ АУДИТ».</div>
+                </div>
+            </section>
+        </div>
+
+        <!-- TAB: DUPLICATES -->
+        <div class="tab-pane" id="pane-duplicates" hidden>
+            <div class="actions-bar">
+                <button id="btn-scan-duplicates" class="btn btn-primary">НАЙТИ ДУБЛИКАТЫ</button>
+            </div>
+
+            <div class="duplicates-progress-box" id="duplicates-progress-box" hidden>
+                <div class="duplicates-progress-stats" id="duplicates-progress-stats">Сканирование…</div>
+                <div class="duplicates-progress-bar"><div class="duplicates-progress-fill" id="duplicates-progress-fill" style="width: 0%"></div></div>
+            </div>
+
+            <div class="duplicates-summary" id="duplicates-summary" hidden></div>
+
+            <section class="items-section">
+                <div class="duplicates-list" id="duplicates-list">
+                    <div class="empty-state">Нажмите «НАЙТИ ДУБЛИКАТЫ» для поиска 100% побайтовых копий.</div>
+                </div>
+            </section>
+        </div>
+
+        <!-- TAB: LOG -->
+        <div class="tab-pane" id="pane-log" hidden>
+            <div class="log-box" id="log-box"></div>
+        </div>
+    </div>
+
+    <script src="copy-engine.js"></script>
+    <script src="duplicates.js"></script>
+    <script src="adapter.js"></script>
+    <script src="sync-coordinator.js"></script>
+    <script src="main.js"></script>
+</body>
+</html>

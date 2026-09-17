@@ -1,6 +1,6 @@
 /*
  *
- * @map role: 42 проверки копирования на настоящих файлах во временной
+ * @map role: 50 проверок копирования на настоящих файлах во временной
  *           папке.
  * @map status: ready
  * Exercises the copy layer against real files in a scratch directory.
@@ -98,13 +98,16 @@ steps.push(function (next) {
 steps.push(function (next) {
     group("Повторный импорт того же файла");
     var source = src + "/clip.mp4";
-    run([{ id: "2", sourcePath: source, destPath: dest + "/clip.mp4", size: 12 }],
+    run([{ id: "2", sourcePath: source, destPath: dest + "/clip.mp4", size: 12,
+        allowReuse: true }],
         null, function (results) {
             check("задача успешна", results[0].ok, true);
             check("дубликат не создан", listDir(dest), ["clip.mp4"]);
             check("relink указывает на существующий файл",
                 results[0].destPath === undefined || results[0].destPath === "" ||
                 /clip\.mp4$/.test(results[0].destPath || ""), true);
+            check("переиспользованный файл не объявлен созданным",
+                results[0].records[0].created, false);
             next();
         });
 });
@@ -181,6 +184,53 @@ steps.push(function (next) {
             ["shot_a_00001.png", "shot_a_00002.png", "shot_a_00003.png"]);
         check("relink указывает на первый кадр",
             /shot_a_00001\.png$/.test(results[0].destPath), true);
+        check("каждый созданный кадр описан отдельно",
+            results[0].records.map(function (r) { return r.created; }),
+            [true, true, true]);
+        next();
+    });
+});
+
+steps.push(function (next) {
+    group("Конфликт имён секвенции");
+    var frameDir = src + "/frames-conflict";
+    fs.mkdirSync(native(frameDir), { recursive: true });
+    ["shot_a_00001.png", "shot_a_00002.png", "shot_a_00003.png"].forEach(function (name) {
+        fs.writeFileSync(native(frameDir + "/" + name), "NEW-" + name);
+    });
+
+    var preferred = root + "/workspace/01_assets/Intro/SEQUENCES/shot_a";
+    run([{
+        id: "7", sourcePath: frameDir + "/shot_a_00001.png",
+        destPath: preferred, isSequence: true,
+        sequence: { folder: frameDir, prefix: "shot_a_", padding: 5, suffix: ".png" },
+        size: 1, allowReuse: false
+    }], null, function (results) {
+        var sibling = preferred + " (2)";
+        check("секвенция получила целую новую папку", listDir(sibling),
+            ["shot_a_00001.png", "shot_a_00002.png", "shot_a_00003.png"]);
+        check("имена кадров сохранили единый шаблон",
+            listDir(sibling).some(function (name) { return / \(2\)\./.test(name); }), false);
+        check("relink смотрит в новую папку",
+            results[0].destPath.indexOf(sibling + "/") === 0, true);
+        check("старая секвенция не перезаписана",
+            readFile(preferred + "/shot_a_00002.png"), "shot_a_00002.png");
+        next();
+    });
+});
+
+steps.push(function (next) {
+    group("Резерв диска для секвенции");
+    var frameDir = src + "/frames";
+    var blockedDest = root + "/workspace/01_assets/Intro/SEQUENCES/no-space";
+    run([{
+        id: "8", sourcePath: frameDir + "/shot_a_00001.png",
+        destPath: blockedDest, isSequence: true,
+        sequence: { folder: frameDir, prefix: "shot_a_", padding: 5, suffix: ".png" },
+        size: 1
+    }], { freeBytes: 20, reserveBytes: 0 }, function (results) {
+        check("считается размер всех кадров", results[0].code, "DISK_FULL");
+        check("копирование секвенции не начато", listDir(blockedDest), []);
         next();
     });
 });

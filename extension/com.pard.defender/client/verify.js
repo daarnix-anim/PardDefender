@@ -24,6 +24,8 @@ var PardVerify = (function () {
 
     var workspace = "";
     var manifest = {};
+    var manifestList = [];
+    var bySource = {};
     var cursor = 0;
 
     api.DEFAULT_BUDGET = DEFAULT_BUDGET;
@@ -39,6 +41,8 @@ var PardVerify = (function () {
     api.attach = function (workspacePath) {
         workspace = String(workspacePath || "");
         manifest = {};
+        manifestList = [];
+        bySource = {};
         cursor = 0;
         if (!workspace) return;
 
@@ -50,11 +54,18 @@ var PardVerify = (function () {
             if (!lines[i]) continue;
             fields = lines[i].split("\t");
             if (fields.length < 5) continue;
-            manifest[key(fields[4])] = {
+            var record = {
+                itemKey: fields[1],
                 sourcePath: fields[2],
                 size: Number(fields[3]) || 0,
                 destPath: fields[4]
             };
+            manifest[key(fields[4])] = record;
+            bySource[key(fields[2])] = record;
+        }
+        var k;
+        for (k in manifest) {
+            if (manifest.hasOwnProperty(k)) manifestList.push(manifest[k]);
         }
     };
 
@@ -79,6 +90,24 @@ var PardVerify = (function () {
         return !!manifest[key(destPath)];
     };
 
+    api.destinationForSource = function (sourcePath) {
+        var record = bySource[key(sourcePath)];
+        if (!record) return "";
+        var root = key(workspace).replace(/\/$/, "");
+        var destination = key(record.destPath);
+        return root && destination.indexOf(root + "/") === 0 ? record.destPath : "";
+    };
+
+    api.recordsUnder = function (folderPath) {
+        var prefix = key(folderPath).replace(/\/$/, "") + "/";
+        var out = [], i, dest;
+        for (i = 0; i < manifestList.length; i++) {
+            dest = key(manifestList[i].destPath);
+            if (dest.indexOf(prefix) === 0) out.push(manifestList[i]);
+        }
+        return out;
+    };
+
     /*
      * `items` is the audit's item list. Only entries already inside the
      * workspace are checked; everything else is the copy queue's problem, not
@@ -92,25 +121,49 @@ var PardVerify = (function () {
             return { findings: findings, checked: 0, wrapped: false };
         }
 
+        /* Expand protected sequence items to the exact frame records written by
+         * the copy transaction. Re-enumerating the filesystem would hide a
+         * missing frame, because a missing file is precisely what readdir no
+         * longer returns. */
+        var candidates = [], itemIndex, records, recordIndex;
+        for (itemIndex = 0; itemIndex < items.length; itemIndex++) {
+            var sourceItem = items[itemIndex];
+            if (!sourceItem || sourceItem.state !== "protected" || !sourceItem.path) continue;
+            records = sourceItem.isSequence
+                ? api.recordsUnder(sourceItem.path.replace(/\/[^\/]*$/, ""))
+                : [];
+            if (!records.length) {
+                candidates.push({ item: sourceItem, path: sourceItem.path,
+                    record: manifest[key(sourceItem.path)] || null });
+                continue;
+            }
+            for (recordIndex = 0; recordIndex < records.length; recordIndex++) {
+                candidates.push({ item: sourceItem, path: records[recordIndex].destPath,
+                    record: records[recordIndex] });
+            }
+        }
+
+        if (!candidates.length) return { findings: findings, checked: 0, wrapped: false };
+
         var wrapped = false;
-        while (checked < limit && scanned < items.length) {
-            if (cursor >= items.length) { cursor = 0; wrapped = true; }
-            var item = items[cursor++];
+        while (checked < limit && scanned < candidates.length) {
+            if (cursor >= candidates.length) { cursor = 0; wrapped = true; }
+            var candidate = candidates[cursor++];
+            var item = candidate.item;
             scanned++;
-            if (!item || item.state !== "protected" || !item.path) continue;
 
             checked++;
-            var stats = PardCopyQueue.statOf(item.path);
+            var stats = PardCopyQueue.statOf(candidate.path);
 
             if (!stats) {
                 findings.push({
                     key: item.key || ("i" + item.id),
                     id: item.id,
                     name: item.name,
-                    path: item.path,
+                    path: candidate.path,
                     code: "PROTECTED_GONE",
-                    detail: item.path,
-                    sourceSize: item.size
+                    detail: candidate.path,
+                    sourceSize: candidate.record ? candidate.record.size : item.size
                 });
                 continue;
             }
@@ -121,13 +174,13 @@ var PardVerify = (function () {
              * started has no recorded size, and inventing one from the current
              * state would make every such file look verified when it is not.
              */
-            var record = manifest[key(item.path)];
+            var record = candidate.record;
             if (record && record.size > 0 && stats.size !== record.size) {
                 findings.push({
                     key: item.key || ("i" + item.id),
                     id: item.id,
                     name: item.name,
-                    path: item.path,
+                    path: candidate.path,
                     code: "PROTECTED_CHANGED",
                     detail: "было " + record.size + " байт, стало " + stats.size,
                     sourceSize: stats.size
@@ -141,7 +194,7 @@ var PardVerify = (function () {
     /* Full sweep on demand - what the owner runs before archiving a project. */
     api.sweepAll = function (items) {
         cursor = 0;
-        return api.sweep(items, items ? items.length : 0);
+        return api.sweep(items, (items ? items.length : 0) + manifestList.length);
     };
 
     api.reset = function () { cursor = 0; };

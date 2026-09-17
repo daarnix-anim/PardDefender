@@ -2,7 +2,7 @@
  * Exercises the four client modules that decide what the owner sees and when
  * PardDefender tries again: the issue store, the counters, protected-file
  *
- * @map role: 107 проверок клиентских модулей: ошибки, метрики, сверка,
+ * @map role: 112 проверок клиентских модулей: ошибки, метрики, сверка,
  *           обновления.
  * @map status: ready
  * verification, and update-version comparison.
@@ -305,6 +305,33 @@ group("Сверка идёт порциями");
     check("вторая порция продолжает с того же места", Verify.sweep(items, 4).checked, 4);
     var third = Verify.sweep(items, 4);
     check("третья добирает остаток и заворачивается", third.checked >= 2, true);
+})();
+
+group("Сверка всей секвенции");
+(function () {
+    var seqDir = workspace + "/01_assets/Intro/SEQUENCES/shot";
+    var first = seqDir + "/shot_0001.png";
+    var second = seqDir + "/shot_0002.png";
+    fs.mkdirSync(seqDir.replace(/\//g, path.sep), { recursive: true });
+    fs.writeFileSync(first.replace(/\//g, path.sep), "frame-one");
+
+    Queue.writeText(workspace + "/.parddefender/assets.tsv", [
+        ["2026-08-28", "i20", "E:/seq/shot_0001.png", "9", first, "Intro", "image"].join("\t"),
+        ["2026-08-28", "i20", "E:/seq/shot_0002.png", "9", second, "Intro", "image"].join("\t")
+    ].join("\n") + "\n");
+    Verify.attach(workspace);
+
+    var outcome = Verify.sweepAll([{
+        key: "i20", id: "20", name: "shot_[0001-0002].png",
+        path: first, state: "protected", size: 9, isSequence: true
+    }]);
+    check("проверены обе записи секвенции", outcome.checked, 2);
+    check("пропавший не первый кадр обнаружен", outcome.findings.length, 1);
+    check("в находке точный путь кадра", outcome.findings[0].path, second);
+    check("можно восстановить назначение по исходнику",
+        Verify.destinationForSource("E:/seq/shot_0002.png"), second);
+    check("можно получить все принадлежащие нам кадры папки",
+        Verify.recordsUnder(seqDir).length, 2);
 })();
 
 /* ---------------------------------------------------------- обновления */

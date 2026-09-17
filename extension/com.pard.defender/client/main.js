@@ -20,14 +20,6 @@
 (function () {
     "use strict";
 
-    var HOST_MODULES = [
-        "PardDefenderCore.jsx",
-        "PardDefenderPlan.jsx",
-        "PardDefenderAudit.jsx",
-        "PardDefenderApply.jsx",
-        "PardDefenderLayers.jsx"
-    ];
-
     var TICK_MS = 5000;
     var STABILITY_MS = 5000;
     var MAX_LOG_ROWS = 60;
@@ -53,8 +45,10 @@
         update: null,
         layers: null,
         lastLayerScanAt: 0,
+        layersBusy: false,
+        layerScanSeq: 0,
         commentFor: "",
-        version: "1.0.0",
+        version: "2.0.0",
         confirmCleanupUntil: 0,
         confirmAdoptUntil: 0,
         confirmRedistUntil: 0,
@@ -64,28 +58,25 @@
         tab: "main",
         pin: null,
         pinBusy: false,
-        lastPinCheckAt: 0
+        lastPinCheckAt: 0,
+        duplicates: {
+            scanning: false,
+            stale: false,
+            result: null,
+            error: "",
+            progress: null,
+            cancelToken: null,
+            auditSignature: ""
+        },
+        consolidationConfirmUntil: 0,
+        consolidationGroupId: "",
+        consolidationBusy: false
     };
 
     var el = {};
     var painted = {};
 
     /* ------------------------------------------------------------- plumbing */
-
-    function evalScript(script, callback) {
-        if (!window.__adobe_cep__ || !window.__adobe_cep__.evalScript) {
-            callback("EvalScript error.");
-            return;
-        }
-        window.__adobe_cep__.evalScript(script, callback);
-    }
-
-    function escapeForExtendScript(value) {
-        return String(value || "")
-            .replace(/\\/g, "\\\\")
-            .replace(/'/g, "\\'")
-            .replace(/[\r\n]/g, "");
-    }
 
     function extensionRoot() {
         var p = decodeURIComponent(window.location.pathname || "").replace(/\\/g, "/");
@@ -127,57 +118,10 @@
 
     function invalidate(name) { delete painted[name]; }
 
-    /* --------------------------------------------------------- host loading */
-
-    function loadHostModules(callback) {
-        var root = extensionRoot();
-        if (!root) {
-            callback(false, "Не удалось определить папку расширения.");
-            return;
-        }
-
-        var index = 0;
-        function next() {
-            if (index >= HOST_MODULES.length) {
-                evalScript(
-                    "(function(){try{return $.global.PardDefenderHost ? " +
-                    "('OK|' + $.global.PardDefenderHost.version) : 'NO_API';}" +
-                    "catch(e){return 'ERR|' + e.toString();}})()",
-                    function (raw) {
-                        var text = String(raw || "");
-                        if (text.indexOf("OK|") === 0) {
-                            callback(true, text.substring(3));
-                            return;
-                        }
-                        callback(false, "Хост загрузился, но API недоступен: " + text);
-                    }
-                );
-                return;
-            }
-
-            var file = root + "/host/" + HOST_MODULES[index++];
-            var script = [
-                "(function(){try{",
-                "var f=new File('" + escapeForExtendScript(file) + "');",
-                "if(!f.exists){return 'MISSING|'+f.fsName;}",
-                "$.evalFile(f);",
-                "return 'OK';",
-                "}catch(e){return 'ERR|'+e.toString()+'|line='+(e.line||0);}})()"
-            ].join("");
-
-            evalScript(script, function (raw) {
-                var text = String(raw || "");
-                if (text === "OK") { next(); return; }
-                callback(false, HOST_MODULES[index - 1] + ": " + text.replace(/\|/g, " — "));
-            });
-        }
-        next();
-    }
-
     /* --------------------------------------------------------------- audit */
 
     function runAudit(callback) {
-        evalScript("$.global.PardDefenderHost.auditToFile();", function (raw) {
+        PardHostAdapter.auditToFile(function (raw) {
             var text = String(raw || "");
             if (text.indexOf("OK|") !== 0) {
                 callback(null, text || "Аудит не вернул результат.");
@@ -277,7 +221,7 @@
     }
 
     function buildCopyTasks(report, force) {
-        var tasks = [], i, item, key, misplaced;
+        var tasks = [], i, item, key, misplaced, recordedDest, taskDest;
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
             misplaced = relocating() && isLegacyMisplaced(item);
@@ -301,13 +245,24 @@
              */
             if (!readyToCopy(key, item.unassigned, force || misplaced)) continue;
 
+            /* A previous pass may have copied under a collision-safe name and
+             * then failed during relink. Continue from that exact owned copy;
+             * never infer ownership merely because equal bytes happen to exist
+             * at the preferred destination. */
+            recordedDest = PardVerify.destinationForSource(item.path);
+            taskDest = recordedDest || item.destPath;
+            if (item.isSequence && recordedDest) {
+                taskDest = PardCopyQueue.toSlash(recordedDest).replace(/\/[^\/]*$/, "");
+            }
+
             tasks.push({
                 key: key,
                 id: item.id,
                 isProxy: item.isProxy === true,
                 name: item.name,
                 sourcePath: item.path,
-                destPath: item.destPath,
+                destPath: taskDest,
+                allowReuse: !!recordedDest,
                 isSequence: item.isSequence,
                 sequence: item.sequence,
                 size: item.size,
@@ -363,7 +318,8 @@
             lines.push([now, tasks[i].key, tasks[i].sourcePath,
                 tasks[i].destPath].join("\t"));
         }
-        PardCopyQueue.writeText(metadataDir() + "/pending.tsv", lines.join("\n") + "\n");
+        return PardCopyQueue.writeText(
+            metadataDir() + "/pending.tsv", lines.join("\n") + "\n");
     }
 
     function taskMap(tasks) {
@@ -377,20 +333,27 @@
     }
 
     function recordManifest(tasks, results) {
-        var lines = [], i, r, task, byKey = taskMap(tasks);
+        var lines = [], i, j, r, task, record, byKey = taskMap(tasks);
         for (i = 0; i < results.length; i++) {
             r = results[i];
             if (!r.ok) continue;
             task = resultTask(byKey, r);
             if (!task) continue;
-            lines.push([
-                new Date().toISOString(), task.key, task.sourcePath, task.size,
-                r.destPath, task.branch, task.category
-            ].join("\t"));
+            /* Reused paths were already in the manifest before this pass.
+             * Recording an arbitrary identical pre-existing file as ours would
+             * incorrectly authorise the cleanup button to recycle it. */
+            for (j = 0; j < (r.records || []).length; j++) {
+                record = r.records[j];
+                if (!record.created) continue;
+                lines.push([
+                    new Date().toISOString(), task.key, record.sourcePath,
+                    record.size, record.destPath, task.branch, task.category
+                ].join("\t"));
+            }
         }
-        if (lines.length) {
-            PardCopyQueue.appendText(metadataDir() + "/assets.tsv", lines.join("\n") + "\n");
-        }
+        if (!lines.length) return true;
+        return PardCopyQueue.appendText(
+            metadataDir() + "/assets.tsv", lines.join("\n") + "\n");
     }
 
     function commitRelink(tasks, results, callback) {
@@ -417,19 +380,15 @@
             return;
         }
 
-        evalScript(
-            "$.global.PardDefenderHost.commitFromFileJson('" +
-            escapeForExtendScript(planPath) + "');",
-            function (raw) {
-                var parsed = null;
-                try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
-                if (!parsed) {
-                    callback(null, "Хост не вернул результат перелинковки.", entries);
-                    return;
-                }
-                callback(parsed, parsed.ok ? "" : parsed.error, entries);
+        PardHostAdapter.commitFromFileJson(planPath, function (raw) {
+            var parsed = null;
+            try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
+            if (!parsed) {
+                callback(null, "Хост не вернул результат перелинковки.", entries);
+                return;
             }
-        );
+            callback(parsed, parsed.ok ? "" : parsed.error, entries);
+        });
     }
 
     function applyPanel(moves, callback) {
@@ -440,16 +399,12 @@
             callback(null, "План группировки не удалось записать.");
             return;
         }
-        evalScript(
-            "$.global.PardDefenderHost.organizeFromFileJson('" +
-            escapeForExtendScript(planPath) + "');",
-            function (raw) {
-                var parsed = null;
-                try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
-                if (!parsed) { callback(null, "Хост не вернул результат группировки."); return; }
-                callback(parsed, parsed.ok ? "" : parsed.error);
-            }
-        );
+        PardHostAdapter.organizeFromFileJson(planPath, function (raw) {
+            var parsed = null;
+            try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
+            if (!parsed) { callback(null, "Хост не вернул результат группировки."); return; }
+            callback(parsed, parsed.ok ? "" : parsed.error);
+        });
     }
 
     function absorbCopyResults(tasks, results) {
@@ -647,7 +602,12 @@
             return;
         }
 
-        journalTasks(tasks);
+        if (!journalTasks(tasks)) {
+            state.busy = false;
+            trip("JOURNAL_FAILED", "журнал операции недоступен для записи");
+            render();
+            return;
+        }
         log("Копирую " + tasks.length + " элем.…", "work");
 
         PardCopyQueue.run(
@@ -671,7 +631,15 @@
                         (totals.reused ? ", переиспользовано " + totals.reused : ""), "good");
                 }
 
-                recordManifest(tasks, results);
+                if (!recordManifest(tasks, results)) {
+                    state.busy = false;
+                    trip("MANIFEST_FAILED", "манифест защищённых файлов недоступен для записи");
+                    /* Do not relink and do not remove pending.tsv. The verified
+                     * copies stay as harmless unowned files; no deletion path
+                     * can reach them until provenance is durably recorded. */
+                    render();
+                    return;
+                }
 
                 var breaker = PardIssues.evaluateBreaker(results, BREAKER_THRESHOLD);
                 if (breaker.tripped) {
@@ -816,13 +784,22 @@
              * That still gets deleted if the owner confirms - it is unused, and
              * they asked - but it is counted separately and said out loud.
              */
-            var onlyCopy = !PardCopyQueue.statOf(record.sourcePath);
+            var ownedPaths = item.isSequence
+                ? PardVerify.recordsUnder(item.path.replace(/\/[^\/]*$/, ""))
+                : [record];
+            if (!ownedPaths.length) ownedPaths = [record];
+            var onlyCopy = false, ownedBytes = 0, op;
+            for (op = 0; op < ownedPaths.length; op++) {
+                ownedBytes += ownedPaths[op].size || 0;
+                if (!PardCopyQueue.statOf(ownedPaths[op].sourcePath)) onlyCopy = true;
+            }
 
             out.push({
                 id: item.id,
                 name: item.name,
                 path: item.path,
-                size: item.size,
+                paths: ownedPaths.map(function (owned) { return owned.destPath; }),
+                size: ownedBytes || item.size,
                 sourcePath: record.sourcePath,
                 onlyCopy: onlyCopy
             });
@@ -849,7 +826,7 @@
 
         var paths = [], ids = [], i;
         for (i = 0; i < totals.list.length; i++) {
-            paths.push(totals.list[i].path);
+            paths = paths.concat(totals.list[i].paths || [totals.list[i].path]);
             ids.push(totals.list[i].id);
         }
 
@@ -880,23 +857,19 @@
                 return;
             }
 
-            evalScript(
-                "$.global.PardDefenderHost.removeItemsFromFileJson('" +
-                escapeForExtendScript(planPath) + "');",
-                function (raw) {
-                    var parsed = null;
-                    try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
-                    if (parsed && parsed.ok && parsed.removed) {
-                        log("Убрано из проекта: " + parsed.removed, "good");
-                    } else if (parsed && !parsed.ok) {
-                        log("Не удалось убрать из проекта: " + parsed.error, "warn");
-                    }
-                    state.busy = false;
-                    setBusyLabel("");
-                    state.lastWeighAt = 0;
-                    tick(true);
+            PardHostAdapter.removeItemsFromFileJson(planPath, function (raw) {
+                var parsed = null;
+                try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
+                if (parsed && parsed.ok && parsed.removed) {
+                    log("Убрано из проекта: " + parsed.removed, "good");
+                } else if (parsed && !parsed.ok) {
+                    log("Не удалось убрать из проекта: " + parsed.error, "warn");
                 }
-            );
+                state.busy = false;
+                setBusyLabel("");
+                state.lastWeighAt = 0;
+                tick(true);
+            });
         });
     }
 
@@ -1030,7 +1003,7 @@
      * the audit's cadence but is skipped entirely while the setting is off.
      */
     function runLayerScan(callback) {
-        evalScript("$.global.PardDefenderHost.scanLayersToFile();", function (raw) {
+        PardHostAdapter.scanLayersToFile(function (raw) {
             var text = String(raw || "");
             if (text.indexOf("OK|") !== 0) { callback(null); return; }
             var body = PardCopyQueue.readText(text.substring(3));
@@ -1126,15 +1099,7 @@
     }
 
     function revealFinding(finding) {
-        var call = finding.kind === "comp"
-            ? "$.global.PardDefenderHost.revealComp('" +
-                escapeForExtendScript(finding.compId) + "');"
-            : "$.global.PardDefenderHost.revealLayer('" +
-                escapeForExtendScript(finding.compId) + "', " +
-                (Number(finding.layerIndex) || 0) + ", '" +
-                escapeForExtendScript(finding.layerName) + "');";
-
-        evalScript(call, function (raw) {
+        function onRevealed(raw) {
             var text = String(raw || "");
             if (text.indexOf("ERROR|") === 0) {
                 var code = text.substring(6);
@@ -1151,12 +1116,22 @@
             var parts = text.split("|");
             log("Открыл композицию «" + (parts[1] || finding.compName) + "»" +
                 (parts[2] ? ", выделил слой «" + parts[2] + "»" : ""), "work");
-        });
+        }
+
+        if (finding.kind === "comp") {
+            PardHostAdapter.revealComp(finding.compId, onRevealed);
+        } else {
+            PardHostAdapter.revealLayer(finding.compId, finding.layerIndex, finding.layerName, onRevealed);
+        }
     }
 
     function renderLayers() {
         var list = layerFindings();
         el.layersSection.hidden = list.length === 0;
+        if (el.layersRefresh) {
+            el.layersRefresh.disabled = !!state.layersBusy;
+            el.layersRefresh.className = "icon" + (state.layersBusy ? " busy" : "");
+        }
         if (!list.length) { state.commentFor = ""; return; }
 
         var parts = [], i;
@@ -1310,6 +1285,16 @@
 
     /* ---------------------------------------------------------------- tick */
 
+    function auditSignature(report) {
+        if (!report) return "";
+        var countPart = report.counts ? [
+            report.counts.total, report.counts.protected_,
+            report.counts.pending, report.counts.missing
+        ].join("-") : "";
+        var itemsLen = (report.items || []).length;
+        return (report.projectPath || "") + "|" + (report.workspace || "") + "|" + itemsLen + "|" + countPart;
+    }
+
     function tick(force) {
         if (!state.hostReady || state.busy) return;
 
@@ -1330,9 +1315,24 @@
 
             if (report.projectPath !== state.projectPath) onProjectChanged(report);
 
+            var prevSig = state.report ? auditSignature(state.report) : "";
+            var newSig = auditSignature(report);
+            if (state.duplicates && state.duplicates.result && prevSig && prevSig !== newSig) {
+                state.duplicates.stale = true;
+            }
+
             state.report = report;
             state.settings = report.settings || state.settings;
             state.workspace = report.workspace;
+            if (report.workspace && !report.workspaceIssue && report.projectPath) {
+                var reg = PardWorkspaceStore.registerProject(report.workspace, {
+                    host: "after-effects",
+                    path: report.projectPath
+                }, PardWorkspaceStore.currentSession());
+                if (reg && reg.conflict) {
+                    log(reg.error, "warn");
+                }
+            }
             refreshTracking(report);
             maybeFinishRedistribute();
             refreshDisk();
@@ -1367,6 +1367,8 @@
         state.lastWeighAt = 0;
         state.layers = null;
         state.lastLayerScanAt = 0;
+        state.layersBusy = false;
+        state.layerScanSeq++;
         state.commentFor = "";
         state.projectPath = report.projectPath;
         state.cloud = null;
@@ -1377,12 +1379,24 @@
         state.confirmAdoptUntil = 0;
         state.confirmRedistUntil = 0;
         state.tab = "main";
+        if (state.duplicates) {
+            state.duplicates.result = null;
+            state.duplicates.stale = false;
+            state.duplicates.error = "";
+            state.duplicates.progress = null;
+            state.duplicates.auditSignature = "";
+        }
         painted = {};
 
         var workspace = report.workspaceIssue ? "" : report.workspace;
         PardIssues.attach(workspace);
         PardStats.attach(workspace);
         PardVerify.attach(workspace);
+        if (workspace) {
+            PardWorkspaceStore.attach(workspace);
+        } else {
+            PardWorkspaceStore.detach();
+        }
 
         if (workspace) {
             var recovered = PardCopyQueue.recoverJournal(workspace + "/.parddefender/pending.tsv");
@@ -1401,30 +1415,36 @@
         });
     }
 
-    function maybeScanLayers() {
+    function scanLayers(force) {
         if (!state.settings || state.settings.scanLayersEnabled === false) {
-            state.layers = null;
+            if (!force) state.layers = null;
             return;
         }
         if (!state.workspace) return;
-        if (Date.now() - state.lastLayerScanAt < state.settings.scanIntervalMs) return;
-        state.lastLayerScanAt = Date.now();
+        if (state.layersBusy) return;
+        if (!force && Date.now() - state.lastLayerScanAt < state.settings.scanIntervalMs) return;
+
+        state.layersBusy = true;
+        var seq = ++state.layerScanSeq;
+        renderLayers();
+
         runLayerScan(function (report) {
+            if (seq !== state.layerScanSeq) return;
+            state.layersBusy = false;
+            if (!report || !report.ok) {
+                log("Не удалось обновить список слоёв.", "warn");
+                renderLayers();
+                return;
+            }
             state.layers = report;
-            /*
-             * No invalidate() here. renderLayers builds its own signature from
-             * the findings, so an unchanged sweep repaints nothing - and an
-             * unconditional invalidate rebuilt the list on every scan, which
-             * resets scrollTop. That is the scroll-jitter bug, one section over.
-             * Caught by tests/panel.test.js, which counts innerHTML writes.
-             */
+            state.lastLayerScanAt = Date.now();
             renderLayers();
-            /* The findings now decide whether the tab exists at all, so the
-             * bar has to hear about a sweep that arrives between renders.
-             * renderTabs keeps its own signature - an unchanged sweep still
-             * rebuilds nothing. */
             renderTabs();
         });
+    }
+
+    function maybeScanLayers() {
+        scanLayers(false);
     }
 
     /*
@@ -1613,6 +1633,7 @@
         renderCloud();
         renderUnused();
         renderLegacy();
+        renderDuplicates();
         renderTabs();
         renderLayers();
         renderIssues();
@@ -1860,6 +1881,7 @@
         { name: "main", title: "ПАНЕЛЬ" },
         { name: "layers", title: "ВЫКЛЮЧЕНО И ЗАБЫТО" },
         { name: "unused", title: "НЕ ИСПОЛЬЗУЕТСЯ" },
+        { name: "duplicates", title: "ДУБЛИКАТЫ" },
         { name: "legacy", title: "СТАРЫЙ ПРОЕКТ" },
         { name: "journal", title: "ЖУРНАЛ" },
         { name: "settings", title: "НАСТРОЙКИ" }
@@ -1876,6 +1898,10 @@
             var count = unusedTotals().count;
             return count ? String(count) : "";
         }
+        if (name === "duplicates") {
+            var dupGroups = (state.duplicates && state.duplicates.result && state.duplicates.result.duplicateGroups) || [];
+            return dupGroups.length ? String(dupGroups.length) : "";
+        }
         if (name === "legacy") {
             var misplaced = misplacedTotals().count;
             return misplaced ? String(misplaced) : "";
@@ -1888,9 +1914,17 @@
         var live = !!(report && report.projectSaved && !report.workspaceIssue);
         if (name === "main") return true;
         if (!live) return false;
-        /* These three exist only while there is something to act on. */
+        /* These exist only while there is something to act on. */
         if (name === "layers") return layerFindings().length > 0;
         if (name === "unused") return unusedTotals().count > 0;
+        if (name === "duplicates") {
+            if (state.tab === "duplicates" || (state.duplicates && state.duplicates.scanning)) return true;
+            if (!state.duplicates || !state.duplicates.result) return false;
+            var res = state.duplicates.result;
+            var hasGroups = res.duplicateGroups && res.duplicateGroups.length > 0;
+            var hasErrors = (res.errors && res.errors.length > 0) || !!state.duplicates.error;
+            return hasGroups || hasErrors;
+        }
         if (name === "legacy") return misplacedTotals().count > 0 || relocating();
         return true;
     }
@@ -2040,8 +2074,7 @@
     }
 
     function showInProject(id, name) {
-        evalScript("$.global.PardDefenderHost.selectItemById('" +
-            escapeForExtendScript(id) + "');", function (raw) {
+        PardHostAdapter.selectItemById(id, function (raw) {
             var text = String(raw || "");
             if (text.indexOf("ERROR|") === 0) { log(text.substring(6), "bad"); return; }
             /*
@@ -2326,27 +2359,464 @@
             log("Настройки не удалось записать во временный файл.", "bad");
             return;
         }
-        evalScript(
-            "$.global.PardDefenderHost.writeSettingsFromFile('" +
-            escapeForExtendScript(planPath) + "');",
-            function (raw) {
-                var parsed = null;
-                try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
-                if (parsed && parsed.ok) {
-                    state.settings = parsed.settings;
-                    render();
-                } else {
-                    log("Настройки не сохранились: " +
-                        (parsed ? parsed.error : "хост не ответил"), "bad");
-                }
+        PardHostAdapter.writeSettingsFromFile(planPath, function (raw) {
+            var parsed = null;
+            try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
+            if (parsed && parsed.ok) {
+                state.settings = parsed.settings;
+                render();
+            } else {
+                log("Настройки не сохранились: " +
+                    (parsed ? parsed.error : "хост не ответил"), "bad");
             }
-        );
+        });
     }
 
     function minutesFrom(input, fallbackMs) {
         var value = Number(input.value);
         if (!isFinite(value) || value < 0) return fallbackMs;
         return Math.round(value) * 60000;
+    }
+
+    /* ------------------------------------------------------------- duplicates */
+
+    function scanDuplicates() {
+        if (!state.report || !state.report.workspace || (state.duplicates && state.duplicates.scanning)) return;
+        var token = { cancelled: false };
+        state.duplicates.scanning = true;
+        state.duplicates.error = "";
+        state.duplicates.cancelToken = token;
+        state.duplicates.progress = {
+            phase: "init",
+            scannedFiles: 0,
+            totalFiles: (state.report.items || []).length,
+            scannedBytes: 0,
+            totalBytes: 0,
+            percent: 0
+        };
+        invalidate("duplicates");
+        invalidate("tabs");
+        render();
+
+        var scanWorkspace = state.report.workspace;
+        var scanAuditSig = auditSignature(state.report);
+
+        PardDuplicateIndex.scan({
+            workspaceRoot: scanWorkspace,
+            items: state.report.items || [],
+            cancelToken: token,
+            onProgress: function (p) {
+                if (token.cancelled) return;
+                state.duplicates.progress = p;
+                invalidate("duplicates");
+                render();
+            }
+        }, function (err, res) {
+            state.duplicates.scanning = false;
+            state.duplicates.cancelToken = null;
+            if (err) {
+                if (err.message === "CANCELLED") {
+                    log("Поиск дубликатов отменён.", "neutral");
+                } else {
+                    state.duplicates.error = err.message || "Ошибка поиска дубликатов";
+                    log("Ошибка поиска дубликатов: " + state.duplicates.error, "bad");
+                }
+            } else if (res) {
+                state.duplicates.result = res;
+                state.duplicates.stale = false;
+                state.duplicates.auditSignature = scanAuditSig;
+                log("Поиск дубликатов завершён. Найдено групп: " + (res.duplicateGroups || []).length, "good");
+                cleanObsoleteOverrides(res);
+            }
+            invalidate("duplicates");
+            invalidate("tabs");
+            render();
+        });
+    }
+
+    function cancelDuplicatesScan() {
+        if (state.duplicates && state.duplicates.cancelToken) {
+            state.duplicates.cancelToken.cancelled = true;
+        }
+    }
+
+    function cleanObsoleteOverrides(res) {
+        if (!state.settings || !state.settings.duplicateCanonicalOverrides) return;
+        var overrides = state.settings.duplicateCanonicalOverrides;
+        var activeContentIds = {};
+        if (res && res.duplicateGroups) {
+            for (var i = 0; i < res.duplicateGroups.length; i++) {
+                activeContentIds[res.duplicateGroups[i].contentId] = true;
+            }
+        }
+        var changed = false;
+        for (var cId in overrides) {
+            if (overrides.hasOwnProperty(cId) && !activeContentIds[cId]) {
+                delete overrides[cId];
+                changed = true;
+            }
+        }
+        if (changed) {
+            pushSettings({ duplicateCanonicalOverrides: overrides });
+        }
+    }
+
+    function setCanonicalOverride(contentId, filePath) {
+        if (!state.settings) return;
+        if (!state.settings.duplicateCanonicalOverrides) {
+            state.settings.duplicateCanonicalOverrides = {};
+        }
+        state.settings.duplicateCanonicalOverrides[contentId] = filePath;
+        pushSettings({ duplicateCanonicalOverrides: state.settings.duplicateCanonicalOverrides });
+        invalidate("duplicates");
+        render();
+    }
+
+    function renderDuplicates() {
+        var dup = state.duplicates;
+        if (!dup || !el.duplicatesScan) return;
+
+        if (dup.scanning) {
+            el.duplicatesScan.disabled = true;
+            if (el.duplicatesScanSettings) el.duplicatesScanSettings.disabled = true;
+            el.duplicatesProgressBox.hidden = false;
+            var p = dup.progress || {};
+            var pct = p.percent || 0;
+            el.duplicatesProgressFill.style.width = pct + "%";
+            var statsTxt = (p.scannedFiles || 0) + " из " + (p.totalFiles || 0) + " файлов";
+            if (p.totalBytes) {
+                statsTxt += " · " + formatBytes(p.scannedBytes || 0) + " из " + formatBytes(p.totalBytes);
+            }
+            el.duplicatesProgressStats.textContent = statsTxt;
+        } else {
+            var canScan = !!(state.report && state.report.workspace && state.report.projectSaved);
+            el.duplicatesScan.disabled = !canScan;
+            if (el.duplicatesScanSettings) {
+                el.duplicatesScanSettings.disabled = !canScan;
+            }
+            el.duplicatesProgressBox.hidden = true;
+        }
+
+        el.duplicatesStale.hidden = !dup.stale;
+        el.duplicatesScan.textContent = dup.stale ? "ОБНОВИТЬ ДУБЛИКАТЫ" : "НАЙТИ ДУБЛИКАТЫ";
+
+        if (el.duplicatesRecoverable) {
+            var recoverable = (typeof PardConsolidation !== "undefined" && state.report && state.report.workspace)
+                ? PardConsolidation.findRecoverableOperation(state.report.workspace, state.report.projectId)
+                : null;
+            if (recoverable) {
+                el.duplicatesRecoverable.hidden = false;
+                if (el.duplicatesRecoverableText) {
+                    el.duplicatesRecoverableText.textContent = "Прерванная операция объединения: " +
+                        recoverable.operationId + " (" + recoverable.state + ").";
+                }
+                if (el.duplicatesRecoverableBtn) {
+                    el.duplicatesRecoverableBtn.onclick = function () {
+                        resumeRecoverableOperation(recoverable);
+                    };
+                }
+            } else {
+                el.duplicatesRecoverable.hidden = true;
+            }
+        }
+
+        var res = dup.result;
+        if (!res) {
+            el.duplicatesSummary.hidden = true;
+            el.duplicatesErrorsSection.hidden = true;
+            if (changed("duplicates-list", "empty")) {
+                el.duplicatesList.innerHTML = "";
+            }
+            return;
+        }
+
+        var groups = res.duplicateGroups || [];
+        var errors = res.errors || [];
+        var overrides = (state.settings && state.settings.duplicateCanonicalOverrides) || {};
+
+        var signature = [
+            dup.stale ? "stale" : "fresh",
+            dup.scanning ? "scanning" : "idle",
+            groups.length,
+            res.reclaimableBytes,
+            errors.length,
+            state.consolidationGroupId || "none",
+            JSON.stringify(overrides)
+        ].join("|");
+
+        if (!changed("duplicates-list", signature)) return;
+
+        el.duplicatesSummary.hidden = false;
+        el.duplicatesSummary.textContent = "Найдено групп дубликатов: " + groups.length +
+            " · Можно освободить: " + formatBytes(res.reclaimableBytes || 0);
+
+        el.duplicatesList.innerHTML = "";
+        if (groups.length === 0) {
+            var emptyMsg = document.createElement("div");
+            emptyMsg.className = "duplicates-empty";
+            emptyMsg.textContent = "Точных дубликатов не обнаружено.";
+            el.duplicatesList.appendChild(emptyMsg);
+        } else {
+            for (var i = 0; i < groups.length; i++) {
+                el.duplicatesList.appendChild(renderDuplicateGroup(groups[i], overrides));
+            }
+        }
+
+        if (errors.length > 0) {
+            el.duplicatesErrorsSection.hidden = false;
+            el.duplicatesErrors.innerHTML = "";
+            for (var e = 0; e < errors.length; e++) {
+                el.duplicatesErrors.appendChild(renderDuplicateError(errors[e]));
+            }
+        } else {
+            el.duplicatesErrorsSection.hidden = true;
+        }
+    }
+
+    function renderDuplicateGroup(group, overrides) {
+        var item = document.createElement("div");
+        item.className = "duplicate-group";
+
+        var head = document.createElement("div");
+        head.className = "duplicate-group-head";
+
+        var title = document.createElement("span");
+        title.className = "duplicate-group-title";
+        var kindName = group.kind === "sequence" ? "Секвенция" : (group.kind === "proxy" ? "Proxy" : "Файл");
+        title.textContent = kindName + " · " + formatBytes(group.size) + " за копию";
+        head.appendChild(title);
+
+        var reclaim = document.createElement("span");
+        reclaim.className = "duplicate-group-reclaim";
+        reclaim.textContent = "+" + formatBytes(group.reclaimableBytes) + " освободится";
+        head.appendChild(reclaim);
+
+        item.appendChild(head);
+
+        var recBox = document.createElement("div");
+        recBox.className = "duplicate-group-rec";
+        var reasonStr = (group.reasons || []).join("; ");
+        recBox.textContent = "Рекомендация: " + (reasonStr ? reasonStr : "Оптимальный файл");
+        item.appendChild(recBox);
+
+        var effectiveCanonical = overrides[group.contentId] || group.recommendedCanonical;
+
+        var filesBox = document.createElement("div");
+        filesBox.className = "duplicate-files";
+
+        for (var f = 0; f < group.files.length; f++) {
+            var file = group.files[f];
+            var isCan = (PardDuplicateIndex.normalizePath(file.path) === PardDuplicateIndex.normalizePath(effectiveCanonical));
+
+            var row = document.createElement("div");
+            row.className = "duplicate-file-row" + (isCan ? " is-canonical" : "");
+
+            var top = document.createElement("div");
+            top.className = "duplicate-file-top";
+
+            var radio = document.createElement("input");
+            radio.type = "radio";
+            radio.setAttribute("type", "radio");
+            radio.name = "canonical-" + group.groupId;
+            radio.checked = isCan;
+            (function (cId, fPath) {
+                radio.onchange = function () {
+                    setCanonicalOverride(cId, fPath);
+                };
+            })(group.contentId, file.path);
+            top.appendChild(radio);
+
+            if (isCan) {
+                var canBadge = document.createElement("span");
+                canBadge.className = "canonical-badge";
+                canBadge.textContent = "КАНОНИКАЛ";
+                top.appendChild(canBadge);
+            }
+
+            var pSpan = document.createElement("span");
+            pSpan.className = "duplicate-file-path";
+            pSpan.textContent = file.path;
+            pSpan.title = file.path;
+            top.appendChild(pSpan);
+
+            var revBtn = document.createElement("button");
+            revBtn.className = "icon";
+            revBtn.innerHTML = "&#128194;";
+            revBtn.title = "Показать в проводнике";
+            (function (fPath) {
+                revBtn.onclick = function () {
+                    revealAndReport(fPath, "Дубликат");
+                };
+            })(file.path);
+            top.appendChild(revBtn);
+
+            row.appendChild(top);
+
+            var meta = document.createElement("div");
+            meta.className = "duplicate-file-meta";
+            var refsCount = (file.references || []).length;
+            var ownerText = file.isOwned ? "проект (assets.tsv)" : (file.inWorkspace ? "в рабочей папке" : "вне проекта");
+            meta.textContent = refsCount + " ссылок в проекте · Владелец: " + ownerText;
+            row.appendChild(meta);
+
+            filesBox.appendChild(row);
+        }
+
+        item.appendChild(filesBox);
+
+        if (group.files && group.files.length > 1) {
+            var actBox = document.createElement("div");
+            actBox.className = "duplicate-group-actions";
+
+            var consBtn = document.createElement("button");
+            consBtn.className = "btn";
+
+            var isArm = (state.consolidationGroupId === group.groupId && Date.now() < state.consolidationConfirmUntil);
+            if (isArm) {
+                consBtn.className = "btn btn-warn";
+                consBtn.textContent = "ПОДТВЕРДИТЬ ОБЪЕДИНЕНИЕ (оригиналы не удаляются)";
+                consBtn.onclick = function () {
+                    executeConsolidation(group, effectiveCanonical);
+                };
+            } else {
+                consBtn.textContent = "ОБЪЕДИНИТЬ В ОДИН ФАЙЛ";
+                consBtn.onclick = function () {
+                    state.consolidationGroupId = group.groupId;
+                    state.consolidationConfirmUntil = Date.now() + 6000;
+                    invalidate("duplicates-list");
+                    render();
+                    setTimeout(function () {
+                        if (state.consolidationGroupId === group.groupId) {
+                            state.consolidationGroupId = null;
+                            state.consolidationConfirmUntil = 0;
+                            invalidate("duplicates-list");
+                            render();
+                        }
+                    }, 6050);
+                };
+            }
+
+            actBox.appendChild(consBtn);
+            item.appendChild(actBox);
+        }
+
+        return item;
+    }
+
+    function executeConsolidation(group, canonicalPath) {
+        if (state.busy || state.consolidationBusy) return;
+        if (!state.report || !state.report.workspace) return;
+        if (typeof PardConsolidation === "undefined") return;
+
+        state.consolidationBusy = true;
+        state.consolidationGroupId = null;
+        state.consolidationConfirmUntil = 0;
+        setBusyLabel("Объединяю дубликаты…");
+        log("Объединение дубликатов в " + canonicalPath + "…", "work");
+        render();
+
+        PardConsolidation.run({
+            workspace: state.report.workspace,
+            projectId: state.report.projectId,
+            group: group,
+            canonical: canonicalPath,
+            auditItems: (state.report && state.report.items) || [],
+            hostAdapter: PardHostAdapter
+        }, function (err, res) {
+            state.consolidationBusy = false;
+            if (err) {
+                log("Ошибка объединения дубликатов: " + err.message, "bad");
+                trip("CONSOLIDATE_FAILED", err.message);
+            } else if (res && res.op) {
+                var r = res.op.results;
+                if (res.ok) {
+                    log("Дубликаты успешно объединены: перелинковано " + r.relinked + " ссылок (оригиналы сохранены).", "good");
+                } else if (res.partial) {
+                    log("Частичное объединение дубликатов: перелинковано " + r.relinked + ", пропущено " + r.skipped + ", ошибок " + r.failed, "bad");
+                }
+            }
+            if (state.duplicates) {
+                state.duplicates.stale = true;
+            }
+            invalidate("duplicates");
+            invalidate("duplicates-list");
+            render();
+            tick(true);
+        });
+    }
+
+    function resumeRecoverableOperation(op) {
+        if (state.busy || state.consolidationBusy) return;
+        if (!state.report || !state.report.workspace) return;
+        if (typeof PardConsolidation === "undefined") return;
+
+        state.consolidationBusy = true;
+        setBusyLabel("Возобновление объединения…");
+        log("Возобновление операции " + op.operationId + "…", "work");
+        render();
+
+        PardConsolidation.run({
+            workspace: state.report.workspace,
+            projectId: state.report.projectId,
+            operation: op,
+            auditItems: (state.report && state.report.items) || [],
+            hostAdapter: PardHostAdapter
+        }, function (err, res) {
+            state.consolidationBusy = false;
+            if (err) {
+                log("Ошибка возобновления операции: " + err.message, "bad");
+            } else {
+                log("Операция " + op.operationId + " завершена (" + (res && res.ok ? "успешно" : "частично") + ").", (res && res.ok) ? "good" : "bad");
+            }
+            if (state.duplicates) {
+                state.duplicates.stale = true;
+            }
+            invalidate("duplicates");
+            invalidate("duplicates-list");
+            render();
+            tick(true);
+        });
+    }
+
+    function renderDuplicateError(err) {
+        var row = document.createElement("div");
+        row.className = "duplicate-error-row";
+
+        var top = document.createElement("div");
+        top.className = "duplicate-error-top";
+
+        var badge = document.createElement("span");
+        badge.className = "error-code-badge";
+        badge.textContent = err.code || "ERROR";
+        top.appendChild(badge);
+
+        var pathSpan = document.createElement("span");
+        pathSpan.className = "duplicate-error-path";
+        pathSpan.textContent = err.path;
+        pathSpan.title = err.path;
+        top.appendChild(pathSpan);
+
+        if (err.path && (/[\/\\]/.test(err.path))) {
+            var revBtn = document.createElement("button");
+            revBtn.className = "icon";
+            revBtn.innerHTML = "&#128194;";
+            revBtn.title = "Показать в проводнике";
+            (function (fPath) {
+                revBtn.onclick = function () {
+                    revealAndReport(fPath, "Проблемный файл");
+                };
+            })(err.path);
+            top.appendChild(revBtn);
+        }
+
+        row.appendChild(top);
+
+        var msg = document.createElement("div");
+        msg.className = "duplicate-error-msg";
+        msg.textContent = err.message || "";
+        row.appendChild(msg);
+
+        return row;
     }
 
     /* ---------------------------------------------------------------- boot */
@@ -2366,6 +2836,8 @@
             issuesTitle: "issues-title", issues: "issues",
             statsSection: "stats-section", stats: "stats", verifyAll: "verify-all",
             layersSection: "layers-section",
+            layersTitle: "layers-title",
+            layersRefresh: "layers-refresh",
             layers: "layers",
             resume: "resume", update: "update", updateVersion: "update-version",
             updateSummary: "update-summary", updateOpen: "update-open",
@@ -2379,7 +2851,25 @@
             legacyNote: "legacy-note", legacyAdopt: "legacy-adopt",
             legacyRedistribute: "legacy-redistribute",
             legacyRecycle: "legacy-recycle", legacyRecycleNote: "legacy-recycle-note",
-            tabs: "tabs", updateLater: "update-later"
+            tabs: "tabs", updateLater: "update-later",
+            duplicatesSection: "duplicates-section",
+            duplicatesTitle: "duplicates-title",
+            duplicatesScan: "duplicates-scan",
+            duplicatesScanSettings: "duplicates-scan-settings",
+            duplicatesNote: "duplicates-note",
+            duplicatesStale: "duplicates-stale",
+            duplicatesProgressBox: "duplicates-progress-box",
+            duplicatesProgressLabel: "duplicates-progress-label",
+            duplicatesProgressFill: "duplicates-progress-fill",
+            duplicatesProgressStats: "duplicates-progress-stats",
+            duplicatesCancel: "duplicates-cancel",
+            duplicatesSummary: "duplicates-summary",
+            duplicatesList: "duplicates-list",
+            duplicatesErrorsSection: "duplicates-errors-section",
+            duplicatesErrors: "duplicates-errors",
+            duplicatesRecoverable: "duplicates-recoverable",
+            duplicatesRecoverableText: "duplicates-recoverable-text",
+            duplicatesRecoverableBtn: "duplicates-recoverable-btn"
         };
         var key;
         for (key in ids) {
@@ -2414,8 +2904,12 @@
             render();
         };
 
+        el.layersRefresh.onclick = function () {
+            scanLayers(true);
+        };
+
         el.openFolder.onclick = function () {
-            evalScript("$.global.PardDefenderHost.revealWorkspace();", function (raw) {
+            PardHostAdapter.revealWorkspace(function (raw) {
                 var text = String(raw || "");
                 if (text.indexOf("ERROR|") === 0) log(text.substring(6), "bad");
             });
@@ -2539,6 +3033,29 @@
             });
         };
 
+        if (el.duplicatesScan) {
+            el.duplicatesScan.onclick = function () { scanDuplicates(); };
+        }
+        if (el.duplicatesScanSettings) {
+            el.duplicatesScanSettings.onclick = function () {
+                showTab("duplicates");
+                scanDuplicates();
+            };
+        }
+        if (el.duplicatesCancel) {
+            el.duplicatesCancel.onclick = function () { cancelDuplicatesScan(); };
+        }
+        if (el.duplicatesRecoverableBtn) {
+            el.duplicatesRecoverableBtn.onclick = function () {
+                var recoverable = (typeof PardConsolidation !== "undefined" && state.report && state.report.workspace)
+                    ? PardConsolidation.findRecoverableOperation(state.report.workspace, state.report.projectId)
+                    : null;
+                if (recoverable) {
+                    resumeRecoverableOperation(recoverable);
+                }
+            };
+        }
+
         /* Losing the panel must not lose an hour of counters. */
         window.addEventListener("beforeunload", function () {
             PardIssues.save();
@@ -2548,7 +3065,7 @@
 
     function boot() {
         bind();
-        loadHostModules(function (ok, info) {
+        PardHostAdapter.initialize(extensionRoot(), function (ok, info) {
             state.hostReady = ok;
             if (!ok) {
                 state.hostError = info;

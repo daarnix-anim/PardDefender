@@ -37,6 +37,7 @@ var SCAN = [
     "extension/com.pard.defender/CSXS",
     "extension/com.pard.defender/client",
     "extension/com.pard.defender/host",
+    "premiere/com.pard.defender.uxp",
     "tests",
     "tools"
 ];
@@ -48,6 +49,7 @@ var ROOT_FILES = [
 
 var LAYERS = {
     host: { title: "Хост (ExtendScript в After Effects)", color: "#c9822e" },
+    premiere: { title: "Хост (UXP в Premiere Pro)", color: "#e0539c" },
     client: { title: "Клиент (CEP + Node)", color: "#5b8fd0" },
     ui: { title: "Интерфейс панели", color: "#8a6fc4" },
     config: { title: "Конфигурация расширения", color: "#6c6c6c" },
@@ -101,6 +103,11 @@ function listFiles(dir) {
 }
 
 function layerOf(rel) {
+    if (rel.indexOf("premiere/") >= 0) {
+        if (/\.(html|css)$/i.test(rel)) return "ui";
+        if (/\.json$/i.test(rel)) return "config";
+        return "premiere";
+    }
     if (rel.indexOf("/host/") >= 0) return "host";
     if (rel.indexOf("/CSXS/") >= 0) return "config";
     if (rel.indexOf("/client/") >= 0) {
@@ -135,6 +142,16 @@ function parseMapBlock(source) {
         }
         lastKey = "";
     }
+    var key;
+    for (key in out) {
+        if (!out.hasOwnProperty(key)) continue;
+        /* Host .jsx files stay byte-for-byte ASCII for $.evalFile reliability.
+         * Their human-facing map descriptions therefore use JSON-style Unicode
+         * escapes, decoded only by this documentation generator. */
+        out[key] = out[key].replace(/\\u([0-9a-f]{4})/gi, function (_, hex) {
+            return String.fromCharCode(parseInt(hex, 16));
+        });
+    }
     return out;
 }
 
@@ -157,7 +174,7 @@ function scan() {
             layer: declaredLayer,
             role: meta.role || "",
             status: documented ? (STATUS[meta.status] ? meta.status : "ready")
-                : (/\.(md|css|xml|bat)$/i.test(rel) ? "ready" : "undocumented"),
+                : (/\.(md|css|xml|bat|json|png)$/i.test(rel) ? "ready" : "undocumented"),
             note: meta.note || "",
             bytes: source.length,
             lines: source ? source.split(/\r?\n/).length : 0,

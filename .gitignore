@@ -15,3 +15,14 @@ node_modules/
 # она разбирается как код и попадает куда не надо.
 *(копия *)*
 *(conflicted copy*)*
+
+# User-specific extraneous folders
+mercy-stadium-guide/
+sigma-stadium-guide/
+
+# Build and release artifacts
+release/
+dist/
+*.zip
+*.ccx
+*.zxp

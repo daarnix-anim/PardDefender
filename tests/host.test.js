@@ -1,6 +1,6 @@
 /*
  *
- * @map role: 167 проверок хоста: рабочая папка, ветки, маршруты,
+ * @map role: 172 проверки хоста: рабочая папка, ветки, маршруты,
  *           секвенции, границы раскладки.
  * @map status: ready
  * Exercises the parts of the host that decide WHERE something goes. These are
@@ -11,6 +11,8 @@
  */
 "use strict";
 
+var fs = require("fs");
+var path = require("path");
 var mock = require("./mock-ae");
 
 var passed = 0, failed = 0;
@@ -23,6 +25,22 @@ function check(label, actual, expected) {
 }
 
 function group(name) { console.log("\n" + name); }
+
+/* ---------------------------------------------------------- source safety */
+
+group("Исходники ExtendScript безопасны для $.evalFile");
+(function () {
+    var hostDir = path.join(__dirname, "..", "extension", "com.pard.defender", "host");
+    var names = fs.readdirSync(hostDir).filter(function (name) { return /\.jsx$/i.test(name); });
+    names.forEach(function (name) {
+        var bytes = fs.readFileSync(path.join(hostDir, name));
+        var ascii = true, i;
+        for (i = 0; i < bytes.length; i++) {
+            if (bytes[i] > 127) { ascii = false; break; }
+        }
+        check(name + " содержит только ASCII", ascii, true);
+    });
+})();
 
 /* --------------------------------------------------------------- workspace */
 

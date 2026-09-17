@@ -11,7 +11,10 @@ var childProcess = require("child_process");
 var path = require("path");
 
 var suites = ["host.test.js", "copy-queue.test.js", "runtime.test.js",
-    "panel.test.js"];
+    "host-adapter.test.js", "workspace-store.test.js",
+    "duplicate-index.test.js", "consolidation.test.js",
+    "premiere-adapter.test.js", "premiere-protection.test.js",
+    "sync-coordinator.test.js", "panel.test.js", "e2e-hardening.test.js"];
 
 var failedSuites = [];
 

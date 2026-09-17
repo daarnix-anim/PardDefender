@@ -40,6 +40,8 @@ var PardIssues = (function () {
 
         DISK_FULL:             ["system",    "на диске не хватает места"],
         DEST_UNWRITABLE:       ["system",    "папка назначения недоступна для записи"],
+        JOURNAL_FAILED:        ["system",    "журнал операции недоступен для записи"],
+        MANIFEST_FAILED:       ["system",    "манифест защищённых файлов недоступен для записи"],
         /*
          * Not a system fault and not retryable: a FILE is sitting where a
          * folder has to be. Nothing changes until the owner moves it, so this
@@ -49,6 +51,7 @@ var PardIssues = (function () {
         PATH_INVALID:          ["owner",     "недопустимый путь назначения"],
         PATH_TOO_LONG:         ["owner",     "путь назначения слишком длинный"],
         SEQUENCE_EMPTY:        ["owner",     "кадры секвенции не найдены"],
+        SEQUENCE_DEST_CHANGED: ["transient", "папка секвенции изменилась во время копирования"],
 
         RELINK_ITEM_GONE:      ["permanent", "элемент удалён из проекта"],
         RELINK_SOURCE_CHANGED: ["permanent", "исходник сменился после проверки"],

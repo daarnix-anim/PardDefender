@@ -11,7 +11,7 @@
 
         <header class="head">
             <span class="brand">PardDefender</span>
-            <span class="version" id="version">v1.3.2</span>
+            <span class="version" id="version">v2.0.0</span>
         </header>
 
         <div class="update" id="update" hidden>
@@ -83,6 +83,10 @@
         <!-- ------------------------------------------------ ВЫКЛЮЧЕНО И ЗАБЫТО -->
         <div class="pane" id="pane-layers" hidden>
             <section class="layers-section" id="layers-section" hidden>
+                <div class="layers-head">
+                    <span class="section-title" id="layers-title">ВЫКЛЮЧЕННЫЕ СЛОИ</span>
+                    <button class="icon" id="layers-refresh" title="Обновить список" aria-label="Обновить список">↻</button>
+                </div>
                 <div class="layers-note">Слои выключены и, похоже, о них забыли.</div>
                 <div class="layers" id="layers"></div>
             </section>
@@ -97,6 +101,38 @@
                 </div>
                 <div class="unused-note">Эти файлы не используются ни в одной композиции.</div>
                 <button class="danger-line" id="clean-unused">УБРАТЬ НЕИСПОЛЬЗУЕМЫЕ В КОРЗИНУ</button>
+            </section>
+        </div>
+
+        <!-- -------------------------------------------------------- ДУБЛИКАТЫ -->
+        <div class="pane" id="pane-duplicates" hidden>
+            <section class="duplicates-section" id="duplicates-section">
+                <div class="duplicates-head">
+                    <span class="section-title" id="duplicates-title">ТОЧНЫЕ ДУБЛИКАТЫ</span>
+                    <button class="primary" id="duplicates-scan">НАЙТИ ДУБЛИКАТЫ</button>
+                </div>
+                <div class="duplicates-note" id="duplicates-note">
+                    Это точные побайтовые дубликаты. Файлы пока не изменены и не удалены.
+                </div>
+                <div class="duplicates-stale warning" id="duplicates-stale" hidden>
+                    Отчёт устарел (проект изменился). Требуется повторный поиск.
+                </div>
+                <div class="duplicates-recoverable warning" id="duplicates-recoverable" hidden>
+                    <span id="duplicates-recoverable-text">Найдена незавершённая операция объединения дубликатов.</span>
+                    <button class="link" id="duplicates-recoverable-btn">Продолжить</button>
+                </div>
+                <div class="duplicates-progress-box" id="duplicates-progress-box" hidden>
+                    <div class="duplicates-progress-label" id="duplicates-progress-label">Поиск дубликатов…</div>
+                    <div class="duplicates-progress-bar"><div class="duplicates-progress-fill" id="duplicates-progress-fill"></div></div>
+                    <div class="duplicates-progress-stats" id="duplicates-progress-stats"></div>
+                    <button class="wide danger-line" id="duplicates-cancel">ОТМЕНИТЬ</button>
+                </div>
+                <div class="duplicates-summary" id="duplicates-summary" hidden></div>
+                <div class="duplicates-list" id="duplicates-list"></div>
+                <div class="duplicates-errors-section" id="duplicates-errors-section" hidden>
+                    <div class="section-title">ПРОБЛЕМНЫЕ ЭЛЕМЕНТЫ (НЕ ДУБЛИКАТЫ)</div>
+                    <div class="duplicates-errors" id="duplicates-errors"></div>
+                </div>
             </section>
         </div>
 
@@ -157,6 +193,9 @@
                     <input type="number" id="settle-delay" min="0" max="1440" step="1">
                     <span>мин</span>
                 </div>
+                <div class="duplicates-settings-row">
+                    <button class="wide" id="duplicates-scan-settings">НАЙТИ ДУБЛИКАТЫ</button>
+                </div>
             </section>
         </div>
 
@@ -169,6 +208,11 @@
     <script src="verify.js"></script>
     <script src="housekeeping.js"></script>
     <script src="updater.js"></script>
+    <script src="host-adapter.js"></script>
+    <script src="workspace-store.js"></script>
+    <script src="duplicate-index.js"></script>
+    <script src="consolidation.js"></script>
+    <script src="sync-coordinator.js"></script>
     <script src="main.js"></script>
 </body>
 </html>

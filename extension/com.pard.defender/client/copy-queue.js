@@ -191,7 +191,7 @@ var PardCopyQueue = (function () {
      * duplicated - that is what keeps a re-imported logo from becoming
      * "logo (2).png", "logo (3).png" across a long project.
      */
-    function resolveDestination(sourcePath, destPath, callback) {
+    function resolveDestination(sourcePath, destPath, allowReuse, callback) {
         var sourceStats = statOf(sourcePath);
         if (!sourceStats) {
             callback({
@@ -209,7 +209,7 @@ var PardCopyQueue = (function () {
             api.hashFile(sourcePath, function (sourceHash) {
                 if (!sourceHash) { callback({ action: "rename", destPath: uniqueName(destPath) }); return; }
                 api.hashFile(destPath, function (destHash) {
-                    if (destHash && destHash === sourceHash) {
+                    if (allowReuse && destHash && destHash === sourceHash) {
                         callback({
                             action: "reuse",
                             destPath: destPath,
@@ -240,6 +240,74 @@ var PardCopyQueue = (function () {
             counter++;
         }
         return stem + " (" + Date.now() + ")" + ext;
+    }
+
+    function uniqueFolderName(folderPath) {
+        var base = toSlash(folderPath).replace(/\/$/, "");
+        var counter = 2, candidate;
+        while (counter < 1000) {
+            candidate = base + " (" + counter + ")";
+            if (!statOf(candidate)) return candidate;
+            counter++;
+        }
+        return base + " (" + Date.now() + ")";
+    }
+
+    /*
+     * A sequence must keep one coherent filename pattern. Resolving collisions
+     * frame by frame can produce shot_00002 (2).png while After Effects keeps
+     * reading shot_00002.png from the pattern selected by the first frame.
+     * Decide once for the whole folder: reuse a fully compatible folder only
+     * when the manifest already says it is ours, otherwise use a fresh sibling.
+     */
+    function sequenceFolderFor(sources, preferred, descriptor, allowReuse, callback) {
+        var existingFolder = statOf(preferred);
+        if (!existingFolder) { callback(preferred); return; }
+        if (!existingFolder.isDirectory()) { callback(preferred); return; }
+        if (!allowReuse) { callback(uniqueFolderName(preferred)); return; }
+
+        var expected = {}, names, n;
+        for (n = 0; n < sources.length; n++) {
+            expected[toSlash(sources[n]).replace(/^.*\//, "").toLowerCase()] = true;
+        }
+        try { names = fs.readdirSync(toNative(preferred)); }
+        catch (readError) { callback(uniqueFolderName(preferred)); return; }
+        var memberPattern = new RegExp(
+            "^" + escapeRegExp(descriptor.prefix) +
+            "\\d{" + Math.max(1, Number(descriptor.padding) || 1) + "}" +
+            escapeRegExp(descriptor.suffix) + "$", "i");
+        for (n = 0; n < names.length; n++) {
+            if (memberPattern.test(names[n]) && !expected[names[n].toLowerCase()]) {
+                callback(uniqueFolderName(preferred));
+                return;
+            }
+        }
+
+        var index = 0;
+        function next() {
+            if (index >= sources.length) { callback(preferred); return; }
+            var source = sources[index++];
+            var leaf = toSlash(source).replace(/^.*\//, "");
+            var target = toSlash(preferred) + "/" + leaf;
+            var sourceStats = statOf(source), targetStats = statOf(target);
+            if (!targetStats) { next(); return; }
+            if (!sourceStats || !targetStats.isFile() ||
+                targetStats.size !== sourceStats.size) {
+                callback(uniqueFolderName(preferred));
+                return;
+            }
+            api.hashFile(source, function (sourceHash) {
+                if (!sourceHash) { callback(uniqueFolderName(preferred)); return; }
+                api.hashFile(target, function (targetHash) {
+                    if (!targetHash || targetHash !== sourceHash) {
+                        callback(uniqueFolderName(preferred));
+                        return;
+                    }
+                    next();
+                });
+            });
+        }
+        next();
     }
 
     function partialNameFor(destPath) {
@@ -429,6 +497,7 @@ var PardCopyQueue = (function () {
 
         var created = [], index = 0, firstDest = "";
         var copiedBytes = 0, copiedFiles = 0, reusedFiles = 0, reusedBytes = 0;
+        var records = [];
 
         /*
          * A sequence is all-or-nothing, so a failure removes every frame this
@@ -459,6 +528,7 @@ var PardCopyQueue = (function () {
                     bytes: copiedBytes,
                     reusedFiles: reusedFiles,
                     reusedBytes: reusedBytes,
+                    records: records,
                     /*
                      * Exactly which files were read. The legacy pass needs this:
                      * it may only send a leftover to the Recycle Bin if that
@@ -473,7 +543,7 @@ var PardCopyQueue = (function () {
             var leaf = toSlash(source).replace(/^.*\//, "");
             var target = task.isSequence ? destFolder + "/" + leaf : toSlash(task.destPath);
 
-            resolveDestination(source, target, function (decision) {
+            resolveDestination(source, target, task.allowReuse === true, function (decision) {
                 if (decision.action === "error") {
                     fail(decision.code || "SOURCE_UNREADABLE", decision.reason);
                     return;
@@ -483,10 +553,22 @@ var PardCopyQueue = (function () {
                     if (!firstDest) firstDest = decision.destPath;
                     reusedFiles++;
                     reusedBytes += decision.bytes || 0;
+                    records.push({
+                        sourcePath: source,
+                        destPath: decision.destPath,
+                        size: decision.bytes || 0,
+                        created: false
+                    });
                     if (hooks && hooks.onFile) {
                         hooks.onFile(task, leaf, index, sources.length, "reuse");
                     }
                     next();
+                    return;
+                }
+
+                if (task.isSequence && decision.action === "rename") {
+                    fail("SEQUENCE_DEST_CHANGED",
+                        "Папка секвенции изменилась во время копирования; проход будет повторён.");
                     return;
                 }
 
@@ -500,22 +582,32 @@ var PardCopyQueue = (function () {
                     created.push(finalTarget);
                     copiedBytes += result.bytes;
                     copiedFiles++;
+                    records.push({
+                        sourcePath: source,
+                        destPath: finalTarget,
+                        size: result.bytes || 0,
+                        created: true
+                    });
                     if (!firstDest) firstDest = finalTarget;
                     next();
                 });
             });
         }
 
-        if (task.isSequence) {
-            var seqFolder = ensureDir(destFolder);
-            if (!seqFolder.ok) {
-                fail(seqFolder.code, seqFolder.code === "DEST_BLOCKED"
-                    ? "На месте папки секвенции лежит файл: " + seqFolder.blockedBy
-                    : "Не удалось создать папку секвенции: " + destFolder);
-                return;
-            }
-        }
-        next();
+        if (!task.isSequence) { next(); return; }
+
+        sequenceFolderFor(sources, destFolder, task.sequence, task.allowReuse === true,
+            function (chosenFolder) {
+                destFolder = chosenFolder;
+                var seqFolder = ensureDir(destFolder);
+                if (!seqFolder.ok) {
+                    fail(seqFolder.code, seqFolder.code === "DEST_BLOCKED"
+                        ? "На месте папки секвенции лежит файл: " + seqFolder.blockedBy
+                        : "Не удалось создать папку секвенции: " + destFolder);
+                    return;
+                }
+                next();
+            });
     }
 
     /*
@@ -533,6 +625,14 @@ var PardCopyQueue = (function () {
             var task = tasks[index++];
 
             var needed = Number(task.size) || 0;
+            if (task.isSequence && task.sequence) {
+                var members = api.expandSequence(task.sequence), m, memberStats;
+                needed = 0;
+                for (m = 0; m < members.length; m++) {
+                    memberStats = statOf(members[m]);
+                    if (memberStats) needed += memberStats.size || 0;
+                }
+            }
             if (freeBytes > 0 && needed + reserve > freeBytes) {
                 results.push({
                     ok: false,
@@ -617,3 +717,7 @@ var PardCopyQueue = (function () {
 
     return api;
 })();
+
+if (typeof module !== "undefined" && module.exports) {
+    module.exports = PardCopyQueue;
+}
