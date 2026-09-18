@@ -1,5 +1,5 @@
 <!-- @map role: Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
-# PardDefender 2.0.1
+# PardDefender 2.0.3
 
 Мультихостовый комплекс для защиты, организации и синхронизации проектных медиафайлов:
 - **Adobe After Effects:** CEP-расширение (Node + Chromium) с ExtendScript хостом.
@@ -39,7 +39,7 @@ After Effects, открыть **Window → Extensions → PardDefender**.
 1. Установить **Adobe UXP Developer Tool (UDT)**.
 2. Нажать **Add Plugin** и выбрать манифест `premiere/com.pard.defender.uxp/manifest.json`.
 3. Запустить Premiere Pro 25.6 или новее.
-4. В UDT выбрать плагин и нажать **Load**. Панель появится в **Window → Extensions → PardDefender**.
+4. В UDT выбрать плагин и нажать **Load**. Панель появится в **Window → UXP Plugins → PardDefender** (в русской версии: **Окно → Подключаемые модули UXP → PardDefender**). Также можно запустить `INSTALL_DEV_WINDOWS.bat` или установить `release/PardDefender-2.0.3.ccx`.
 5. Для валидации пакета: `node tools/validate-uxp.js`.
 
 ---
@@ -270,11 +270,11 @@ Project
 
 ## Архитектура двух хостов
 
-PardDefender 2.0.1 разделяет логику между средами двух приложений:
+PardDefender 2.0.3 разделяет логику между средами двух приложений:
 
 ```
 extension/com.pard.defender/          ← Adobe After Effects (CEP 9.0+)
-├── CSXS/manifest.xml                 манифест пакета (версия 2.0.1)
+├── CSXS/manifest.xml                 манифест пакета (версия 2.0.3)
 ├── client/                           CEP + Node среда
 │   ├── index.html, styles.css        UI панели After Effects
 │   ├── copy-queue.js                 потоковая копия, .pdpart, SHA-256
@@ -285,13 +285,13 @@ extension/com.pard.defender/          ← Adobe After Effects (CEP 9.0+)
 │   ├── host-adapter.js               адаптер взаимодействия с ExtendScript
 │   └── main.js, disk-space.js, ...   оркестрация и сервисы
 └── host/                             ExtendScript (ES3 в After Effects)
-    ├── PardDefenderCore.jsx          JSON, пути, санитизация, версия 2.0.1
+    ├── PardDefenderCore.jsx          JSON, пути, санитизация, версия 2.0.3
     ├── PardDefenderPlan.jsx          рабочая папка, дерево композиций
     ├── PardDefenderAudit.jsx         JSON-отчёт аудита элементов
     └── PardDefenderApply.jsx         перелинковка и раскладка в панели
 
 premiere/com.pard.defender.uxp/       ← Adobe Premiere Pro (UXP, minVersion 25.6)
-├── manifest.json                     UXP Manifest v5 (версия 2.0.1)
+├── manifest.json                     UXP Manifest v5 (версия 2.0.3)
 ├── index.html, styles.css            UI панели Premiere Pro UXP
 ├── adapter.js                        официальный UXP-адаптер Premiere Pro 25.6+
 ├── copy-engine.js                    поблочное копирование через UXP fs + relink

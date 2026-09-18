@@ -35,12 +35,13 @@ UXP требует `fullAccess` для чтения и организации м
 2. Нажмите **Add Plugin** и выберите файл `premiere/com.pard.defender.uxp/manifest.json`.
 3. Запустите Adobe Premiere Pro (версия 25.6+).
 4. В UDT в строке плагина выберите **Actions -> Load**.
-5. В Premiere Pro откройте панель через меню: **Окно (Window) -> Расширения (Extensions) -> PardDefender** (или **Plugins -> PardDefender**).
+5. В Premiere Pro откройте панель через меню: **Окно (Window) -> Подключаемые модули UXP (UXP Plugins) -> PardDefender**.
 
-### Способ 2: Прямое размещение в папке плагинов UXP
-Скопируйте папку `com.pard.defender.uxp` в директорию плагинов UXP вашей системы:
-- **Windows:** `%APPDATA%\Adobe\UXP\Plugins\com.pard.defender.uxp`
-- **macOS:** `~/Library/Application Support/Adobe/UXP/Plugins/com.pard.defender.uxp`
+### Способ 2: Запуск установочного скрипта
+Запустите `INSTALL_DEV_WINDOWS.bat`. Скрипт скопирует файлы и автоматически настроит `Debug Database.txt` в настройках Premiere Pro (`dvauxphost.UseDebugUXPDir` и `dvauxphost.DebugUXPDir`), после чего плагин появится в **Окно -> Подключаемые модули UXP -> PardDefender**.
+
+### Способ 3: Установка готового пакета .CCX
+Дважды кликните по файлу `release/PardDefender-2.0.3.ccx` (через Adobe Creative Cloud Desktop). При отсутствии приложения Creative Cloud воспользуйтесь Способом 1 или Способом 2.
 
 ## Возможности плагина
 

@@ -1,7 +1,7 @@
 /*
  *
- * @map role: 172 проверки хоста: рабочая папка, ветки, маршруты,
- *           секвенции, границы раскладки.
+ * @map role: 186 проверок хоста: рабочая папка, ветки, маршруты,
+ *           многослойные PSD/AI, секвенции, границы раскладки.
  * @map status: ready
  * Exercises the parts of the host that decide WHERE something goes. These are
  * the rules that would quietly misfile assets across a whole project, and they
@@ -790,6 +790,293 @@ group("Перелинковка прокси");
     /* Самое важное: элемент по-прежнему СМОТРИТ в прокси. Сбросить этот
      * флажок значит молча переключить проект на тяжёлый исходник. */
     check("и остался включённым", item.useProxy, true);
+})();
+
+group("Многослойные PSD/AI: аудит и перелинковка без схлопывания слоев");
+(function () {
+    var s = buildProject();
+    var psdSrc = "E:/design/character.psd";
+    var head = addFootage(s, "Head/character.psd", psdSrc, [s.intro]);
+    var body = addFootage(s, "Body/character.psd", psdSrc, [s.intro]);
+    var arm = addFootage(s, "Arm/character.psd", psdSrc, [s.intro]);
+
+    var report = auditOf(s);
+    var headRep = itemNamed(report, "Head/character.psd");
+    var bodyRep = itemNamed(report, "Body/character.psd");
+    var armRep = itemNamed(report, "Arm/character.psd");
+
+    check("слой Head найден в аудите", headRep !== null, true);
+    check("слой Body найден в аудите", bodyRep !== null, true);
+    check("слой Arm найден в аудите", armRep !== null, true);
+
+    check("все слои одного PSD получают единый destPath",
+        headRep.destPath, bodyRep.destPath);
+    check("третий слой тоже совпадает по destPath",
+        armRep.destPath, headRep.destPath);
+    check("destPath не содержит суффиксов дублирования (2)",
+        headRep.destPath.indexOf("(2)") === -1, true);
+
+    var destPsd = headRep.destPath;
+    mock.registerFile(destPsd, 4096);
+
+    var plan = s.host.tempFolder() + "/relink-psd-test.json";
+    s.host.writeTextFile(plan, s.host.jsonEncode({
+        items: [
+            { key: "i" + head.id, id: String(head.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + body.id, id: String(body.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + arm.id, id: String(arm.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false }
+        ]
+    }));
+
+    // Lock one layer in the composition to verify safe unlocking/relocking
+    s.intro.layer(1).locked = true;
+
+    var relinkResult = s.host.commitFromFile(plan);
+    check("все 3 слоя перелинкованы", relinkResult.relinked, 3);
+    check("нет отказов при перелинковке слоев", relinkResult.failures.length, 0);
+    check("заблокированный слой сохранил состояние блокировки", s.intro.layer(1).locked, true);
+
+    // Verify comp layers in s.intro were repointed via replaceSource to the new footage items
+    var introComp = s.intro;
+    var sources = [];
+    for (var l = 1; l <= introComp.numLayers; l++) {
+        var layer = introComp.layer(l);
+        if (layer && layer.source && layer.source !== head && layer.source !== body && layer.source !== arm) {
+            sources.push(layer.source);
+        }
+    }
+    check("в композиции заменены все 3 слоя", sources.length, 3);
+    check("новые источники указывают на скопированный destPath",
+        s.host.slashes(sources[0].mainSource.file.fsName), destPsd);
+    check("источники слоев не схлопнулись в один (каждый слой уникален)",
+        sources[0] !== sources[1] && sources[1] !== sources[2], true);
+    check("старый элемент head удален из проекта",
+        s.project.items.indexOf(head), -1);
+    check("старый элемент body удален из проекта",
+        s.project.items.indexOf(body), -1);
+    check("старый элемент arm удален из проекта",
+        s.project.items.indexOf(arm), -1);
+})();
+
+group("PSD с кириллическими именами слоёв (реальный кейс)");
+(function () {
+    var s = buildProject();
+    var psdSrc = "E:/design/garden.psd";
+
+    var mockLayers = [
+        { name: "\u0440\u0443\u043a\u0438 \u0441 \u0446\u0432\u0435\u0442\u043a\u043e\u043c", width: 400, height: 300 },
+        { name: "\u0437\u0435\u043c\u043b\u044f", width: 1920, height: 200 },
+        { name: "\u0433\u043e\u0440\u0448\u043a\u0438", width: 350, height: 250 }
+    ];
+
+    /* Register _mockLayers on ImportOptions for this PSD */
+    var origImport = s.project.importFile.bind(s.project);
+    s.project.importFile = function (options) {
+        if (options && options.file) {
+            var fp = String(options.file._slash || options.file.fsName);
+            if (/garden\.psd$/i.test(fp)) {
+                options._mockLayers = mockLayers;
+            }
+        }
+        return origImport(options);
+    };
+
+    var hands = addFootage(s, "\u0440\u0443\u043a\u0438 \u0441 \u0446\u0432\u0435\u0442\u043a\u043e\u043c/garden.psd", psdSrc, [s.intro],
+        { width: 400, height: 300 });
+    var ground = addFootage(s, "\u0437\u0435\u043c\u043b\u044f/garden.psd", psdSrc, [s.intro],
+        { width: 1920, height: 200 });
+    var pots = addFootage(s, "\u0433\u043e\u0440\u0448\u043a\u0438/garden.psd", psdSrc, [s.intro],
+        { width: 350, height: 250 });
+
+    var report = auditOf(s);
+    var destPsd = null;
+    for (var ri = 0; ri < report.items.length; ri++) {
+        if (report.items[ri].name.indexOf("garden.psd") !== -1) {
+            destPsd = report.items[ri].destPath;
+            break;
+        }
+    }
+    check("destPath для кириллического PSD определён", destPsd !== null, true);
+
+    mock.registerFile(destPsd, 8192);
+
+    var plan = s.host.tempFolder() + "/relink-cyrillic-psd.json";
+    s.host.writeTextFile(plan, s.host.jsonEncode({
+        items: [
+            { key: "i" + hands.id, id: String(hands.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + ground.id, id: String(ground.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + pots.id, id: String(pots.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false }
+        ]
+    }));
+
+    var result = s.host.commitFromFile(plan);
+    check("все 3 кириллических слоя перелинкованы", result.relinked, 3);
+    check("нет отказов при перелинковке кириллических слоев", result.failures.length, 0);
+
+    var introComp = s.intro;
+    var sources = [];
+    for (var l = 1; l <= introComp.numLayers; l++) {
+        var layer = introComp.layer(l);
+        if (layer && layer.source && layer.source !== hands && layer.source !== ground && layer.source !== pots) {
+            sources.push(layer.source);
+        }
+    }
+    check("в композиции заменены все 3 кириллических слоя", sources.length, 3);
+    check("кириллические источники не схлопнулись в один",
+        sources[0] !== sources[1] && sources[1] !== sources[2], true);
+})();
+
+group("PSD: несовпадающие слои не подставляются случайно");
+(function () {
+    var s = buildProject();
+    var psdSrc = "E:/design/mismatch.psd";
+
+    /* Layer names in the new import won't match the existing item names */
+    var mockLayers = [
+        { name: "Alpha", width: 100, height: 100 },
+        { name: "Beta", width: 200, height: 200 }
+    ];
+
+    var origImport = s.project.importFile.bind(s.project);
+    s.project.importFile = function (options) {
+        if (options && options.file) {
+            var fp = String(options.file._slash || options.file.fsName);
+            if (/mismatch\.psd$/i.test(fp)) {
+                options._mockLayers = mockLayers;
+            }
+        }
+        return origImport(options);
+    };
+
+    /* Items have completely different names/dimensions from the mock layers */
+    var itemX = addFootage(s, "Gamma/mismatch.psd", psdSrc, [s.intro],
+        { width: 500, height: 500 });
+    var itemY = addFootage(s, "Delta/mismatch.psd", psdSrc, [s.intro],
+        { width: 600, height: 600 });
+
+    var report = auditOf(s);
+    var destPsd = null;
+    for (var ri = 0; ri < report.items.length; ri++) {
+        if (report.items[ri].name.indexOf("mismatch.psd") !== -1) {
+            destPsd = report.items[ri].destPath;
+            break;
+        }
+    }
+    mock.registerFile(destPsd, 4096);
+
+    var plan = s.host.tempFolder() + "/relink-mismatch-psd.json";
+    s.host.writeTextFile(plan, s.host.jsonEncode({
+        items: [
+            { key: "i" + itemX.id, id: String(itemX.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + itemY.id, id: String(itemY.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false }
+        ]
+    }));
+
+    var result = s.host.commitFromFile(plan);
+    check("при несовпадении слоёв relinked = 0", result.relinked, 0);
+    check("при несовпадении слоёв все 2 помечены как failures", result.failures.length, 2);
+
+    var hasMatchFailed = result.failures.some(function (f) {
+        return f.code === "LAYER_MATCH_FAILED";
+    });
+    check("код ошибки — LAYER_MATCH_FAILED", hasMatchFailed, true);
+
+    /* Originals must remain untouched */
+    check("элемент X остался в проекте", s.project.items.indexOf(itemX) !== -1, true);
+    check("элемент Y остался в проекте", s.project.items.indexOf(itemY) !== -1, true);
+})();
+
+group("PSD: сохранение transform (position/anchorPoint) при replaceSource");
+(function () {
+    var s = buildProject();
+    var psdSrc = "E:/design/posed.psd";
+
+    var mockLayers = [
+        { name: "Hand", width: 200, height: 150 },
+        { name: "Pot", width: 300, height: 180 }
+    ];
+
+    var origImport = s.project.importFile.bind(s.project);
+    s.project.importFile = function (options) {
+        if (options && options.file) {
+            var fp = String(options.file._slash || options.file.fsName);
+            if (/posed\.psd$/i.test(fp)) {
+                options._mockLayers = mockLayers;
+            }
+        }
+        return origImport(options);
+    };
+
+    var hand = addFootage(s, "Hand/posed.psd", psdSrc, [s.intro],
+        { width: 200, height: 150 });
+    var pot = addFootage(s, "Pot/posed.psd", psdSrc, [s.intro],
+        { width: 300, height: 180 });
+
+    /* Set custom transform values on the composition layers */
+    var handLayer = s.intro.layer(s.intro.numLayers - 1);
+    var potLayer = s.intro.layer(s.intro.numLayers);
+    handLayer.transform.position.value = [250, 300];
+    handLayer.transform.anchorPoint.value = [100, 75];
+    potLayer.transform.position.value = [600, 400];
+    potLayer.transform.anchorPoint.value = [150, 90];
+
+    var report = auditOf(s);
+    var destPsd = null;
+    for (var ri = 0; ri < report.items.length; ri++) {
+        if (report.items[ri].name.indexOf("posed.psd") !== -1) {
+            destPsd = report.items[ri].destPath;
+            break;
+        }
+    }
+    mock.registerFile(destPsd, 4096);
+
+    var plan = s.host.tempFolder() + "/relink-transform-psd.json";
+    s.host.writeTextFile(plan, s.host.jsonEncode({
+        items: [
+            { key: "i" + hand.id, id: String(hand.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + pot.id, id: String(pot.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false }
+        ]
+    }));
+
+    var result = s.host.commitFromFile(plan);
+    check("оба слоя перелинкованы", result.relinked, 2);
+    check("нет отказов", result.failures.length, 0);
+
+    /* Find the relinked layers — they should now point to new sources */
+    var handNewLayer = null, potNewLayer = null;
+    for (var l = 1; l <= s.intro.numLayers; l++) {
+        var layer = s.intro.layer(l);
+        if (layer && layer.source && layer.source !== hand && layer.source !== pot) {
+            if (!handNewLayer) handNewLayer = layer;
+            else potNewLayer = layer;
+        }
+    }
+
+    check("hand слой найден после relink", handNewLayer !== null, true);
+    check("pot слой найден после relink", potNewLayer !== null, true);
+
+    if (handNewLayer) {
+        check("position hand сохранена",
+            JSON.stringify(handNewLayer.transform.position.value), JSON.stringify([250, 300]));
+        check("anchorPoint hand сохранена",
+            JSON.stringify(handNewLayer.transform.anchorPoint.value), JSON.stringify([100, 75]));
+    }
+    if (potNewLayer) {
+        check("position pot сохранена",
+            JSON.stringify(potNewLayer.transform.position.value), JSON.stringify([600, 400]));
+        check("anchorPoint pot сохранена",
+            JSON.stringify(potNewLayer.transform.anchorPoint.value), JSON.stringify([150, 90]));
+    }
 })();
 
 group("Старый проект: оставить как есть");

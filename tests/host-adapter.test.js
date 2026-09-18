@@ -131,7 +131,7 @@ check("порядок загрузки JSX-модулей", loadedFiles, [
 /* Fallback к window.location при отсутствии явного root */
 var h2b = createHarness(undefined, {
     evalResponse: function (script) {
-        if (script.indexOf("PardDefenderHost.version") >= 0) return "OK|2.0.1";
+        if (script.indexOf("PardDefenderHost.version") >= 0) return "OK|2.0.3";
         return "OK";
     }
 });
@@ -141,7 +141,7 @@ h2b.adapter.initialize(function (ok, info) {
     initDefaultInfo = info;
 });
 check("initialize без root использует window.location", initDefaultOk, true);
-check("initialize без root вернул версию", initDefaultInfo, "2.0.1");
+check("initialize без root вернул версию", initDefaultInfo, "2.0.3");
 
 /* Ошибка при пустом root */
 var h2c = createHarness();

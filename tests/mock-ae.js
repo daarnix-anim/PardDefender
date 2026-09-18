@@ -24,6 +24,15 @@ function Item(name) {
     this.parentFolder = null;
 }
 
+Item.prototype.remove = function () {
+    if (this._project) {
+        var idx = this._project.items.indexOf(this);
+        if (idx !== -1) {
+            this._project.items.splice(idx, 1);
+        }
+    }
+};
+
 Object.defineProperty(Item.prototype, "usedIn", {
     get: function () {
         var project = this._project;
@@ -61,6 +70,32 @@ Object.defineProperty(MockProperty.prototype, "numProperties", {
 
 MockProperty.prototype.property = function (i) { return this._children[i - 1]; };
 
+function MockTransformValue(val) {
+    this.value = val.slice();
+    this._keyframes = [];
+}
+MockTransformValue.prototype.valueAtTime = function () { return this.value; };
+MockTransformValue.prototype.setValueAtTime = function () {};
+MockTransformValue.prototype.setValue = function (val) { this.value = val.slice ? val.slice() : val; };
+Object.defineProperty(MockTransformValue.prototype, "numKeys", {
+    get: function () { return this._keyframes.length; }
+});
+
+function MockTransform(options) {
+    var o = options || {};
+    this.position = new MockTransformValue(o.position || [0, 0]);
+    this.anchorPoint = new MockTransformValue(o.anchorPoint || [0, 0]);
+    this.scale = new MockTransformValue(o.scale || [100, 100]);
+}
+
+/* Support xform.property("ADBE Position") etc. as in real ExtendScript. */
+MockTransform.prototype.property = function (matchName) {
+    if (matchName === "ADBE Position") return this.position;
+    if (matchName === "ADBE Anchor Point") return this.anchorPoint;
+    if (matchName === "ADBE Scale") return this.scale;
+    return null;
+};
+
 function MockLayer(comp, source, options) {
     var o = options || {};
     this.containingComp = comp;
@@ -72,8 +107,10 @@ function MockLayer(comp, source, options) {
     this.isTrackMatte = o.isTrackMatte === true;
     this.parent = o.parent || null;
     this.label = o.label || 0;
+    this.locked = o.locked === true;
     this.selected = false;
     this._children = [];
+    this.transform = new MockTransform(o.transform);
 }
 
 Object.defineProperty(MockLayer.prototype, "index", {
@@ -84,7 +121,20 @@ Object.defineProperty(MockLayer.prototype, "numProperties", {
     get: function () { return this._children.length; }
 });
 
-MockLayer.prototype.property = function (i) { return this._children[i - 1]; };
+MockLayer.prototype.property = function (i) {
+    if (typeof i === "string") {
+        if (i === "Transform" || i === "ADBE Transform Group") return this.transform;
+        return this._children[0];
+    }
+    return this._children[i - 1];
+};
+
+MockLayer.prototype.replaceSource = function (newSource, fixExpressions) {
+    if (this.locked) {
+        throw new Error("Cannot replace source of a locked layer");
+    }
+    this.source = newSource;
+};
 
 /* An effect parameter that points at another layer by index - Set Matte,
  * Displacement Map, Element 3D and the rest. */
@@ -103,6 +153,23 @@ MockLayer.prototype.addExpression = function (text) {
 };
 
 var PropertyValueType = { LAYER_INDEX: 6 };
+
+var ImportAsType = {
+    COMP_CROPPED_LAYERS: 1,
+    COMP: 2,
+    FOOTAGE: 3,
+    PROJECT: 4
+};
+
+function ImportOptions(file) {
+    this.file = file;
+    this.importAs = ImportAsType.FOOTAGE;
+    this.sequence = false;
+    this.forceAlphabetical = false;
+}
+ImportOptions.prototype.canImportAs = function (type) {
+    return true;
+};
 
 function CompItem(name) {
     Item.call(this, name);
@@ -154,6 +221,8 @@ function FootageItem(name, filePath, options) {
     this.duration = opts.duration === undefined ? 0 : opts.duration;
     this.footageMissing = opts.missing === true;
     this.useProxy = opts.useProxy === true;
+    this.width = opts.width || 1920;
+    this.height = opts.height || 1080;
     /* A proxy is its own source object with its own file, exactly as in AE. */
     this.proxySource = opts.proxy
         ? new FileSource(opts.proxy, opts.proxyIsStill !== false)
@@ -300,6 +369,42 @@ Project.prototype.setRenderQueue = function (comps) {
     };
 };
 
+Project.prototype.importFile = function (options) {
+    var p = options && options.file ? String(options.file._slash || options.file.fsName) : "";
+    var slashName = p.replace(/^.*[\\\/]/, "");
+    var baseName = slashName.replace(/\.[^.]+$/, "");
+    if (options && (options.importAs === ImportAsType.COMP_CROPPED_LAYERS || options.importAs === ImportAsType.COMP)) {
+        var comp = new CompItem(baseName);
+        this.add(comp);
+        var folderItem = new FolderItem(baseName + " Layers");
+        this.add(folderItem);
+        var layers = options._mockLayers || ["Head", "Body", "Arm"];
+        for (var i = 0; i < layers.length; i++) {
+            var layerDef = layers[i];
+            var layerName, layerW, layerH;
+            if (typeof layerDef === "object" && layerDef !== null) {
+                layerName = layerDef.name || "Layer " + i;
+                layerW = layerDef.width || 200;
+                layerH = layerDef.height || 200;
+            } else {
+                layerName = String(layerDef);
+                layerW = 200;
+                layerH = 200;
+            }
+            var fItem = new FootageItem(layerName + "/" + slashName, p, {
+                width: layerW, height: layerH
+            });
+            fItem.parentFolder = folderItem;
+            this.add(fItem);
+            comp.addLayer(fItem, { name: layerName });
+        }
+        return comp;
+    }
+    var fItem = new FootageItem(slashName, p);
+    this.add(fItem);
+    return fItem;
+};
+
 /* ------------------------------------------------------------- host loading */
 
 function loadHost(projectPath) {
@@ -319,6 +424,8 @@ function loadHost(projectPath) {
         SolidSource: SolidSource,
         PlaceholderSource: PlaceholderSource,
         PropertyValueType: PropertyValueType,
+        ImportAsType: ImportAsType,
+        ImportOptions: ImportOptions,
         File: MockFile,
         Folder: MockFolder,
         console: console
@@ -344,6 +451,8 @@ module.exports = {
     FolderItem: FolderItem,
     MockLayer: MockLayer,
     PropertyValueType: PropertyValueType,
+    ImportAsType: ImportAsType,
+    ImportOptions: ImportOptions,
     virtualFiles: virtualFiles,
     registerFile: function (p, size) {
         virtualFiles[String(p).replace(/\\/g, "/").toLowerCase()] = size || 1024;

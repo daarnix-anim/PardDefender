@@ -231,6 +231,76 @@ group("Рекурсивный аудит: bins, клипы, proxy, offline, gene
 })();
 
 /* ========================================================================= */
+group("Асинхронные UXP API Premiere Pro 26 (Promises, activeProject, items)");
+/* ========================================================================= */
+(function () {
+    var wsAsync = testDir + "/ws_async";
+    var prprojAsync = wsAsync + "/AsyncProject.prproj";
+    var mediaAsync = wsAsync + "/clipAsync.mp4";
+    mkdir(wsAsync);
+    writeFile(prprojAsync, "ASYNC_PROJECT");
+    writeFile(mediaAsync, "ASYNC_CLIP_DATA");
+
+    // Имитируем реальный C++ UXP интерфейс Premiere Pro 26:
+    // getActiveProject, getRootItem, getItems, getMediaFilePath возвращают Promise!
+    var asyncClip = {
+        name: "clipAsync.mp4",
+        type: 3,
+        nodeId: "clip_async_1",
+        masterClip: { mediaFilePath: mediaAsync, isOffline: false },
+        getMediaFilePath: function () { return Promise.resolve(mediaAsync); },
+        isOffline: function () { return Promise.resolve(false); },
+        hasProxy: function () { return Promise.resolve(false); }
+    };
+
+    var asyncFolder = {
+        name: "Root",
+        type: 1,
+        isBin: true,
+        items: [asyncClip],
+        getItems: function () { return Promise.resolve([asyncClip]); }
+    };
+
+    var asyncProj = {
+        name: "AsyncProject.prproj",
+        path: prprojAsync,
+        guid: "guid-async-777",
+        rootItem: asyncFolder,
+        getRootItem: function () { return Promise.resolve(asyncFolder); }
+    };
+
+    var asyncPpro = {
+        version: "26.0.2",
+        Project: {
+            activeProject: asyncProj,
+            projects: [asyncProj],
+            getActiveProject: function () { return Promise.resolve(asyncProj); }
+        }
+    };
+
+    PardPremiereAdapter.setPpro(asyncPpro);
+
+    // 1. identifyProject с асинхронным хостом через activeProject
+    var idAsync = PardPremiereAdapter.identifyProject();
+    check("асинхронный хост: projectSaved=true", idAsync.projectSaved, true);
+    check("асинхронный хост: guid извлечён", idAsync.projectId, "guid-async-777");
+    check("асинхронный хост: имя проекта", idAsync.projectName, "AsyncProject.prproj");
+
+    // 2. auditMedia с промисами на всех уровнях
+    var asyncAuditDone = false;
+    PardPremiereAdapter.auditMedia(null, function (err, res) {
+        asyncAuditDone = true;
+        check("auditMedia с Promises: ok=true", res && res.ok, true);
+        check("auditMedia с Promises: stats.clips=1", res && res.stats && res.stats.clips, 1);
+        check("auditMedia с Promises: items[0].path", res && res.items && res.items[0] && res.items[0].path, PardPremiereAdapter.normalizePath(mediaAsync));
+        check("auditMedia с Promises: _nativeItem привязан", res && res.items && res.items[0] && res.items[0]._nativeItem === asyncClip, true);
+    });
+
+    // Восстанавливаем mockPpro
+    PardPremiereAdapter.setPpro(mockPpro);
+})();
+
+/* ========================================================================= */
 group("Строгая изоляция: полное отсутствие QE DOM, CEP, evalScript и ExtendScript");
 /* ========================================================================= */
 (function () {

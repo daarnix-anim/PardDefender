@@ -39,10 +39,12 @@ if (!fs.existsSync(manifestPath)) {
         if (manifest.id !== "com.pard.defender.uxp") fail("Неверный ID плагина: " + manifest.id);
         else pass("Plugin ID === com.pard.defender.uxp");
 
-        if (manifest.version !== "2.0.1") fail("Версия плагина должна быть 2.0.1 (получено: " + manifest.version + ")");
-        else pass("Version === 2.0.1");
+        if (manifest.version !== "2.0.3") fail("Версия плагина должна быть 2.0.3 (получено: " + manifest.version + ")");
+        else pass("Version === 2.0.3");
 
-        var pproHost = (manifest.host || []).find(function (h) { return h.app === "premierepro"; });
+        var pproHost = Array.isArray(manifest.host)
+            ? manifest.host.find(function (h) { return h.app === "premierepro"; })
+            : (manifest.host && manifest.host.app === "premierepro" ? manifest.host : null);
         if (!pproHost) fail("Host premierepro не найден в манифесте");
         else if (pproHost.minVersion !== "25.6") fail("minVersion должен быть 25.6 (получено: " + pproHost.minVersion + ")");
         else pass("Host premierepro с minVersion 25.6 подтверждён");

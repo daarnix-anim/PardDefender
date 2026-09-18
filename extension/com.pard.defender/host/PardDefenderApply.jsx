@@ -131,6 +131,327 @@
 
     /* ------------------------------------------------------------- relinking */
 
+    function isLayeredCandidate(path) {
+        return /\.(psd|psb|ai)$/i.test(path || "");
+    }
+
+    function canImportCroppedLayers(destinationFile) {
+        try {
+            if (typeof ImportOptions === "undefined") {
+                return false;
+            }
+            var io = new ImportOptions();
+            io.file = destinationFile;
+            if (typeof io.canImportAs === "function" && typeof ImportAsType !== "undefined") {
+                if (io.canImportAs(ImportAsType.COMP_CROPPED_LAYERS) === true) return true;
+                if (io.canImportAs(ImportAsType.COMP) === true) return true;
+            }
+            return false;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function extractCoreLayerName(fullName, fileName) {
+        var s = host.trimText(str(fullName)).toLowerCase();
+        if (!s) return "";
+        var fName = host.trimText(str(fileName || "")).toLowerCase();
+        var fBase = fName.replace(/\.[^.]+$/, "");
+
+        /*
+         * After Effects names PSD/AI layer items as "LayerName/filename.psd".
+         * Extract the layer part before the slash when this pattern is present.
+         */
+        var slashIdx = s.indexOf("/");
+        if (slashIdx === -1) slashIdx = s.indexOf("\\");
+        if (slashIdx > 0 && fName) {
+            var afterSlash = s.substring(slashIdx + 1);
+            if (afterSlash === fName || afterSlash === fBase) {
+                s = host.trimText(s.substring(0, slashIdx));
+            }
+        }
+
+        if (fName && s.indexOf(fName) !== -1) {
+            s = s.split(fName).join(" ");
+        }
+        if (fBase && fBase.length > 1 && s.indexOf(fBase) !== -1) {
+            s = s.split(fBase).join(" ");
+        }
+        s = s.replace(/[\/\\\[\]\(\)\-_]/g, " ");
+        return host.trimText(s.replace(/\s+/g, " "));
+    }
+
+    function matchLayerCandidate(item, candidates, fileName) {
+        var cleanOld = host.trimText(str(item.name)).toLowerCase();
+        var coreOld = extractCoreLayerName(item.name, fileName);
+        var itemW = item.width || 0;
+        var itemH = item.height || 0;
+        var i, c, cleanCand, candSource, coreCand, coreSource;
+
+        /*
+         * Extract the source-level layer name from the item's mainSource.
+         * In After Effects, when a PSD is imported as cropped layers, each
+         * FootageItem's mainSource carries a name like "LayerName" while
+         * the item itself is named "LayerName/filename.psd".
+         */
+        var sourceNameOld = "";
+        try { sourceNameOld = host.trimText(str(item.mainSource.name || "")).toLowerCase(); }
+        catch (eSrc) { sourceNameOld = ""; }
+
+        /* Pass 1: exact name (or core name) AND dimensions match */
+        for (i = 0; i < candidates.length; i++) {
+            c = candidates[i];
+            if (c.used) continue;
+            cleanCand = host.trimText(str(c.name)).toLowerCase();
+            candSource = host.trimText(str(c.sourceName || "")).toLowerCase();
+            coreCand = extractCoreLayerName(c.name, fileName);
+            coreSource = extractCoreLayerName(c.sourceName, fileName);
+
+            var nameMatches = (cleanOld === cleanCand || cleanOld === candSource ||
+                (sourceNameOld && (sourceNameOld === cleanCand || sourceNameOld === candSource ||
+                    sourceNameOld === coreCand || sourceNameOld === coreSource)) ||
+                (coreOld && (coreOld === coreCand || coreOld === coreSource)) ||
+                cleanOld.indexOf(cleanCand + "/") === 0 || cleanOld.indexOf(cleanCand + "\\") === 0 ||
+                cleanOld.indexOf("/" + cleanCand) !== -1 || cleanOld.indexOf("\\" + cleanCand) !== -1);
+
+            if (nameMatches && itemW > 0 && itemH > 0 && c.width === itemW && c.height === itemH) {
+                return c;
+            }
+        }
+
+        /* Pass 2: exact core name, full name, or source name matches */
+        for (i = 0; i < candidates.length; i++) {
+            c = candidates[i];
+            if (c.used) continue;
+            cleanCand = host.trimText(str(c.name)).toLowerCase();
+            candSource = host.trimText(str(c.sourceName || "")).toLowerCase();
+            coreCand = extractCoreLayerName(c.name, fileName);
+            coreSource = extractCoreLayerName(c.sourceName, fileName);
+
+            if (cleanOld === cleanCand || cleanOld === candSource ||
+                (sourceNameOld && (sourceNameOld === cleanCand || sourceNameOld === candSource ||
+                    sourceNameOld === coreCand || sourceNameOld === coreSource)) ||
+                (coreOld && (coreOld === coreCand || coreOld === coreSource)) ||
+                cleanOld.indexOf(cleanCand + "/") === 0 || cleanOld.indexOf(cleanCand + "\\") === 0 ||
+                cleanOld.indexOf("/" + cleanCand) !== -1 || cleanOld.indexOf("\\" + cleanCand) !== -1) {
+                return c;
+            }
+        }
+
+        /* Pass 3: exact dimensions match */
+        if (itemW > 0 && itemH > 0) {
+            for (i = 0; i < candidates.length; i++) {
+                c = candidates[i];
+                if (c.used) continue;
+                if (c.width === itemW && c.height === itemH) {
+                    return c;
+                }
+            }
+        }
+
+        /* Pass 4: substring name match */
+        for (i = 0; i < candidates.length; i++) {
+            c = candidates[i];
+            if (c.used) continue;
+            cleanCand = host.trimText(str(c.name)).toLowerCase();
+            coreCand = extractCoreLayerName(c.name, fileName);
+            if ((cleanCand.length > 2 && (cleanOld.indexOf(cleanCand) !== -1 || cleanCand.indexOf(cleanOld) !== -1)) ||
+                (coreOld && coreCand && coreCand.length > 2 && (coreOld.indexOf(coreCand) !== -1 || coreCand.indexOf(coreOld) !== -1))) {
+                return c;
+            }
+        }
+
+        /*
+         * No fallback pass. If no match was found by name or dimensions,
+         * return null rather than grabbing the first unused candidate.
+         * A wrong match is far worse than no match: it replaces the layer
+         * source with the wrong PSD layer, causing merged/swapped visuals.
+         */
+
+        return null;
+    }
+
+    function relinkLayeredGroup(destination, groupEntries, result) {
+        var io, tempComp = null, tempFolder = null;
+        try {
+            io = new ImportOptions(destination);
+            io.file = destination;
+            io.sequence = false;
+            if (typeof ImportAsType !== "undefined" && typeof io.canImportAs === "function") {
+                if (io.canImportAs(ImportAsType.COMP_CROPPED_LAYERS)) {
+                    io.importAs = ImportAsType.COMP_CROPPED_LAYERS;
+                } else if (io.canImportAs(ImportAsType.COMP)) {
+                    io.importAs = ImportAsType.COMP;
+                }
+            } else if (typeof ImportAsType !== "undefined") {
+                io.importAs = ImportAsType.COMP_CROPPED_LAYERS;
+            }
+            tempComp = app.project.importFile(io);
+        } catch (eImport) {
+            tempComp = null;
+        }
+
+        if (!tempComp || typeof tempComp.numLayers !== "number" || tempComp.numLayers < 1) {
+            try { if (tempComp) tempComp.remove(); } catch (eRem) {}
+            return false;
+        }
+
+        var newLayers = [], k, l;
+        try {
+            for (k = 1; k <= tempComp.numLayers; k++) {
+                l = tempComp.layer(k);
+                if (l && l.source) {
+                    newLayers.push({
+                        name: str(l.name),
+                        sourceName: str(l.source.name),
+                        source: l.source,
+                        width: l.source.width || 0,
+                        height: l.source.height || 0,
+                        used: false
+                    });
+                    if (!tempFolder && l.source.parentFolder && l.source.parentFolder !== app.project.rootFolder) {
+                        tempFolder = l.source.parentFolder;
+                    }
+                }
+            }
+        } catch (eLayers) {
+            try { tempComp.remove(); } catch (eRemComp) {}
+            return false;
+        }
+
+        var g, entry, item, file, currentPath;
+        var fileName = destination ? destination.name : "";
+        for (g = 0; g < groupEntries.length; g++) {
+            entry = groupEntries[g];
+            item = host.findItemById(entry.id);
+
+            if (!item || !host.isFootageItem(item)) {
+                result.skipped++;
+                result.failures.push({
+                    key: str(entry.key),
+                    id: str(entry.id),
+                    code: "RELINK_ITEM_GONE",
+                    reason: "The item is no longer in the project."
+                });
+                continue;
+            }
+
+            file = host.footageFile(item);
+            currentPath = file ? host.slashes(file.fsName) : "";
+            if (entry.expectPath &&
+                currentPath.toLowerCase() !== host.slashes(entry.expectPath).toLowerCase()) {
+                result.skipped++;
+                result.failures.push({
+                    key: str(entry.key),
+                    id: str(entry.id),
+                    code: "RELINK_SOURCE_CHANGED",
+                    reason: "The source changed after the audit; left untouched."
+                });
+                continue;
+            }
+
+            var cand = matchLayerCandidate(item, newLayers, fileName);
+            if (!cand || !cand.source) {
+                result.skipped++;
+                result.failures.push({
+                    key: str(entry.key),
+                    id: str(entry.id),
+                    code: "LAYER_MATCH_FAILED",
+                    reason: "Could not find matching layer in imported file for " + str(item.name) + "; left untouched."
+                });
+                continue;
+            }
+
+            cand.used = true;
+            var newSource = cand.source;
+            var saved = captureInterpretation(item);
+            var savedProxy = captureProxy(item);
+            var oldParent = item.parentFolder;
+            var oldName = item.name;
+            var oldLabel = item.label;
+            var oldComment = item.comment;
+
+            /* Repoint layers across ALL comps in the project, handling locked layers safely.
+             * Capture and restore transform properties (position, anchorPoint, scale)
+             * because replaceSource on a cropped-layer item can reset the layer's
+             * internal position offset, causing layers to jump from their correct
+             * placement in the composition. */
+            for (var p = 1; p <= app.project.numItems; p++) {
+                var pItem = app.project.item(p);
+                if (host.isCompItem(pItem) && pItem !== tempComp) {
+                    for (var cl = 1; cl <= pItem.numLayers; cl++) {
+                        try {
+                            var cLayer = pItem.layer(cl);
+                            if (cLayer && cLayer.source === item) {
+                                var wasLocked = false;
+                                try { wasLocked = cLayer.locked; if (wasLocked) cLayer.locked = false; } catch (eLock) {}
+
+                                /* Capture transform before replaceSource */
+                                var savedPos = null, savedAnchor = null, savedScale = null;
+                                try {
+                                    var xform = cLayer.property("ADBE Transform Group");
+                                    if (xform) {
+                                        try { savedPos = xform.property("ADBE Position").value; } catch (ePos) {}
+                                        try { savedAnchor = xform.property("ADBE Anchor Point").value; } catch (eAnc) {}
+                                        try { savedScale = xform.property("ADBE Scale").value; } catch (eSc) {}
+                                    }
+                                } catch (eXform) {}
+
+                                cLayer.replaceSource(newSource, false);
+
+                                /* Restore transform after replaceSource */
+                                try {
+                                    var xform2 = cLayer.property("ADBE Transform Group");
+                                    if (xform2) {
+                                        if (savedPos) try { xform2.property("ADBE Position").setValue(savedPos); } catch (eRP) {}
+                                        if (savedAnchor) try { xform2.property("ADBE Anchor Point").setValue(savedAnchor); } catch (eRA) {}
+                                        if (savedScale) try { xform2.property("ADBE Scale").setValue(savedScale); } catch (eRS) {}
+                                    }
+                                } catch (eXform2) {}
+
+                                try { if (wasLocked) cLayer.locked = true; } catch (eRelock) {}
+                            }
+                        } catch (eRep) {}
+                    }
+                }
+            }
+
+            try { newSource.parentFolder = oldParent; } catch (eP) {}
+            try { newSource.name = oldName; } catch (eN) {}
+            try { newSource.label = oldLabel; } catch (eL) {}
+            try { newSource.comment = oldComment; } catch (eC) {}
+            restoreInterpretation(newSource, saved);
+            restoreProxy(newSource, savedProxy);
+
+            try { item.remove(); } catch (eR) {}
+            result.relinked++;
+        }
+
+        try { tempComp.remove(); } catch (eTC) {}
+
+        for (var u = 0; u < newLayers.length; u++) {
+            if (!newLayers[u].used && newLayers[u].source) {
+                try { newLayers[u].source.remove(); } catch (eRem) {}
+            }
+        }
+
+        if (tempFolder) {
+            var isEmpty = true;
+            for (var f = 1; f <= app.project.numItems; f++) {
+                if (app.project.item(f).parentFolder === tempFolder) {
+                    isEmpty = false;
+                    break;
+                }
+            }
+            if (isEmpty) {
+                try { tempFolder.remove(); } catch (eTF) {}
+            }
+        }
+
+        return true;
+    }
+
+
     /*
      * Plan shape (written by the client after every copy has been verified):
      *   { "items": [ { "key": "i12", "id": "12", "isProxy": false,
@@ -168,8 +489,67 @@
             undoStarted = true;
 
             var i, entry, item, file, currentPath, saved;
+            var handledKeys = {};
+
             for (i = 0; i < plan.items.length; i++) {
                 entry = plan.items[i];
+                var entryKey = entry.key || ("i" + entry.id);
+                if (handledKeys[entryKey]) continue;
+
+                var isSeq = entry.isSequence === true;
+                var isPrx = entry.isProxy === true;
+                var destPathNorm = host.slashes(entry.destPath || "");
+
+                /*
+                 * Layered files (.psd, .psb, .ai): item.replace() resets the footage
+                 * to "Merged Layers" (flattened composite), destroying individual layer
+                 * selections and alpha transparency. When ImportOptions supports
+                 * COMP_CROPPED_LAYERS, import once and repoint comp layers to the
+                 * corresponding cropped layer sources.
+                 */
+                if (!isSeq && !isPrx && (isLayeredCandidate(destPathNorm) || isLayeredCandidate(entry.expectPath))) {
+                    var destFileCandidate = new File(destPathNorm);
+                    if (!destFileCandidate.exists) {
+                        result.skipped++;
+                        result.failures.push({
+                            key: str(entry.key),
+                            id: str(entry.id),
+                            code: "RELINK_MISSING_COPY",
+                            reason: "The verified copy is missing: " + str(entry.destPath)
+                        });
+                        handledKeys[entryKey] = true;
+                        continue;
+                    }
+
+                    var groupEntries = [];
+                    var gIdx;
+                    for (gIdx = i; gIdx < plan.items.length; gIdx++) {
+                        var other = plan.items[gIdx];
+                        if (other.isProxy !== true && other.isSequence !== true &&
+                            host.slashes(other.destPath || "").toLowerCase() === destPathNorm.toLowerCase()) {
+                            groupEntries.push(other);
+                            handledKeys[other.key || ("i" + other.id)] = true;
+                        }
+                    }
+
+                    if (relinkLayeredGroup(destFileCandidate, groupEntries, result)) {
+                        continue;
+                    }
+
+                    /* If layered import failed, DO NOT fall back to item.replace()!
+                     * item.replace flattens all layers into a single merged composite, ruining alpha and positions. */
+                    for (gIdx = 0; gIdx < groupEntries.length; gIdx++) {
+                        result.skipped++;
+                        result.failures.push({
+                            key: str(groupEntries[gIdx].key),
+                            id: str(groupEntries[gIdx].id),
+                            code: "LAYERED_RELINK_FAILED",
+                            reason: "Layered import failed for " + str(destPathNorm) + "; layers left untouched to prevent merging."
+                        });
+                    }
+                    continue;
+                }
+
                 item = host.findItemById(entry.id);
 
                 if (!item || !host.isFootageItem(item)) {

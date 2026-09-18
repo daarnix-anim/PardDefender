@@ -79,8 +79,79 @@ var PardPremiereAdapter = (function () {
 
     /* ---------------------------------------------------- project identity */
 
+    function maybeAwait(val, fn) {
+        if (val && typeof val.then === "function") {
+            return val.then(fn);
+        }
+        return fn(val);
+    }
+
+    function resolveActiveProjectSync(project) {
+        if (project && typeof project.then !== "function") return project;
+        if (ppro && ppro.Project) {
+            if (ppro.Project.activeProject && typeof ppro.Project.activeProject.then !== "function") {
+                return ppro.Project.activeProject;
+            }
+            if (Array.isArray(ppro.Project.projects) && ppro.Project.projects.length > 0) {
+                return ppro.Project.projects[0];
+            }
+            if (typeof ppro.Project.getActiveProject === "function") {
+                try {
+                    var syncRes = ppro.Project.getActiveProject();
+                    if (syncRes && typeof syncRes.then !== "function") return syncRes;
+                } catch (e) {}
+            }
+        }
+        if (ppro && ppro.app && ppro.app.project) return ppro.app.project;
+        if (typeof window !== "undefined") {
+            if (window.app && window.app.project) return window.app.project;
+            if (window.premierepro && window.premierepro.Project) {
+                if (window.premierepro.Project.activeProject) return window.premierepro.Project.activeProject;
+                if (Array.isArray(window.premierepro.Project.projects) && window.premierepro.Project.projects.length > 0) {
+                    return window.premierepro.Project.projects[0];
+                }
+            }
+        }
+        return null;
+    }
+
+    function resolveActiveProject(project, onResolved) {
+        var p = resolveActiveProjectSync(project);
+        if (p) return onResolved(p);
+
+        if (project && typeof project.then === "function") {
+            return project.then(onResolved, function () { onResolved(null); });
+        }
+
+        if (ppro && ppro.Project) {
+            if (typeof ppro.Project.getActiveProject === "function") {
+                try {
+                    var r = ppro.Project.getActiveProject();
+                    return maybeAwait(r, function (resProj) {
+                        if (resProj) return onResolved(resProj);
+                        if (ppro.Project.activeProject) {
+                            return maybeAwait(ppro.Project.activeProject, onResolved);
+                        }
+                        return onResolved(null);
+                    });
+                } catch (e) {}
+            }
+            if (ppro.Project.activeProject) {
+                return maybeAwait(ppro.Project.activeProject, onResolved);
+            }
+        }
+        return onResolved(null);
+    }
+
+    api.resolveActiveProjectSync = resolveActiveProjectSync;
+    api.resolveActiveProject = function (project) {
+        return new Promise(function (resolve) {
+            resolveActiveProject(project, resolve);
+        });
+    };
+
     api.identifyProject = function (project) {
-        var proj = project || (ppro && ppro.Project ? ppro.Project.getActiveProject() : null);
+        var proj = resolveActiveProjectSync(project);
         if (!proj) {
             return {
                 ok: false,
@@ -93,8 +164,24 @@ var PardPremiereAdapter = (function () {
             };
         }
 
-        var guid = proj.guid || proj.id || null;
-        var pPath = proj.path || proj.filePath || "";
+        var guid = null;
+        if (proj.guid) {
+            guid = (typeof proj.guid.toString === "function") ? proj.guid.toString() : String(proj.guid);
+            if (guid === "[object Object]" && proj.guid.guid) guid = String(proj.guid.guid);
+        } else if (proj.id) {
+            guid = String(proj.id);
+        } else if (typeof proj.getGuid === "function") {
+            try { guid = String(proj.getGuid()); } catch (eG) {}
+        }
+
+        var pPath = "";
+        if (typeof proj.path === "string") pPath = proj.path;
+        else if (typeof proj.filePath === "string") pPath = proj.filePath;
+        else if (typeof proj.getPath === "function") {
+            try { pPath = proj.getPath() || ""; } catch (eP) {}
+        } else if (typeof proj.getFilePath === "function") {
+            try { pPath = proj.getFilePath() || ""; } catch (eP) {}
+        }
 
         if (!pPath) {
             return {
@@ -186,271 +273,361 @@ var PardPremiereAdapter = (function () {
 
         cb = cb || function () {};
 
-        var idInfo = api.identifyProject(proj);
-        if (!idInfo.ok) {
-            cb(null, {
-                ok: false,
-                error: idInfo.error,
-                host: "premierepro",
-                hostVersion: getHostVersion(),
-                projectSaved: false,
-                projectId: null,
-                projectPath: null,
-                workspace: null,
-                items: [],
-                stats: { totalItems: 0, clips: 0, sequences: 0, offline: 0, generated: 0 }
-            });
-            return;
-        }
-
-        if (!idInfo.projectSaved) {
-            cb(null, {
-                ok: true,
-                host: "premierepro",
-                hostVersion: getHostVersion(),
-                projectSaved: false,
-                projectId: idInfo.projectId,
-                projectPath: null,
-                workspace: null,
-                items: [],
-                stats: { totalItems: 0, clips: 0, sequences: 0, offline: 0, generated: 0 }
-            });
-            return;
-        }
-
-        var targetProject = proj || (ppro && ppro.Project ? ppro.Project.getActiveProject() : null);
-        var rootItem = null;
-        if (targetProject && typeof targetProject.getRootItem === "function") {
-            rootItem = targetProject.getRootItem();
-        } else if (targetProject && targetProject.rootItem) {
-            rootItem = targetProject.rootItem;
-        }
-
-        if (!rootItem) {
-            cb(new Error("Не удалось получить rootItem проекта"), null);
-            return;
-        }
-
-        var collectedItems = [];
-        var stats = {
-            totalItems: 0,
-            clips: 0,
-            sequences: 0,
-            offline: 0,
-            generated: 0,
-            multicam: 0,
-            merged: 0
-        };
-
-        function processNode(node, currentBinPath) {
-            if (!node) return;
-
-            // Check if folder / bin
-            var isFolder = false;
-            if (node.type === 1 || node.isBin || node.isFolder || (node.children && !node.getMediaFilePath)) {
-                isFolder = true;
-            }
-
-            if (isFolder) {
-                var nextBin = currentBinPath ? (currentBinPath + "/" + node.name) : node.name;
-                var children = node.children || (typeof node.getItems === "function" ? node.getItems() : []);
-                for (var c = 0; c < children.length; c++) {
-                    processNode(children[c], nextBin);
+        try {
+            return resolveActiveProject(proj, function (targetProject) {
+                if (!targetProject) {
+                    cb(null, {
+                        ok: false,
+                        error: "NO_ACTIVE_PROJECT",
+                        host: "premierepro",
+                        hostVersion: getHostVersion(),
+                        projectSaved: false,
+                        projectId: null,
+                        projectPath: null,
+                        workspace: null,
+                        items: [],
+                        stats: { totalItems: 0, clips: 0, sequences: 0, offline: 0, generated: 0 }
+                    });
+                    return;
                 }
-                return;
-            }
 
-            stats.totalItems++;
-
-            // Detect sequence
-            if (node.type === 2 || node.isSequence || (ppro && ppro.Sequence && node instanceof ppro.Sequence)) {
-                stats.sequences++;
-                collectedItems.push({
-                    id: String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                    key: "p" + String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                    name: node.name || "Секвенция",
-                    path: "",
-                    binPath: currentBinPath || "",
-                    classification: "sequence",
-                    missing: false,
-                    isSequence: true,
-                    isProxy: false,
-                    hasProxy: false,
-                    proxyPath: "",
-                    size: 0,
-                    hostDetails: {
-                        nodeId: node.nodeId || null,
-                        treePath: node.treePath || null,
-                        type: "sequence"
-                    }
-                });
-                return;
-            }
-
-            // Detect multicam / merged
-            if (node.isMulticam || node.projectItemType === "multicam") {
-                stats.multicam++;
-                collectedItems.push({
-                    id: String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                    key: "p" + String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                    name: node.name || "Multicam",
-                    path: "",
-                    binPath: currentBinPath || "",
-                    classification: "multicam",
-                    missing: false,
-                    isSequence: false,
-                    isProxy: false,
-                    hasProxy: false,
-                    proxyPath: "",
-                    size: 0,
-                    hostDetails: {
-                        nodeId: node.nodeId || null,
-                        type: "multicam"
-                    }
-                });
-                return;
-            }
-
-            if (node.isMerged || node.projectItemType === "merged") {
-                stats.merged++;
-                collectedItems.push({
-                    id: String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                    key: "p" + String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                    name: node.name || "Merged Clip",
-                    path: "",
-                    binPath: currentBinPath || "",
-                    classification: "merged",
-                    missing: false,
-                    isSequence: false,
-                    isProxy: false,
-                    hasProxy: false,
-                    proxyPath: "",
-                    size: 0,
-                    hostDetails: {
-                        nodeId: node.nodeId || null,
-                        type: "merged"
-                    }
-                });
-                return;
-            }
-
-            // Check media file path
-            var mediaPath = "";
-            if (typeof node.getMediaFilePath === "function") {
-                try { mediaPath = node.getMediaFilePath(); } catch (eM) {}
-            } else if (node.mediaFilePath) {
-                mediaPath = node.mediaFilePath;
-            }
-
-            // Detect synthetic / generated (color matte, bars, transparent video, etc.)
-            if (node.isSynthetic || node.isGenerated || node.mediaType === "synthetic" ||
-                node.isColorMatte || node.isBars || (!mediaPath && (node.type === 4 || node.synthetic))) {
-                stats.generated++;
-                collectedItems.push({
-                    id: String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                    key: "p" + String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                    name: node.name || "Generated Media",
-                    path: "",
-                    binPath: currentBinPath || "",
-                    classification: "generated",
-                    missing: false,
-                    isSequence: false,
-                    isProxy: false,
-                    hasProxy: false,
-                    proxyPath: "",
-                    size: 0,
-                    hostDetails: {
-                        nodeId: node.nodeId || null,
-                        synthetic: true
-                    }
-                });
-                return;
-            }
-
-            // Normal clip project item
-            var isOff = false;
-            if (typeof node.isOffline === "function") {
-                try { isOff = node.isOffline(); } catch (eOff) {}
-            } else if (typeof node.offline !== "undefined") {
-                isOff = !!node.offline;
-            } else if (!mediaPath) {
-                isOff = true;
-            }
-
-            var hasPrx = false;
-            var prxPath = "";
-            if (typeof node.hasProxy === "function") {
-                try { hasPrx = node.hasProxy(); } catch (eHp) {}
-            } else if (typeof node.hasProxyFlag !== "undefined") {
-                hasPrx = !!node.hasProxyFlag;
-            }
-
-            if (hasPrx) {
-                if (typeof node.getProxyPath === "function") {
-                    try { prxPath = node.getProxyPath(); } catch (ePp) {}
-                } else if (node.proxyPath) {
-                    prxPath = node.proxyPath;
+                var idInfo = api.identifyProject(targetProject);
+                if (!idInfo.ok) {
+                    cb(null, {
+                        ok: false,
+                        error: idInfo.error,
+                        host: "premierepro",
+                        hostVersion: getHostVersion(),
+                        projectSaved: false,
+                        projectId: null,
+                        projectPath: null,
+                        workspace: null,
+                        items: [],
+                        stats: { totalItems: 0, clips: 0, sequences: 0, offline: 0, generated: 0 }
+                    });
+                    return;
                 }
-            }
 
-            var fSize = 0;
-            if (mediaPath && fs) {
-                try {
-                    var nativeM = path ? mediaPath.replace(/\//g, path.sep) : mediaPath;
-                    var st = fs.statSync(nativeM);
-                    fSize = st.size;
-                } catch (eSt) {}
-            }
-
-            var classif = isOff ? "offline" : "clip";
-            if (isOff) stats.offline++;
-            else stats.clips++;
-
-            collectedItems.push({
-                id: String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                key: "p" + String(node.nodeId || node.guid || node.treePath || collectedItems.length + 1),
-                name: node.name || "Медиафайл",
-                path: normalizePath(mediaPath),
-                binPath: currentBinPath || "",
-                classification: classif,
-                missing: isOff,
-                isSequence: false,
-                isProxy: false,
-                hasProxy: !!hasPrx,
-                proxyPath: normalizePath(prxPath),
-                size: fSize,
-                hostDetails: {
-                    nodeId: node.nodeId || null,
-                    treePath: node.treePath || null,
-                    isOffline: isOff
+                if (!idInfo.projectSaved) {
+                    cb(null, {
+                        ok: true,
+                        host: "premierepro",
+                        hostVersion: getHostVersion(),
+                        projectSaved: false,
+                        projectId: idInfo.projectId,
+                        projectName: idInfo.projectName,
+                        projectPath: null,
+                        workspace: null,
+                        items: [],
+                        stats: { totalItems: 0, clips: 0, sequences: 0, offline: 0, generated: 0 }
+                    });
+                    return;
                 }
+
+                var rawRoot = targetProject.rootItem || (typeof targetProject.getRootItem === "function" ? targetProject.getRootItem() : null);
+
+                return maybeAwait(rawRoot, function (rootItem) {
+                    if (!rootItem) {
+                        cb(new Error("Не удалось получить rootItem проекта"), null);
+                        return;
+                    }
+
+                    var collectedItems = [];
+                    var stats = {
+                        totalItems: 0,
+                        clips: 0,
+                        sequences: 0,
+                        offline: 0,
+                        generated: 0,
+                        multicam: 0,
+                        merged: 0
+                    };
+
+                    function processNode(node, currentBinPath, done) {
+                        if (!node) return done();
+                        return maybeAwait(node, function (resolvedNode) {
+                            if (!resolvedNode) return done();
+
+                            // 1. Check if folder / bin
+                            var isFolder = false;
+                            if (resolvedNode.type === 1 || resolvedNode.isBin || resolvedNode.isFolder) {
+                                isFolder = true;
+                            }
+                            if (!isFolder && ppro && ppro.ProjectItem && typeof ppro.ProjectItem.TYPE_BIN !== "undefined" && resolvedNode.type === ppro.ProjectItem.TYPE_BIN) {
+                                isFolder = true;
+                            }
+                            if (!isFolder && ppro && ppro.FolderItem) {
+                                if (resolvedNode instanceof ppro.FolderItem || (typeof ppro.FolderItem.queryCast === "function" && ppro.FolderItem.queryCast(resolvedNode))) {
+                                    isFolder = true;
+                                }
+                            }
+                            if (!isFolder && (Array.isArray(resolvedNode.items) || Array.isArray(resolvedNode.children) || (!resolvedNode.getMediaFilePath && typeof resolvedNode.getItems === "function"))) {
+                                isFolder = true;
+                            }
+
+                            if (isFolder) {
+                                var nextBin = currentBinPath;
+                                if (resolvedNode !== rootItem && resolvedNode.name && resolvedNode.name !== "Root") {
+                                    nextBin = currentBinPath ? (currentBinPath + "/" + resolvedNode.name) : resolvedNode.name;
+                                }
+
+                                var rawChildren = Array.isArray(resolvedNode.items) ? resolvedNode.items :
+                                                 (Array.isArray(resolvedNode.children) ? resolvedNode.children :
+                                                 (typeof resolvedNode.getItems === "function" ? resolvedNode.getItems() : []));
+
+                                return maybeAwait(rawChildren, function (children) {
+                                    if (!Array.isArray(children) || children.length === 0) {
+                                        return done();
+                                    }
+                                    var idx = 0;
+                                    function nextChild() {
+                                        if (idx >= children.length) return done();
+                                        var child = children[idx++];
+                                        processNode(child, nextBin, nextChild);
+                                    }
+                                    nextChild();
+                                });
+                            }
+
+                            stats.totalItems++;
+
+                            // 2. Detect sequence
+                            var rawSeq = typeof resolvedNode.isSequence === "function" ? resolvedNode.isSequence() :
+                                        (typeof resolvedNode.isSequence !== "undefined" ? resolvedNode.isSequence :
+                                        (resolvedNode.type === 2 || (ppro && ppro.Sequence && resolvedNode instanceof ppro.Sequence)));
+
+                            return maybeAwait(rawSeq, function (isSeq) {
+                                var nodeId = String(resolvedNode.nodeId || (resolvedNode.guid ? (typeof resolvedNode.guid.toString === "function" ? resolvedNode.guid.toString() : String(resolvedNode.guid)) : null) || resolvedNode.id || resolvedNode.treePath || (collectedItems.length + 1));
+
+                                if (isSeq) {
+                                    stats.sequences++;
+                                    collectedItems.push({
+                                        id: nodeId,
+                                        key: "p" + nodeId,
+                                        name: resolvedNode.name || "Секвенция",
+                                        path: "",
+                                        binPath: currentBinPath || "",
+                                        classification: "sequence",
+                                        missing: false,
+                                        isSequence: true,
+                                        isProxy: false,
+                                        hasProxy: false,
+                                        proxyPath: "",
+                                        size: 0,
+                                        hostDetails: {
+                                            nodeId: resolvedNode.nodeId || null,
+                                            treePath: resolvedNode.treePath || null,
+                                            type: "sequence"
+                                        },
+                                        _nativeItem: resolvedNode
+                                    });
+                                    return done();
+                                }
+
+                                // 3. Multicam / Merged
+                                var rawMulti = typeof resolvedNode.isMulticamClip === "function" ? resolvedNode.isMulticamClip() :
+                                               !!(resolvedNode.isMulticam || resolvedNode.projectItemType === "multicam");
+
+                                return maybeAwait(rawMulti, function (isMulti) {
+                                    if (isMulti) {
+                                        stats.multicam++;
+                                        collectedItems.push({
+                                            id: nodeId,
+                                            key: "p" + nodeId,
+                                            name: resolvedNode.name || "Multicam",
+                                            path: "",
+                                            binPath: currentBinPath || "",
+                                            classification: "multicam",
+                                            missing: false,
+                                            isSequence: false,
+                                            isProxy: false,
+                                            hasProxy: false,
+                                            proxyPath: "",
+                                            size: 0,
+                                            hostDetails: {
+                                                nodeId: resolvedNode.nodeId || null,
+                                                type: "multicam"
+                                            },
+                                            _nativeItem: resolvedNode
+                                        });
+                                        return done();
+                                    }
+
+                                    var rawMerged = typeof resolvedNode.isMergedClip === "function" ? resolvedNode.isMergedClip() :
+                                                    !!(resolvedNode.isMerged || resolvedNode.projectItemType === "merged");
+
+                                    return maybeAwait(rawMerged, function (isMerged) {
+                                        if (isMerged) {
+                                            stats.merged++;
+                                            collectedItems.push({
+                                                id: nodeId,
+                                                key: "p" + nodeId,
+                                                name: resolvedNode.name || "Merged Clip",
+                                                path: "",
+                                                binPath: currentBinPath || "",
+                                                classification: "merged",
+                                                missing: false,
+                                                isSequence: false,
+                                                isProxy: false,
+                                                hasProxy: false,
+                                                proxyPath: "",
+                                                size: 0,
+                                                hostDetails: {
+                                                    nodeId: resolvedNode.nodeId || null,
+                                                    type: "merged"
+                                                },
+                                                _nativeItem: resolvedNode
+                                            });
+                                            return done();
+                                        }
+
+                                        // 4. Media file path
+                                        var rawPath = (resolvedNode.masterClip && typeof resolvedNode.masterClip.mediaFilePath === "string") ? resolvedNode.masterClip.mediaFilePath :
+                                                      (typeof resolvedNode.mediaFilePath === "string" ? resolvedNode.mediaFilePath :
+                                                      (typeof resolvedNode.getMediaFilePath === "function" ? resolvedNode.getMediaFilePath() : ""));
+
+                                        return maybeAwait(rawPath, function (mediaPath) {
+                                            mediaPath = mediaPath || "";
+
+                                            // 5. Synthetic
+                                            var isSynth = false;
+                                            if (resolvedNode.masterClip && typeof resolvedNode.masterClip.isSynthetic !== "undefined") {
+                                                isSynth = !!resolvedNode.masterClip.isSynthetic;
+                                            } else if (typeof resolvedNode.isSynthetic !== "undefined") {
+                                                isSynth = !!resolvedNode.isSynthetic;
+                                            } else if (resolvedNode.isGenerated || resolvedNode.mediaType === "synthetic" || resolvedNode.isColorMatte || resolvedNode.isBars) {
+                                                isSynth = true;
+                                            } else if (!mediaPath && (resolvedNode.type === 4 || resolvedNode.synthetic)) {
+                                                isSynth = true;
+                                            }
+
+                                            if (isSynth) {
+                                                stats.generated++;
+                                                collectedItems.push({
+                                                    id: nodeId,
+                                                    key: "p" + nodeId,
+                                                    name: resolvedNode.name || "Generated Media",
+                                                    path: "",
+                                                    binPath: currentBinPath || "",
+                                                    classification: "generated",
+                                                    missing: false,
+                                                    isSequence: false,
+                                                    isProxy: false,
+                                                    hasProxy: false,
+                                                    proxyPath: "",
+                                                    size: 0,
+                                                    hostDetails: {
+                                                        nodeId: resolvedNode.nodeId || null,
+                                                        synthetic: true
+                                                    },
+                                                    _nativeItem: resolvedNode
+                                                });
+                                                return done();
+                                            }
+
+                                            // 6. Offline
+                                            var rawOffline = (resolvedNode.masterClip && typeof resolvedNode.masterClip.isOffline !== "undefined") ? resolvedNode.masterClip.isOffline :
+                                                             (typeof resolvedNode.isOffline === "function" ? resolvedNode.isOffline() :
+                                                             (typeof resolvedNode.offline !== "undefined" ? resolvedNode.offline : !mediaPath));
+
+                                            return maybeAwait(rawOffline, function (isOff) {
+                                                isOff = !!isOff || !mediaPath;
+
+                                                // 7. Proxy
+                                                var rawHasProxy = typeof resolvedNode.hasProxy === "function" ? resolvedNode.hasProxy() :
+                                                                  (typeof resolvedNode.hasProxyFlag !== "undefined" ? resolvedNode.hasProxyFlag : false);
+
+                                                return maybeAwait(rawHasProxy, function (hasPrx) {
+                                                    hasPrx = !!hasPrx;
+
+                                                    var rawProxyPath = hasPrx ? (typeof resolvedNode.getProxyPath === "function" ? resolvedNode.getProxyPath() : (resolvedNode.proxyPath || "")) : "";
+
+                                                    return maybeAwait(rawProxyPath, function (prxPath) {
+                                                        prxPath = prxPath || "";
+
+                                                        var fSize = 0;
+                                                        if (mediaPath && fs) {
+                                                            try {
+                                                                var nativeM = path ? mediaPath.replace(/\//g, path.sep) : mediaPath;
+                                                                var st = fs.statSync(nativeM);
+                                                                fSize = st.size;
+                                                            } catch (eSt) {}
+                                                        }
+
+                                                        var classif = isOff ? "offline" : "clip";
+                                                        if (isOff) stats.offline++;
+                                                        else stats.clips++;
+
+                                                        collectedItems.push({
+                                                            id: nodeId,
+                                                            key: "p" + nodeId,
+                                                            name: resolvedNode.name || "Медиафайл",
+                                                            path: normalizePath(mediaPath),
+                                                            binPath: currentBinPath || "",
+                                                            classification: classif,
+                                                            missing: isOff,
+                                                            isSequence: false,
+                                                            isProxy: false,
+                                                            hasProxy: !!hasPrx,
+                                                            proxyPath: normalizePath(prxPath),
+                                                            size: fSize,
+                                                            hostDetails: {
+                                                                nodeId: resolvedNode.nodeId || null,
+                                                                treePath: resolvedNode.treePath || null,
+                                                                isOffline: isOff
+                                                            },
+                                                            _nativeItem: resolvedNode
+                                                        });
+                                                        return done();
+                                                    });
+                                                });
+                                            });
+                                        });
+                                    });
+                                });
+                            });
+                        });
+                    }
+
+                    // Start traversal from root item
+                    var rawRootChildren = Array.isArray(rootItem.items) ? rootItem.items :
+                                          (Array.isArray(rootItem.children) ? rootItem.children :
+                                          (typeof rootItem.getItems === "function" ? rootItem.getItems() : []));
+
+                    return maybeAwait(rawRootChildren, function (rootChildren) {
+                        if (!Array.isArray(rootChildren)) rootChildren = [];
+                        var rIdx = 0;
+                        function nextRootChild() {
+                            if (rIdx >= rootChildren.length) {
+                                var report = {
+                                    ok: true,
+                                    host: "premierepro",
+                                    hostVersion: getHostVersion(),
+                                    projectSaved: true,
+                                    projectId: idInfo.projectId,
+                                    projectName: idInfo.projectName,
+                                    projectPath: idInfo.projectPath,
+                                    workspace: idInfo.workspace,
+                                    items: collectedItems,
+                                    stats: stats,
+                                    hostDetails: {
+                                        adapter: "uxp",
+                                        premiereVersion: getHostVersion(),
+                                        rootItemCount: rootChildren.length
+                                    }
+                                };
+                                return cb(null, report);
+                            }
+                            var child = rootChildren[rIdx++];
+                            processNode(child, "", nextRootChild);
+                        }
+                        nextRootChild();
+                    });
+                });
             });
+        } catch (err) {
+            cb(err, null);
         }
-
-        // Start recursion from root item children
-        var rootChildren = rootItem.children || (typeof rootItem.getItems === "function" ? rootItem.getItems() : []);
-        for (var i = 0; i < rootChildren.length; i++) {
-            processNode(rootChildren[i], "");
-        }
-
-        var report = {
-            ok: true,
-            host: "premierepro",
-            hostVersion: getHostVersion(),
-            projectSaved: true,
-            projectId: idInfo.projectId,
-            projectPath: idInfo.projectPath,
-            workspace: idInfo.workspace,
-            items: collectedItems,
-            stats: stats,
-            hostDetails: {
-                adapter: "uxp",
-                premiereVersion: getHostVersion(),
-                rootItemCount: rootChildren.length
-            }
-        };
-
-        cb(null, report);
     };
 
     /* ----------------------------------------------------- item operations */

@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **56** · связей: **144** · собрано: 2026-09-18 01:32
+Файлов: **59** · связей: **144** · собрано: 2026-09-18 08:38
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -11,7 +11,7 @@
 
 ### `PardDefenderApply.jsx`
 
-`extension/com.pard.defender/host/PardDefenderApply.jsx` · 559 строк · работает
+`extension/com.pard.defender/host/PardDefenderApply.jsx` · 939 строк · работает
 
 Две мутирующие операции: перелинковка на проверенную копию с сохранением интерпретации и раскладка панели проекта.
 
@@ -19,7 +19,7 @@
 
 ### `PardDefenderAudit.jsx`
 
-`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 642 строк · работает
+`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 674 строк · работает
 
 Один проход по проекту → один JSON-отчёт: где что лежит, куда должно попасть на диске и в панели. Решений о времени не принимает.
 
@@ -53,7 +53,7 @@
 
 ### `adapter.js`
 
-`premiere/com.pard.defender.uxp/adapter.js` · 507 строк · работает
+`premiere/com.pard.defender.uxp/adapter.js` · 684 строк · работает
 
 Официальный UXP-адаптер для Premiere Pro 25.6+: инспекция проектов, рекурсивный аудит media items, классификация клипов/секвенций/proxy/generated, подключение к реестру проектов и нормализованный отчёт аудита.
 
@@ -81,9 +81,21 @@
 
 _Описание не задано._
 
+### `icon-23@1x.png`
+
+`premiere/com.pard.defender.uxp/icons/icon-23@1x.png` · 3 строк · работает
+
+_Описание не задано._
+
+### `icon-23@2x.png`
+
+`premiere/com.pard.defender.uxp/icons/icon-23@2x.png` · 3 строк · работает
+
+_Описание не задано._
+
 ### `main.js`
 
-`premiere/com.pard.defender.uxp/main.js` · 560 строк · работает
+`premiere/com.pard.defender.uxp/main.js` · 621 строк · работает
 
 UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИТА», «ДУБЛИКАТЫ» и «ЖУРНАЛ», копирование внешних медиа в workspace с перелинковкой, поиск дубликатов, двухкликовое объединение файлов и журнал операций.
 
@@ -167,7 +179,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 3099 строк · работает
+`extension/com.pard.defender/client/main.js` · 3104 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
@@ -255,7 +267,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `manifest.json`
 
-`premiere/com.pard.defender.uxp/manifest.json` · 44 строк · работает
+`premiere/com.pard.defender.uxp/manifest.json` · 33 строк · работает
 
 _Описание не задано._
 
@@ -301,7 +313,7 @@ _Описание не задано._
 
 `tests/e2e-hardening.test.js` · 461 строк · работает
 
-40 интеграционных end-to-end проверок надёжности (hardening), синхронизации и безопасности релиза 2.0.1.
+40 интеграционных end-to-end проверок надёжности (hardening), синхронизации и безопасности релиза 2.0.3.
 
 Использует: `workspace-store.js`, `sync-coordinator.js`, `consolidation.js`, `copy-queue.js`, `duplicate-index.js`, `copy-engine.js`, `duplicates.js`, `adapter.js`, `mock-premiere.js`
 
@@ -319,9 +331,9 @@ _Описание не задано._
 
 ### `host.test.js`
 
-`tests/host.test.js` · 955 строк · работает
+`tests/host.test.js` · 1242 строк · работает
 
-172 проверки хоста: рабочая папка, ветки, маршруты, секвенции, границы раскладки.
+186 проверок хоста: рабочая папка, ветки, маршруты, многослойные PSD/AI, секвенции, границы раскладки.
 
 Использует: `mock-ae.js`
 
@@ -329,7 +341,7 @@ _Описание не задано._
 
 ### `mock-ae.js`
 
-`tests/mock-ae.js` · 352 строк · работает
+`tests/mock-ae.js` · 461 строк · работает
 
 Мок объектной модели After Effects: настоящие .jsx загружаются через vm.
 
@@ -347,7 +359,7 @@ _Описание не задано._
 
 ### `mock-premiere.js`
 
-`tests/mock-premiere.js` · 131 строк · работает
+`tests/mock-premiere.js` · 148 строк · работает
 
 Мок официального UXP DOM Premiere Pro 25.6+ для автономных тестов без Premiere.
 
@@ -365,7 +377,7 @@ _Описание не задано._
 
 ### `premiere-adapter.test.js`
 
-`tests/premiere-adapter.test.js` · 269 строк · работает
+`tests/premiere-adapter.test.js` · 339 строк · работает
 
 30 проверок фундамента Premiere Pro UXP адаптера.
 
@@ -437,7 +449,7 @@ _Описание не задано._
 
 ### `package-release.js`
 
-`tools/package-release.js` · 67 строк · работает
+`tools/package-release.js` · 70 строк · работает
 
 Скрипт сборки release-архивов для GitHub (zip и ccx).
 
@@ -449,7 +461,7 @@ _Описание не задано._
 
 ### `validate-uxp.js`
 
-`tools/validate-uxp.js` · 93 строк · работает
+`tools/validate-uxp.js` · 95 строк · работает
 
 Валидация структуры, манифеста и чистоты кода Premiere Pro UXP расширения перед релизом.
 
@@ -457,7 +469,7 @@ _Описание не задано._
 
 ### `INSTALL_DEV_WINDOWS.bat`
 
-`INSTALL_DEV_WINDOWS.bat` · 130 строк · работает
+`INSTALL_DEV_WINDOWS.bat` · 139 строк · работает
 
 Ставит расширения PardDefender в After Effects (CEP) и Premiere Pro (UXP), включает PlayerDebugMode.
 
@@ -466,6 +478,12 @@ _Описание не задано._
 `UNINSTALL_DEV_WINDOWS.bat` · 26 строк · работает
 
 Снимает расширение. Проекты и файлы не трогаются.
+
+### `install-admin.ps1`
+
+`tools/install-admin.ps1` · 24 строк · работает
+
+Скрипт копирования UXP-плагина в системные каталоги Program Files с повышением прав.
 
 ## Документация
 
@@ -477,7 +495,7 @@ _Описание не задано._
 
 ### `PROJECT_MAP.md`
 
-`PROJECT_MAP.md` · 490 строк · работает
+`PROJECT_MAP.md` · 508 строк · работает
 
 _Описание не задано._
 

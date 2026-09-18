@@ -54,6 +54,7 @@
     };
 
     function log(msg, kind) {
+        try { console.log("[PardDefender " + (kind || "info") + "]", msg); } catch (eLog) {}
         if (!el.logBox) return;
         var line = document.createElement("div");
         line.className = "log-line " + (kind || "neutral");
@@ -202,11 +203,13 @@
         }
     }
 
-    function triggerAudit(onComplete) {
+    function triggerAudit(onComplete, isSilent) {
         if (state.scanning) return;
         state.scanning = true;
-        if (el.btnScan) el.btnScan.disabled = true;
-        if (el.scanIndicator) el.scanIndicator.hidden = false;
+        if (!isSilent) {
+            if (el.btnScan) el.btnScan.disabled = true;
+            if (el.scanIndicator) el.scanIndicator.hidden = false;
+        }
 
         if (typeof PardPremiereAdapter === "undefined" || !PardPremiereAdapter.auditMedia) {
             state.scanning = false;
@@ -226,7 +229,9 @@
             } else {
                 state.lastReport = report;
                 render(report);
-                log("Аудит обновлён: " + (report.items ? report.items.length : 0) + " элементов.", "neutral");
+                if (!isSilent) {
+                    log("Аудит обновлён: " + (report.items ? report.items.length : 0) + " элементов.", "neutral");
+                }
             }
             if (onComplete) onComplete(err, report);
         });
@@ -247,20 +252,42 @@
         var externalTasks = [];
         var items = rep.items || [];
 
+        var seenSources = {};
         for (var i = 0; i < items.length; i++) {
             var it = items[i];
             if (it.classification === "clip" && it.path && !it.missing) {
                 var pNorm = PardPremiereAdapter.normalizePath(it.path);
                 if (pNorm.indexOf(normWs + "/") !== 0) {
                     var fName = pNorm.substring(pNorm.lastIndexOf("/") + 1);
-                    var dest = normWs + "/01_assets/_SHARED/VIDEO/" + fName;
+                    var dotIdx = fName.lastIndexOf(".");
+                    var ext = dotIdx !== -1 ? fName.substring(dotIdx + 1).toLowerCase() : "";
+
+                    var category = "video";
+                    var catFolder = "VIDEO";
+                    if (ext === "psd" || ext === "psb") {
+                        category = "design";
+                        catFolder = "DESIGN";
+                    } else if (ext === "ai" || ext === "eps") {
+                        category = "vector";
+                        catFolder = "VECTOR";
+                    } else if (/^(mp3|wav|aac|m4a|aif|aiff|flac|ogg)$/.test(ext)) {
+                        category = "audio";
+                        catFolder = "AUDIO";
+                    } else if (/^(png|jpg|jpeg|tga|tiff|tif|exr|bmp|webp|gif)$/.test(ext)) {
+                        category = "images";
+                        catFolder = "IMAGES";
+                    }
+
+                    var dest = seenSources[pNorm] || (normWs + "/01_assets/_SHARED/" + catFolder + "/" + fName);
+                    seenSources[pNorm] = dest;
+
                     externalTasks.push({
                         id: it.id,
                         item: it,
                         sourcePath: it.path,
                         destPath: dest,
                         branch: "_SHARED",
-                        category: "video",
+                        category: category,
                         allowReuse: true
                     });
                 }
@@ -288,7 +315,7 @@
                 var relinked = 0;
 
                 // Create item lookup map from current project
-                var proj = typeof premierepro !== "undefined" ? premierepro.Project.getActiveProject() : null;
+                var proj = typeof PardPremiereAdapter !== "undefined" ? PardPremiereAdapter.resolveActiveProjectSync() : (typeof premierepro !== "undefined" ? (premierepro.Project.activeProject || (premierepro.Project.projects && premierepro.Project.projects[0])) : null);
                 var pMap = buildProjectMap(proj);
 
                 for (var r = 0; r < res.results.length; r++) {
@@ -314,15 +341,25 @@
 
     function buildProjectMap(project) {
         var map = {};
-        if (!project || !project.getRootItem) return map;
+        if (state.lastReport && state.lastReport.items) {
+            for (var i = 0; i < state.lastReport.items.length; i++) {
+                var it = state.lastReport.items[i];
+                if (it._nativeItem) {
+                    map[it.id] = it._nativeItem;
+                }
+            }
+        }
+        if (!project) return map;
+        var rItem = project.rootItem;
+        if (!rItem) return map;
         function walk(node) {
             if (!node) return;
-            var id = String(node.nodeId || node.guid || node.treePath || "");
-            if (id) map[id] = node;
-            var children = node.children || (typeof node.getItems === "function" ? node.getItems() : []);
+            var id = String(node.nodeId || (node.guid ? (typeof node.guid.toString === "function" ? node.guid.toString() : String(node.guid)) : null) || node.id || node.treePath || "");
+            if (id && !map[id]) map[id] = node;
+            var children = Array.isArray(node.items) ? node.items : (Array.isArray(node.children) ? node.children : []);
             for (var c = 0; c < children.length; c++) walk(children[c]);
         }
-        walk(project.getRootItem());
+        walk(rItem);
         return map;
     }
 
@@ -493,7 +530,7 @@
         state.consolidationArmedUntil = 0;
         log("Объединение дубликатов в каноникал " + canonicalPath + "…", "work");
 
-        var proj = typeof premierepro !== "undefined" ? premierepro.Project.getActiveProject() : null;
+        var proj = typeof PardPremiereAdapter !== "undefined" ? PardPremiereAdapter.resolveActiveProjectSync() : (typeof premierepro !== "undefined" ? (premierepro.Project.activeProject || (premierepro.Project.projects && premierepro.Project.projects[0])) : null);
         var pMap = buildProjectMap(proj);
 
         PardPremiereDuplicates.consolidateGroup(rep.workspace, group, canonicalPath, pMap, PardPremiereCopyEngine, {
@@ -521,6 +558,18 @@
 
     /* ------------------------------------------------ Boot & Event Wiring */
 
+    var pollTimer = null;
+
+    function startAutoRefresh() {
+        if (pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(function () {
+            // If project is not saved yet or no project detected, poll quietly every 3 seconds
+            if (!state.lastReport || !state.lastReport.projectSaved) {
+                triggerAudit(null, true);
+            }
+        }, 3000);
+    }
+
     function init() {
         if (el.tabs) {
             el.tabs.onclick = function (e) {
@@ -547,8 +596,20 @@
             el.btnScanDuplicates.onclick = function () { scanDuplicates(); };
         }
 
+        // Auto-refresh when user switches focus to panel (e.g. after saving in Premiere)
+        window.addEventListener("focus", function () {
+            triggerAudit(null, true);
+        });
+
+        document.addEventListener("visibilitychange", function () {
+            if (!document.hidden) {
+                triggerAudit(null, true);
+            }
+        });
+
         log("PardDefender UXP загружен.", "neutral");
         triggerAudit();
+        startAutoRefresh();
     }
 
     if (document.readyState === "loading") {

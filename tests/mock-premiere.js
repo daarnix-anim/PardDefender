@@ -29,6 +29,7 @@ function MockFolderItem(name) {
     this.isBin = true;
     this.isFolder = true;
     this.children = [];
+    this.items = this.children;
 }
 MockFolderItem.prototype = Object.create(MockProjectItem.prototype);
 MockFolderItem.prototype.constructor = MockFolderItem;
@@ -55,6 +56,12 @@ function MockClipProjectItem(name, mediaPath, options) {
     this.isMerged = !!opt.isMerged;
     this.isSynthetic = !!opt.isSynthetic;
     this.mediaType = opt.mediaType || (opt.isSynthetic ? "synthetic" : "video");
+    this.masterClip = {
+        mediaFilePath: this.mediaFilePath,
+        isOffline: this.offline,
+        isSynthetic: this.isSynthetic,
+        name: this.name
+    };
 }
 MockClipProjectItem.prototype = Object.create(MockProjectItem.prototype);
 MockClipProjectItem.prototype.constructor = MockClipProjectItem;
@@ -82,6 +89,10 @@ MockClipProjectItem.prototype.canChangeMediaPath = function () {
 MockClipProjectItem.prototype.changeMediaFilePath = function (newPath) {
     this.mediaFilePath = newPath;
     this.offline = false;
+    if (this.masterClip) {
+        this.masterClip.mediaFilePath = newPath;
+        this.masterClip.isOffline = false;
+    }
     return true;
 };
 
@@ -109,6 +120,8 @@ function MockPremierePro(version) {
     var self = this;
 
     this.Project = {
+        activeProject: null,
+        projects: [],
         getActiveProject: function () {
             return self.activeProject;
         }
@@ -118,6 +131,10 @@ function MockPremierePro(version) {
 
 MockPremierePro.prototype.setActiveProject = function (project) {
     this.activeProject = project;
+    if (this.Project) {
+        this.Project.activeProject = project;
+        this.Project.projects = project ? [project] : [];
+    }
 };
 
 module.exports = {

@@ -47,13 +47,16 @@ if (fs.existsSync(path.join(ROOT, 'docs'))) {
   copyDir(path.join(ROOT, 'docs'), path.join(STAGING_DIR, 'docs'));
 }
 
-console.log('2. Creating PardDefender-2.0.1.zip (all-in-one)...');
-const zipPath = path.join(RELEASE_DIR, 'PardDefender-2.0.1.zip');
+const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'premiere', 'com.pard.defender.uxp', 'manifest.json'), 'utf8'));
+const VERSION = manifest.version || '2.0.3';
+
+console.log(`2. Creating PardDefender-${VERSION}.zip (all-in-one)...`);
+const zipPath = path.join(RELEASE_DIR, `PardDefender-${VERSION}.zip`);
 execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${STAGING_DIR}\\*' -DestinationPath '${zipPath}' -Force"`);
 
-console.log('3. Creating PardDefender-2.0.1.ccx (Premiere Pro UXP package)...');
-const ccxTempZip = path.join(RELEASE_DIR, 'PardDefender-2.0.1-uxp.zip');
-const ccxPath = path.join(RELEASE_DIR, 'PardDefender-2.0.1.ccx');
+console.log(`3. Creating PardDefender-${VERSION}.ccx (Premiere Pro UXP package)...`);
+const ccxTempZip = path.join(RELEASE_DIR, `PardDefender-${VERSION}-uxp.zip`);
+const ccxPath = path.join(RELEASE_DIR, `PardDefender-${VERSION}.ccx`);
 const uxpSource = path.join(ROOT, 'premiere', 'com.pard.defender.uxp');
 execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${uxpSource}\\*' -DestinationPath '${ccxTempZip}' -Force"`);
 fs.renameSync(ccxTempZip, ccxPath);

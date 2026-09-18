@@ -48,7 +48,7 @@
         layersBusy: false,
         layerScanSeq: 0,
         // Состояние сессии
-        version: "2.0.1",
+        version: "2.0.3",
         confirmCleanupUntil: 0,
         confirmAdoptUntil: 0,
         confirmRedistUntil: 0,
@@ -222,6 +222,7 @@
 
     function buildCopyTasks(report, force) {
         var tasks = [], i, item, key, misplaced, recordedDest, taskDest;
+        var seenSources = {};
         for (i = 0; i < report.items.length; i++) {
             item = report.items[i];
             misplaced = relocating() && isLegacyMisplaced(item);
@@ -250,19 +251,21 @@
              * never infer ownership merely because equal bytes happen to exist
              * at the preferred destination. */
             recordedDest = PardVerify.destinationForSource(item.path);
-            taskDest = recordedDest || item.destPath;
-            if (item.isSequence && recordedDest) {
-                taskDest = PardCopyQueue.toSlash(recordedDest).replace(/\/[^\/]*$/, "");
+            var srcKey = PardCopyQueue.toSlash(item.path).toLowerCase();
+            var sharedDest = seenSources[srcKey] ? seenSources[srcKey].destPath : null;
+            taskDest = recordedDest || sharedDest || item.destPath;
+            if (item.isSequence && (recordedDest || sharedDest)) {
+                taskDest = PardCopyQueue.toSlash(recordedDest || sharedDest).replace(/\/[^\/]*$/, "");
             }
 
-            tasks.push({
+            var t = {
                 key: key,
                 id: item.id,
                 isProxy: item.isProxy === true,
                 name: item.name,
                 sourcePath: item.path,
                 destPath: taskDest,
-                allowReuse: !!recordedDest,
+                allowReuse: !!(recordedDest || sharedDest),
                 isSequence: item.isSequence,
                 sequence: item.sequence,
                 size: item.size,
@@ -275,7 +278,9 @@
                  * somebody's original.
                  */
                 relocated: misplaced
-            });
+            };
+            tasks.push(t);
+            if (!seenSources[srcKey]) seenSources[srcKey] = t;
             if (tasks.length >= state.settings.maxItemsPerPass) break;
         }
         return tasks;

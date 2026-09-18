@@ -318,6 +318,30 @@
 
             var managed = managedNameSet(settings, branchNames);
 
+            /* Pre-pass: aggregate branches per source file path so multi-layer
+             * items (e.g. PSD/AI) and shared files never split across branches. */
+            var fileBranches = {};
+            var fileHasUsedLayer = {};
+            for (i = 1; i <= app.project.numItems; i++) {
+                item = app.project.item(i);
+                if (!host.isFootageItem(item)) continue;
+                var preFile = host.footageFile(item);
+                if (!preFile) continue;
+                var prePathKey = lower(host.slashes(preFile.fsName));
+                if (!fileBranches[prePathKey]) fileBranches[prePathKey] = {};
+                var isForced = false;
+                for (var fuI = 0; fuI < settings.forcedUnused.length; fuI++) {
+                    if (settings.forcedUnused[fuI] === str(item.id)) { isForced = true; break; }
+                }
+                if (!isForced) {
+                    var itemBranch = host.branchForItem(item, ctx);
+                    if (itemBranch) {
+                        fileBranches[prePathKey][itemBranch] = true;
+                        fileHasUsedLayer[prePathKey] = true;
+                    }
+                }
+            }
+
             /* Pass two: footage. */
             for (i = 1; i <= app.project.numItems; i++) {
                 item = app.project.item(i);
@@ -342,7 +366,15 @@
                 for (fu = 0; fu < settings.forcedUnused.length; fu++) {
                     if (settings.forcedUnused[fu] === str(item.id)) { forced = true; break; }
                 }
-                var branch = forced ? "" : host.branchForItem(item, ctx);
+                var pKey = lower(path);
+                var isLayered = /\.(psd|psb|ai)$/i.test(path);
+                var resolvedFileBranch = host.resolveBranchName(fileBranches[pKey]);
+                var branch;
+                if (isLayered && fileHasUsedLayer[pKey]) {
+                    branch = resolvedFileBranch;
+                } else {
+                    branch = forced ? "" : resolvedFileBranch;
+                }
                 var routeKey = routeKeyForItem(category, isSequence, item, settings);
 
                 /*
