@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **56** · связей: **144** · собрано: 2026-09-17 08:39
+Файлов: **56** · связей: **144** · собрано: 2026-09-18 01:32
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -255,7 +255,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `manifest.json`
 
-`premiere/com.pard.defender.uxp/manifest.json` · 36 строк · работает
+`premiere/com.pard.defender.uxp/manifest.json` · 44 строк · работает
 
 _Описание не задано._
 
@@ -301,7 +301,7 @@ _Описание не задано._
 
 `tests/e2e-hardening.test.js` · 461 строк · работает
 
-40 интеграционных end-to-end проверок надёжности (hardening), синхронизации и безопасности релиза 2.0.0.
+40 интеграционных end-to-end проверок надёжности (hardening), синхронизации и безопасности релиза 2.0.1.
 
 Использует: `workspace-store.js`, `sync-coordinator.js`, `consolidation.js`, `copy-queue.js`, `duplicate-index.js`, `copy-engine.js`, `duplicates.js`, `adapter.js`, `mock-premiere.js`
 
@@ -457,7 +457,7 @@ _Описание не задано._
 
 ### `INSTALL_DEV_WINDOWS.bat`
 
-`INSTALL_DEV_WINDOWS.bat` · 102 строк · работает
+`INSTALL_DEV_WINDOWS.bat` · 130 строк · работает
 
 Ставит расширения PardDefender в After Effects (CEP) и Premiere Pro (UXP), включает PlayerDebugMode.
 

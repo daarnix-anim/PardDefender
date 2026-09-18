@@ -47,8 +47,8 @@
         lastLayerScanAt: 0,
         layersBusy: false,
         layerScanSeq: 0,
-        commentFor: "",
-        version: "2.0.0",
+        // Состояние сессии
+        version: "2.0.1",
         confirmCleanupUntil: 0,
         confirmAdoptUntil: 0,
         confirmRedistUntil: 0,

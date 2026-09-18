@@ -2,10 +2,10 @@
 <!-- @map role: Манифест CEP: версия, поддерживаемые версии AE, включение Node и геометрия панели.  @map status: ready  @map layer: config -->
 <ExtensionManifest Version="7.0"
     ExtensionBundleId="com.pard.defender"
-    ExtensionBundleVersion="2.0.0"
+    ExtensionBundleVersion="2.0.1"
     ExtensionBundleName="PardDefender">
     <ExtensionList>
-        <Extension Id="com.pard.defender.panel" Version="2.0.0" />
+        <Extension Id="com.pard.defender.panel" Version="2.0.1" />
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>

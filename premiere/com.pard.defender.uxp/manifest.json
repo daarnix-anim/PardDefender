@@ -2,12 +2,19 @@
   "manifestVersion": 5,
   "id": "com.pard.defender.uxp",
   "name": "PardDefender",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "main": "index.html",
   "host": [
     {
       "app": "premierepro",
-      "minVersion": "25.6"
+      "minVersion": "25.6",
+      "dependencies": {
+        "dvaappsupport": "",
+        "dvamediatypes": "",
+        "dvascripting": "",
+        "dvauxpui": "",
+        "MZ.Scripting": ""
+      }
     }
   ],
   "entrypoints": [
@@ -25,6 +32,7 @@
   "requiredPermissions": {
     "localFileSystem": "fullAccess",
     "clipboard": "readAndWrite",
+    "allowCodeGenerationFromStrings": true,
     "launchProcess": {
       "schemes": ["https"]
     }

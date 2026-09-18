@@ -1,5 +1,5 @@
 <!-- @map role: Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
-# PardDefender 2.0.0
+# PardDefender 2.0.1
 
 Мультихостовый комплекс для защиты, организации и синхронизации проектных медиафайлов:
 - **Adobe After Effects:** CEP-расширение (Node + Chromium) с ExtendScript хостом.
@@ -270,11 +270,11 @@ Project
 
 ## Архитектура двух хостов
 
-PardDefender 2.0.0 разделяет логику между средами двух приложений:
+PardDefender 2.0.1 разделяет логику между средами двух приложений:
 
 ```
 extension/com.pard.defender/          ← Adobe After Effects (CEP 9.0+)
-├── CSXS/manifest.xml                 манифест пакета (версия 2.0.0)
+├── CSXS/manifest.xml                 манифест пакета (версия 2.0.1)
 ├── client/                           CEP + Node среда
 │   ├── index.html, styles.css        UI панели After Effects
 │   ├── copy-queue.js                 потоковая копия, .pdpart, SHA-256
@@ -285,13 +285,13 @@ extension/com.pard.defender/          ← Adobe After Effects (CEP 9.0+)
 │   ├── host-adapter.js               адаптер взаимодействия с ExtendScript
 │   └── main.js, disk-space.js, ...   оркестрация и сервисы
 └── host/                             ExtendScript (ES3 в After Effects)
-    ├── PardDefenderCore.jsx          JSON, пути, санитизация, версия 2.0.0
+    ├── PardDefenderCore.jsx          JSON, пути, санитизация, версия 2.0.1
     ├── PardDefenderPlan.jsx          рабочая папка, дерево композиций
     ├── PardDefenderAudit.jsx         JSON-отчёт аудита элементов
     └── PardDefenderApply.jsx         перелинковка и раскладка в панели
 
 premiere/com.pard.defender.uxp/       ← Adobe Premiere Pro (UXP, minVersion 25.6)
-├── manifest.json                     UXP Manifest v5 (версия 2.0.0)
+├── manifest.json                     UXP Manifest v5 (версия 2.0.1)
 ├── index.html, styles.css            UI панели Premiere Pro UXP
 ├── adapter.js                        официальный UXP-адаптер Premiere Pro 25.6+
 ├── copy-engine.js                    поблочное копирование через UXP fs + relink
@@ -329,7 +329,7 @@ premiere/com.pard.defender.uxp/       ← Adobe Premiere Pro (UXP, minVersion 25
 
 ## Поиск дубликатов и безопасная консолидация
 
-Начиная с версии 2.0.0, PardDefender умеет выявлять точные побайтовые копии медиафайлов:
+Начиная с версии 2.0.1, PardDefender умеет выявлять точные побайтовые копии медиафайлов:
 1. **Побайтовое SHA-256 хеширование:** файлы с совпадающим размером сканируются потоковым хешированием (с кэшированием в `.parddefender/duplicate-cache.json`).
 2. **Изоляция типов:** proxy-файлы никогда не объединяются с оригиналами; секвенции и синтетические элементы изолированы.
 3. **Выбор каноникала:** предпочтение отдаётся файлам, уже зарегистрированным в `assets.tsv` и расположенным в рабочей папке; при равенстве используется стабильный алфавитный порядок.

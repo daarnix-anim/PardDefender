@@ -1,19 +1,20 @@
-# Чек-листы ручной проверки (Manual Smoke Checklists) — PardDefender 2.0.0
+# Чек-листы ручной проверки (Manual Smoke Checklists) — PardDefender 2.0.1
 
-Документ содержит пошаговые сценарии валидации расширения в реальном окружении Adobe After Effects и Adobe Premiere Pro (версия 25.6+).
+Документ содержит пошаговые инструкции для ручной проверки основных сценариев работы PardDefender 2.0.1 в Adobe After Effects и Adobe Premiere Pro.
 
 ---
 
-## 1. Adobe After Effects (CEP Panel)
+## 1. After Effects (CEP) — Базовый Smoke Test
 
-### Подготовка:
-1. Запустить `INSTALL_DEV_WINDOWS.bat` от имени администратора (создаёт симлинк в `C:\Program Files (x86)\Common Files\Adobe\CEP\extensions\com.pard.defender` и устанавливает `PlayerDebugMode=1`).
-2. Запустить Adobe After Effects.
+1. **Запуск и открытие панели:**
+   - Открыть After Effects.
+   - Меню: `Окно` -> `Расширения` -> `PardDefender`.
+   - Панель открывается, отображается заголовок `PardDefender 2.0.1`, версия и статус готовности.
 
 ### Сценарий проверки:
 - [ ] **1. Запуск панели:**
   - В меню: *Window -> Extensions -> PardDefender*.
-  - Панель открывается, отображается заголовок `PardDefender 2.0.0`, версия и статус готовности.
+  - Панель открывается, отображается заголовок `PardDefender 2.0.1`, версия и статус готовности.
 - [ ] **2. Защита проекта и импорт:**
   - Создать новый проект и сохранить его в рабочую папку (например, `D:/Work/TestAE/TestAE.aep`).
   - Перетащить в After Effects видеофайл с внешнего носителя (флешки или загрузок).
@@ -41,7 +42,7 @@
 
 ### Сценарий проверки:
 - [ ] **1. Запуск панели UXP:**
-  - В Premiere Pro открыть панель: *Window -> Extensions -> PardDefender*.
+  - В Premiere Pro открыть панель: *Window -> PardDefender* (Окно -> PardDefender).
   - Проверить отображение статуса Premiere Pro 25.6+, подключение API и готовность адаптера.
 - [ ] **2. Защита медиафайлов:**
   - Создать проект `D:/Work/TestPremiere/Edit.prproj`.

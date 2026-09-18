@@ -10,11 +10,25 @@ set "AE_TARGET=%APPDATA%\Adobe\CEP\extensions\%EXT_ID%"
 
 set "UXP_ID=com.pard.defender.uxp"
 set "UXP_SOURCE=%~dp0premiere\%UXP_ID%"
-set "UXP_TARGET1=%APPDATA%\Adobe\UXP\Plugins\External\%UXP_ID%"
-set "UXP_TARGET2=%APPDATA%\Adobe\UXP\extensions\%UXP_ID%"
+set "UXP_USER1=%APPDATA%\Adobe\UXP\Plugins\External\%UXP_ID%"
+set "UXP_USER2=%APPDATA%\Adobe\UXP\extensions\%UXP_ID%"
+set "UXP_SYS_PPRO=C:\Program Files\Adobe\Adobe Premiere Pro 2026\UXP\plugins\%UXP_ID%"
+set "UXP_SYS_COMMON=C:\Program Files\Common Files\Adobe\UXP\extensions\%UXP_ID%"
+
+set "IS_ADMIN=0"
+net session >nul 2>&1
+if %errorlevel% equ 0 set "IS_ADMIN=1"
+
+if "%IS_ADMIN%"=="0" (
+    if "%~1"=="" (
+        echo Requesting administrator privileges for full installation...
+        powershell -NoProfile -Command "Start-Process cmd -ArgumentList '/c \"\"%~f0\"\" admin' -Verb RunAs" 2>nul
+        if not errorlevel 1 exit /b
+    )
+)
 
 echo ========================================================
-echo Installing PardDefender 2.0.0 for AE and Premiere Pro...
+echo Installing PardDefender 2.0.1 for AE and Premiere Pro...
 echo ========================================================
 
 rem 1. Check sources
@@ -36,7 +50,7 @@ for %%V in (9 10 11 12 13 14 15) do (
 )
 
 rem 3. Install After Effects CEP extension
-echo [1/2] Installing After Effects extension...
+echo [1/3] Installing After Effects extension...
 if exist "%AE_TARGET%" rmdir /s /q "%AE_TARGET%"
 if exist "%AE_TARGET%" (
     echo ERROR: The previous After Effects extension could not be removed.
@@ -52,7 +66,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-findstr /C:"2.0.0" "%AE_TARGET%\CSXS\manifest.xml" >nul
+findstr /C:"2.0.1" "%AE_TARGET%\CSXS\manifest.xml" >nul
 if errorlevel 1 (
     echo ERROR: Installed After Effects manifest verification failed.
     pause
@@ -67,21 +81,31 @@ for %%F in (PardDefenderCore.jsx PardDefenderPlan.jsx PardDefenderAudit.jsx Pard
     )
 )
 
-rem 4. Install Premiere Pro UXP plugin
-echo [2/2] Installing Premiere Pro UXP plugin...
-for %%T in ("%UXP_TARGET1%" "%UXP_TARGET2%") do (
+rem 4. Install Premiere Pro UXP plugin into user directories
+echo [2/3] Installing Premiere Pro UXP plugin (User)...
+for %%T in ("%UXP_USER1%" "%UXP_USER2%") do (
     if exist "%%~T" rmdir /s /q "%%~T"
     mkdir "%%~T" >nul 2>&1
     xcopy "%UXP_SOURCE%\*" "%%~T\" /E /I /Y >nul
-    if errorlevel 1 (
-        echo WARNING: Failed copying to %%~T
-    )
 )
 
-if not exist "%UXP_TARGET1%\manifest.json" (
-    echo ERROR: Premiere Pro UXP installation verification failed.
-    pause
-    exit /b 1
+rem 5. If running as administrator, install into Premiere Pro system UXP plugins
+echo [3/3] Installing Premiere Pro UXP plugin (System)...
+if "%IS_ADMIN%"=="1" (
+    if exist "C:\Program Files\Adobe\Adobe Premiere Pro 2026\UXP\plugins" (
+        if exist "%UXP_SYS_PPRO%" rmdir /s /q "%UXP_SYS_PPRO%"
+        mkdir "%UXP_SYS_PPRO%" >nul 2>&1
+        xcopy "%UXP_SOURCE%\*" "%UXP_SYS_PPRO%\" /E /I /Y >nul
+        echo       Installed into Premiere Pro 2026 UXP directory.
+    )
+    if exist "C:\Program Files\Common Files\Adobe\UXP\extensions" (
+        if exist "%UXP_SYS_COMMON%" rmdir /s /q "%UXP_SYS_COMMON%"
+        mkdir "%UXP_SYS_COMMON%" >nul 2>&1
+        xcopy "%UXP_SOURCE%\*" "%UXP_SYS_COMMON%\" /E /I /Y >nul
+        echo       Installed into Common Files Adobe UXP directory.
+    )
+) else (
+    echo       Note: System directory copy skipped - run as Admin to copy to Program Files.
 )
 
 echo.
@@ -94,7 +118,11 @@ echo     Window ^> Extensions ^> PardDefender
 echo.
 echo Premiere Pro:
 echo   Restart Premiere Pro, then open:
-echo     Window ^> Extensions (or Plugins) ^> PardDefender
+echo     Window ^> PardDefender
+echo.
+echo   * ВАЖНО: В Premiere Pro современные UXP-панели находятся
+echo     напрямую в меню "Окно" (Window), а НЕ в "Расширения" (Extensions),
+echo     где отображаются только старые CEP-плагины!
 echo ========================================================
 echo.
 pause
