@@ -48,7 +48,7 @@ if (fs.existsSync(path.join(ROOT, 'docs'))) {
 }
 
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'premiere', 'com.pard.defender.uxp', 'manifest.json'), 'utf8'));
-const VERSION = manifest.version || '2.0.3';
+const VERSION = manifest.version || '2.0.4';
 
 console.log(`2. Creating PardDefender-${VERSION}.zip (all-in-one)...`);
 const zipPath = path.join(RELEASE_DIR, `PardDefender-${VERSION}.zip`);

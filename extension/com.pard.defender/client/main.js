@@ -48,7 +48,7 @@
         layersBusy: false,
         layerScanSeq: 0,
         // Состояние сессии
-        version: "2.0.3",
+        version: "2.0.4",
         confirmCleanupUntil: 0,
         confirmAdoptUntil: 0,
         confirmRedistUntil: 0,
@@ -1206,7 +1206,7 @@
             var actions = document.createElement("span");
             actions.className = "issue-actions";
 
-            actions.appendChild(iconButton("🔎",
+            actions.appendChild(iconButton("⌕",
                 finding.kind === "comp"
                     ? "Открыть композицию"
                     : "Открыть композицию и выделить слой",
@@ -2158,7 +2158,7 @@
         var actions = document.createElement("span");
         actions.className = "issue-actions";
 
-        actions.appendChild(iconButton("↻", "Повторить сейчас", function () {
+        actions.appendChild(iconButton("↺", "Повторить сейчас", function () {
             PardIssues.retryNow(record.key);
             PardIssues.save();
             invalidate("issues");
@@ -2167,7 +2167,7 @@
         }));
 
         if (record.id) {
-            actions.appendChild(iconButton("🔎", "Показать в панели Project",
+            actions.appendChild(iconButton("⌕", "Показать в панели Project",
                 function () { showInProject(record.id, record.name); }));
         }
 
@@ -2179,12 +2179,12 @@
          */
         var places = locationsFor(record.id, record.path, record.destPath);
         if (places.internal) {
-            actions.appendChild(iconButton("📁", "Внутренний источник — копия в папке проекта:\n" +
+            actions.appendChild(iconButton("⌂", "Внутренний источник — копия в папке проекта:\n" +
                 places.internal,
                 function () { revealAndReport(places.internal, "Внутренний источник"); }));
         }
         if (places.external) {
-            actions.appendChild(iconButton("📤", "Внешний источник — оригинал:\n" + places.external,
+            actions.appendChild(iconButton("↗", "Внешний источник — оригинал:\n" + places.external,
                 function () { revealAndReport(places.external, "Внешний источник"); }));
         }
 

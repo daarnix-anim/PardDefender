@@ -41,7 +41,7 @@ UXP требует `fullAccess` для чтения и организации м
 Запустите `INSTALL_DEV_WINDOWS.bat`. Скрипт скопирует файлы и автоматически настроит `Debug Database.txt` в настройках Premiere Pro (`dvauxphost.UseDebugUXPDir` и `dvauxphost.DebugUXPDir`), после чего плагин появится в **Окно -> Подключаемые модули UXP -> PardDefender**.
 
 ### Способ 3: Установка готового пакета .CCX
-Дважды кликните по файлу `release/PardDefender-2.0.3.ccx` (через Adobe Creative Cloud Desktop). При отсутствии приложения Creative Cloud воспользуйтесь Способом 1 или Способом 2.
+Дважды кликните по файлу `release/PardDefender-2.0.4.ccx` (через Adobe Creative Cloud Desktop). При отсутствии приложения Creative Cloud воспользуйтесь Способом 1 или Способом 2.
 
 ## Возможности плагина
 

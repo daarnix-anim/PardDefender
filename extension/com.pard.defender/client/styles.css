@@ -670,7 +670,24 @@ html, body {
 .danger-line.confirming { border-color: var(--red); background: #3a2323; color: #fff; }
 
 /* Action icons in an issue row read better as glyphs than as punctuation. */
-.icon.act { font-size: 13px; }
+.icon.act {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 18px;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--text-dim);
+    border-radius: 2px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Segoe UI Symbol", "Helvetica Neue", Arial, sans-serif;
+    vertical-align: middle;
+}
+.icon.act:hover {
+    color: #fff;
+    background: var(--surface-2);
+}
 
 /* ------------------------------------------------------- forgotten layers */
 

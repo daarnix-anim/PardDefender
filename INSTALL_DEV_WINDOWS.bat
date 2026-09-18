@@ -29,7 +29,7 @@ if "%IS_ADMIN%"=="0" (
 )
 
 echo ========================================================
-echo Installing PardDefender 2.0.3 for AE and Premiere Pro...
+echo Installing PardDefender 2.0.4 for AE and Premiere Pro...
 echo ========================================================
 
 rem 1. Check sources
@@ -67,7 +67,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-findstr /C:"2.0.3" "%AE_TARGET%\CSXS\manifest.xml" >nul
+findstr /C:"2.0.4" "%AE_TARGET%\CSXS\manifest.xml" >nul
 if errorlevel 1 (
     echo ERROR: Installed After Effects manifest verification failed.
     pause

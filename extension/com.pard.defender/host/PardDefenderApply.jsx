@@ -286,9 +286,19 @@
             }
         }
 
+        /* Pass 5: ALREADY-USED candidate matching name when multiple same-named layers exist.
+         * If all candidates of this name are already marked used and dimensions did not
+         * disambiguate, reuse the first matching candidate rather than failing with LAYER_MATCH_FAILED. */
+        for (i = 0; i < candidates.length; i++) {
+            c = candidates[i];
+            if (checkNameMatch(c)) {
+                return c;
+            }
+        }
+
         /*
          * No fallback pass. If no match was found by name or dimensions,
-         * return null rather than grabbing the first unused candidate.
+         * return null rather than grabbing an arbitrary unused candidate.
          * A wrong match is far worse than no match: it replaces the layer
          * source with the wrong PSD layer, causing merged/swapped visuals.
          */
@@ -377,6 +387,25 @@
 
             var cand = matchLayerCandidate(item, newLayers, fileName);
             if (!cand || !cand.source) {
+                var hasLayerSlash = item.name.indexOf("/") !== -1 || item.name.indexOf("\\") !== -1;
+                var coreName = extractCoreLayerName(item.name, fileName);
+                /* If the item is a flat (merged) footage item of the PSD itself
+                 * (e.g. "01.psd" rather than "Layer/01.psd"), it does not correspond
+                 * to an individual cropped layer in tempComp. For flat footage items,
+                 * item.replace() is the correct, safe relinking path that preserves
+                 * the item's footage source without flattening any layer hierarchy. */
+                if (!hasLayerSlash || !coreName) {
+                    try {
+                        var savedInterp = captureInterpretation(item);
+                        var savedPrx = captureProxy(item);
+                        item.replace(destination);
+                        restoreInterpretation(item, savedInterp);
+                        restoreProxy(item, savedPrx);
+                        result.relinked++;
+                        continue;
+                    } catch (eFlatReplace) {}
+                }
+
                 result.skipped++;
                 result.failures.push({
                     key: str(entry.key),

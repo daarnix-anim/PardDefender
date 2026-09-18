@@ -1141,6 +1141,68 @@ group("PSD: повторный импорт / дубликаты слоёв пе
     check("нет отказов LAYER_MATCH_FAILED при дубликатах", result.failures.length, 0);
 })();
 
+group("PSD: повторный импорт при нескольких одинаково названных слоях (Pass 5) и плоские PSD-футажи");
+(function () {
+    var s = buildProject();
+    var psdSrc = "E:/design/multi_leaf.psd";
+
+    /* PSD has 2 layers named "Leaf" with different sizes */
+    var mockLayers = [
+        { name: "Leaf", width: 200, height: 100 },
+        { name: "Leaf", width: 300, height: 150 }
+    ];
+
+    var origImport = s.project.importFile.bind(s.project);
+    s.project.importFile = function (options) {
+        if (options && options.file) {
+            var fp = String(options.file._slash || options.file.fsName);
+            if (/multi_leaf\.psd$/i.test(fp)) {
+                options._mockLayers = mockLayers;
+            }
+        }
+        return origImport(options);
+    };
+
+    /* Project has 4 footage items named "Leaf" (more items than layers in PSD) without exact dimensions */
+    var leaf1 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 0, height: 0 });
+    var leaf2 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 0, height: 0 });
+    var leaf3 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 0, height: 0 });
+    var leaf4 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 0, height: 0 });
+
+    /* Flat PSD footage item without layer prefix */
+    var flatPsd = addFootage(s, "multi_leaf.psd", psdSrc, [s.intro], { width: 500, height: 500 });
+
+    var report = auditOf(s);
+    var destPsd = null;
+    for (var ri = 0; ri < report.items.length; ri++) {
+        if (report.items[ri].name.indexOf("multi_leaf.psd") !== -1) {
+            destPsd = report.items[ri].destPath;
+            break;
+        }
+    }
+    mock.registerFile(destPsd, 16384);
+
+    var plan = s.host.tempFolder() + "/relink-multi-leaf.json";
+    s.host.writeTextFile(plan, s.host.jsonEncode({
+        items: [
+            { key: "i" + leaf1.id, id: String(leaf1.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + leaf2.id, id: String(leaf2.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + leaf3.id, id: String(leaf3.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + leaf4.id, id: String(leaf4.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + flatPsd.id, id: String(flatPsd.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false }
+        ]
+    }));
+
+    var result = s.host.commitFromFile(plan);
+    check("все 5 элементов (слои и плоский футаж) успешно перелинкованы", result.relinked, 5);
+    check("нет отказов LAYER_MATCH_FAILED при переполнении слоев и плоском PSD", result.failures.length, 0);
+})();
+
 group("Старый проект: оставить как есть");
 (function () {
     /*

@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **59** · связей: **144** · собрано: 2026-09-18 10:05
+Файлов: **59** · связей: **144** · собрано: 2026-09-18 10:57
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -11,7 +11,7 @@
 
 ### `PardDefenderApply.jsx`
 
-`extension/com.pard.defender/host/PardDefenderApply.jsx` · 964 строк · работает
+`extension/com.pard.defender/host/PardDefenderApply.jsx` · 993 строк · работает
 
 Две мутирующие операции: перелинковка на проверенную копию с сохранением интерпретации и раскладка панели проекта.
 
@@ -251,7 +251,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `styles.css`
 
-`extension/com.pard.defender/client/styles.css` · 1020 строк · работает
+`extension/com.pard.defender/client/styles.css` · 1037 строк · работает
 
 Оформление панели под тёмный интерфейс After Effects.  @map status: ready  @map layer: ui */
 
@@ -313,7 +313,7 @@ _Описание не задано._
 
 `tests/e2e-hardening.test.js` · 461 строк · работает
 
-40 интеграционных end-to-end проверок надёжности (hardening), синхронизации и безопасности релиза 2.0.3.
+40 интеграционных end-to-end проверок надёжности (hardening), синхронизации и безопасности релиза 2.0.4.
 
 Использует: `workspace-store.js`, `sync-coordinator.js`, `consolidation.js`, `copy-queue.js`, `duplicate-index.js`, `copy-engine.js`, `duplicates.js`, `adapter.js`, `mock-premiere.js`
 
@@ -331,7 +331,7 @@ _Описание не задано._
 
 ### `host.test.js`
 
-`tests/host.test.js` · 1304 строк · работает
+`tests/host.test.js` · 1366 строк · работает
 
 186 проверок хоста: рабочая папка, ветки, маршруты, многослойные PSD/AI, секвенции, границы раскладки.
 
