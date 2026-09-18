@@ -1079,6 +1079,68 @@ group("PSD: сохранение transform (position/anchorPoint) при replace
     }
 })();
 
+group("PSD: повторный импорт / дубликаты слоёв перелинковываются на тот же источник без LAYER_MATCH_FAILED");
+(function () {
+    var s = buildProject();
+    var psdSrc = "E:/design/duplicate_layers.psd";
+
+    var mockLayers = [
+        { name: "Leaf", width: 200, height: 100 },
+        { name: "Cup", width: 150, height: 150 }
+    ];
+
+    var origImport = s.project.importFile.bind(s.project);
+    s.project.importFile = function (options) {
+        if (options && options.file) {
+            var fp = String(options.file._slash || options.file.fsName);
+            if (/duplicate_layers\.psd$/i.test(fp)) {
+                options._mockLayers = mockLayers;
+            }
+        }
+        return origImport(options);
+    };
+
+    /* First set of footage items (e.g. from first import or folder A) */
+    var leaf1 = addFootage(s, "Leaf/duplicate_layers.psd", psdSrc, [s.intro],
+        { width: 200, height: 100 });
+    var cup1 = addFootage(s, "Cup/duplicate_layers.psd", psdSrc, [s.intro],
+        { width: 150, height: 150 });
+
+    /* Second set of duplicate footage items (e.g. from second import or folder B) */
+    var leaf2 = addFootage(s, "Leaf/duplicate_layers.psd", psdSrc, [s.intro],
+        { width: 200, height: 100 });
+    var cup2 = addFootage(s, "Cup/duplicate_layers.psd", psdSrc, [s.intro],
+        { width: 150, height: 150 });
+
+    var report = auditOf(s);
+    var destPsd = null;
+    for (var ri = 0; ri < report.items.length; ri++) {
+        if (report.items[ri].name.indexOf("duplicate_layers.psd") !== -1) {
+            destPsd = report.items[ri].destPath;
+            break;
+        }
+    }
+    mock.registerFile(destPsd, 8192);
+
+    var plan = s.host.tempFolder() + "/relink-dup-psd.json";
+    s.host.writeTextFile(plan, s.host.jsonEncode({
+        items: [
+            { key: "i" + leaf1.id, id: String(leaf1.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + cup1.id, id: String(cup1.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + leaf2.id, id: String(leaf2.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false },
+            { key: "i" + cup2.id, id: String(cup2.id), isProxy: false,
+              expectPath: psdSrc, destPath: destPsd, isSequence: false }
+        ]
+    }));
+
+    var result = s.host.commitFromFile(plan);
+    check("все 4 элемента (включая дубликаты) успешно перелинкованы", result.relinked, 4);
+    check("нет отказов LAYER_MATCH_FAILED при дубликатах", result.failures.length, 0);
+})();
+
 group("Старый проект: оставить как есть");
 (function () {
     /*

@@ -161,12 +161,18 @@
         /*
          * After Effects names PSD/AI layer items as "LayerName/filename.psd".
          * Extract the layer part before the slash when this pattern is present.
+         * Note that fileName may have duplicate suffix e.g. "01 (11).psd", while
+         * the original item is named "LayerName/01.psd".
          */
         var slashIdx = s.indexOf("/");
         if (slashIdx === -1) slashIdx = s.indexOf("\\");
-        if (slashIdx > 0 && fName) {
+        if (slashIdx > 0) {
             var afterSlash = s.substring(slashIdx + 1);
-            if (afterSlash === fName || afterSlash === fBase) {
+            var cleanAfter = afterSlash.replace(/\s*\(\d+\)/g, "");
+            var cleanBase = fBase.replace(/\s*\(\d+\)/g, "");
+            if (/\.(psd|psb|ai|eps|pdf)$/i.test(afterSlash) ||
+                afterSlash === fName || afterSlash === fBase ||
+                cleanAfter === cleanBase || (fBase && afterSlash.indexOf(fBase) !== -1)) {
                 s = host.trimText(s.substring(0, slashIdx));
             }
         }
@@ -188,68 +194,87 @@
         var itemH = item.height || 0;
         var i, c, cleanCand, candSource, coreCand, coreSource;
 
-        /*
-         * Extract the source-level layer name from the item's mainSource.
-         * In After Effects, when a PSD is imported as cropped layers, each
-         * FootageItem's mainSource carries a name like "LayerName" while
-         * the item itself is named "LayerName/filename.psd".
-         */
         var sourceNameOld = "";
         try { sourceNameOld = host.trimText(str(item.mainSource.name || "")).toLowerCase(); }
         catch (eSrc) { sourceNameOld = ""; }
 
-        /* Pass 1: exact name (or core name) AND dimensions match */
-        for (i = 0; i < candidates.length; i++) {
-            c = candidates[i];
-            if (c.used) continue;
-            cleanCand = host.trimText(str(c.name)).toLowerCase();
-            candSource = host.trimText(str(c.sourceName || "")).toLowerCase();
-            coreCand = extractCoreLayerName(c.name, fileName);
-            coreSource = extractCoreLayerName(c.sourceName, fileName);
+        function checkNameMatch(cand) {
+            cleanCand = host.trimText(str(cand.name)).toLowerCase();
+            candSource = host.trimText(str(cand.sourceName || "")).toLowerCase();
+            coreCand = extractCoreLayerName(cand.name, fileName);
+            coreSource = extractCoreLayerName(cand.sourceName, fileName);
 
-            var nameMatches = (cleanOld === cleanCand || cleanOld === candSource ||
+            return (cleanOld === cleanCand || cleanOld === candSource ||
                 (sourceNameOld && (sourceNameOld === cleanCand || sourceNameOld === candSource ||
                     sourceNameOld === coreCand || sourceNameOld === coreSource)) ||
-                (coreOld && (coreOld === coreCand || coreOld === coreSource)) ||
+                (coreOld && (coreOld === coreCand || coreOld === coreSource || coreOld === cleanCand)) ||
                 cleanOld.indexOf(cleanCand + "/") === 0 || cleanOld.indexOf(cleanCand + "\\") === 0 ||
+                candSource.indexOf(coreOld + "/") === 0 || candSource.indexOf(coreOld + "\\") === 0 ||
                 cleanOld.indexOf("/" + cleanCand) !== -1 || cleanOld.indexOf("\\" + cleanCand) !== -1);
-
-            if (nameMatches && itemW > 0 && itemH > 0 && c.width === itemW && c.height === itemH) {
-                return c;
-            }
         }
 
-        /* Pass 2: exact core name, full name, or source name matches */
+        /* Pass 1: UNUSED candidate with exact name (or core name) AND dimensions match */
         for (i = 0; i < candidates.length; i++) {
             c = candidates[i];
             if (c.used) continue;
-            cleanCand = host.trimText(str(c.name)).toLowerCase();
-            candSource = host.trimText(str(c.sourceName || "")).toLowerCase();
-            coreCand = extractCoreLayerName(c.name, fileName);
-            coreSource = extractCoreLayerName(c.sourceName, fileName);
-
-            if (cleanOld === cleanCand || cleanOld === candSource ||
-                (sourceNameOld && (sourceNameOld === cleanCand || sourceNameOld === candSource ||
-                    sourceNameOld === coreCand || sourceNameOld === coreSource)) ||
-                (coreOld && (coreOld === coreCand || coreOld === coreSource)) ||
-                cleanOld.indexOf(cleanCand + "/") === 0 || cleanOld.indexOf(cleanCand + "\\") === 0 ||
-                cleanOld.indexOf("/" + cleanCand) !== -1 || cleanOld.indexOf("\\" + cleanCand) !== -1) {
+            if (checkNameMatch(c) && itemW > 0 && itemH > 0 && c.width === itemW && c.height === itemH) {
                 return c;
             }
         }
 
-        /* Pass 3: exact dimensions match */
+        /* Pass 1B: ALREADY-USED candidate with exact name AND dimensions match.
+         * When a project contains duplicate footage items referencing the same layer of the PSD
+         * (e.g. from multiple imports or across different comps), all candidates of that layer
+         * may already be marked used. Reusing the matching source is 100% safe because the
+         * name and pixel dimensions are identical. */
+        for (i = 0; i < candidates.length; i++) {
+            c = candidates[i];
+            if (!c.used) continue;
+            if (checkNameMatch(c) && itemW > 0 && itemH > 0 && c.width === itemW && c.height === itemH) {
+                return c;
+            }
+        }
+
+        /* Pass 2: UNUSED candidate with exact core name, full name, or source name match */
+        for (i = 0; i < candidates.length; i++) {
+            c = candidates[i];
+            if (c.used) continue;
+            if (checkNameMatch(c)) {
+                return c;
+            }
+        }
+
+        /* Pass 2B: ALREADY-USED candidate where name uniquely identifies the layer in the PSD.
+         * If there is only ONE candidate in the entire PSD with this name (e.g. "Hands"),
+         * any additional project items referencing this layer can safely reuse it. */
+        var uniqueNameCand = null, uniqueNameCount = 0;
+        for (i = 0; i < candidates.length; i++) {
+            if (checkNameMatch(candidates[i])) {
+                uniqueNameCount++;
+                uniqueNameCand = candidates[i];
+            }
+        }
+        if (uniqueNameCount === 1 && uniqueNameCand) {
+            return uniqueNameCand;
+        }
+
+        /* Pass 3: UNUSED candidate with unique exact dimensions match */
         if (itemW > 0 && itemH > 0) {
+            var dimCand = null, dimCount = 0;
             for (i = 0; i < candidates.length; i++) {
                 c = candidates[i];
                 if (c.used) continue;
                 if (c.width === itemW && c.height === itemH) {
-                    return c;
+                    dimCount++;
+                    dimCand = c;
                 }
+            }
+            if (dimCount === 1 && dimCand) {
+                return dimCand;
             }
         }
 
-        /* Pass 4: substring name match */
+        /* Pass 4: substring name match (unused candidates only) */
         for (i = 0; i < candidates.length; i++) {
             c = candidates[i];
             if (c.used) continue;
