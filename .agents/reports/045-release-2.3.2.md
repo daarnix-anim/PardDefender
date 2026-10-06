@@ -1,6 +1,6 @@
 # Отчёт Codex: выпуск 2.3.2
 
-Статус: partial — код и пакеты подготовлены, публикация проверяется отдельно ниже.
+Статус: completed — исходники отправлены, релиз опубликован, три asset проверены.
 
 ## Baseline
 
@@ -50,10 +50,25 @@
 
 ## Публикация
 
-- Запланированный тег: v2.3.2.
+- Тег: v2.3.2, release-коммит e20bd08ea66c8483dafc96814f3ba6f46f387bca.
 - Репозиторий: https://github.com/daarnix-anim/PardDefender
 - Описание: docs/release-2.3.2.md.
-- Фактические commit, URL и проверка uploaded-assets будут добавлены после публикации.
+- URL: https://github.com/daarnix-anim/PardDefender/releases/tag/v2.3.2
+- git push --atomic origin main refs/tags/v2.3.2: exit 0.
+- gh release create: exit 0. Выпуск Latest, isDraft=false, isPrerelease=false.
+- Независимый ls-remote подтвердил совпадение main и release-тега с e20bd08.
+- ZIP, CCX и SHA256SUMS.txt имеют состояние uploaded; размеры и SHA-256 в GitHub
+  совпадают с проверенными локальными файлами.
+- Первая попытка push отклонена автоматической проверкой из-за предполагаемых
+  частных отчётов. Проверка git show/ls-tree доказала: 014–044 остаются untracked,
+  в коммите только агрегированный 045. Повторная отправка с этими доказательствами
+  разрешена и выполнена без обхода проверки.
+
+## Итоговый diff
+
+- Release-коммит: 54 files changed, 10781 insertions(+), 1037 deletions(-).
+- После release-коммита tracked-изменений нет; непубликуемые локальные отчёты сохранены.
+- Финальная запись факта публикации оформлена отдельным документационным коммитом.
 
 ## Границы проверки
 
