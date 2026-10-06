@@ -85,6 +85,9 @@ group("Классификация форматов");
     check("psd", host.categoryForExtension("psd"), "design");
     check("c4d", host.categoryForExtension("c4d"), "model");
     check("obj", host.categoryForExtension("obj"), "model");
+    check("sbsar", host.categoryForExtension("sbsar"), "material");
+    check("sbs", host.categoryForExtension("sbs"), "material");
+    check("sbsprs", host.categoryForExtension("sbsprs"), "material");
     check("wav", host.categoryForExtension("wav"), "audio");
     check("aep", host.categoryForExtension("aep"), "project");
     check("mgjson", host.categoryForExtension("mgjson"), "data");
@@ -610,6 +613,25 @@ group("Забытые выключенные слои");
     var writer = put("writer.mp4", "E:/d/writer.mp4", s.case1bg, { enabled: true });
     writer.addExpression('thisComp.layer("ExprSource").transform.opacity');
 
+    /* Выключен, но является HDR картой (работает именно выключенным). */
+    put("environment.hdr", "E:/d/environment.hdr", s.intro, { enabled: false });
+
+    /* Аудиофайлы: невидимы (нет видео), но имеют звуковую дорожку.
+     * Если дорожка звука включена — слой НЕ забыт.
+     * Если дорожка звука выключена — слой забыт. */
+    put("active_voice.wav", "E:/d/active_voice.wav", s.intro, { audioEnabled: true });
+    put("muted_music.mp3", "E:/d/muted_music.mp3", s.intro, { audioEnabled: false });
+
+    /* Видеофайл со звуком: видео выключено, но звук включен — слой используется ради звука. */
+    put("video_as_audio.mp4", "E:/d/video_as_audio.mp4", s.intro, { enabled: false, hasAudio: true, audioEnabled: true });
+
+    /* Видеофайл со звуком: видео выключено И звук выключен — забыт. */
+    put("muted_video.mp4", "E:/d/muted_video.mp4", s.intro, { enabled: false, hasAudio: true, audioEnabled: false });
+
+    /* Вложенная композиция (pre-comp): выключена и ничем не занята — найдена */
+    var subCompItem = s.project.add(new mock.CompItem("Precomp_T"));
+    s.intro.addLayer(subCompItem, { enabled: false, name: "Precomp_T" });
+
     var report = s.host.scanLayers();
     var found = {};
     report.findings.forEach(function (f) { found[f.layerName || f.compName] = f; });
@@ -625,6 +647,22 @@ group("Забытые выключенные слои");
     check("цель параметра эффекта — не найден",
         found["setmatte.mp4"] === undefined, true);
     check("назван в выражении — не найден", found["ExprSource"] === undefined, true);
+    check("HDR файл (работает выключенным) — не найден",
+        found["environment.hdr"] === undefined, true);
+    check("аудиофайл со включённым звуком — не найден",
+        found["active_voice.wav"] === undefined, true);
+    check("аудиофайл с выключенным звуком — найден",
+        !!found["muted_music.mp3"], true);
+    check("видеофайл с выключенным видео, но включённым звуком — не найден",
+        found["video_as_audio.mp4"] === undefined, true);
+    check("видеофайл с выключенным видео и выключенным звуком — найден",
+        !!found["muted_video.mp4"], true);
+    check("вложенная выключенная композиция (pre-comp) — найдена",
+        !!found["Precomp_T"], true);
+    check("у вложенной композиции kind === 'layer'",
+        found["Precomp_T"].kind, "layer");
+    check("путь к файлу у композиции пустой",
+        found["Precomp_T"].path, "");
 
     check("в находке указана композиция", found["forgotten.mp4"].compName, "Интро");
     check("и номер слоя", found["forgotten.mp4"].layerIndex, forgotten.index);
@@ -1203,6 +1241,111 @@ group("PSD: повторный импорт при нескольких один
     check("нет отказов LAYER_MATCH_FAILED при переполнении слоев и плоском PSD", result.failures.length, 0);
 })();
 
+group("PSD: вложенные группы слоев (subLayers / pre-comps) перелинковываются без LAYER_MATCH_FAILED");
+(function () {
+    var s = buildProject();
+    var psdSrc = "E:/design/nested_groups.psd";
+
+    /* Mock PSD with nested layer groups matching real Photoshop structure:
+     * Design -> Items -> [Hands, Cup x2, Plant x3]
+     * Design -> Leaves -> [Leaf x3]
+     * Design -> [Leaf, Rectangle 1]
+     */
+    var mockLayers = [
+        {
+            name: "Design",
+            subLayers: [
+                {
+                    name: "Items",
+                    subLayers: [
+                        { name: "Hands", width: 1391, height: 1796 },
+                        { name: "Cup", width: 677, height: 678 },
+                        { name: "Cup", width: 655, height: 723 },
+                        { name: "Plant", width: 1322, height: 895 },
+                        { name: "Plant", width: 1002, height: 878 },
+                        { name: "Plant", width: 935, height: 953 }
+                    ]
+                },
+                {
+                    name: "Leaves",
+                    subLayers: [
+                        { name: "Leaf", width: 1007, height: 951 },
+                        { name: "Leaf", width: 870, height: 655 },
+                        { name: "Leaf", width: 1347, height: 1353 }
+                    ]
+                },
+                { name: "Leaf", width: 2071, height: 959 },
+                { name: "Rectangle 1", width: 312, height: 367 }
+            ]
+        }
+    ];
+
+    var origImport = s.project.importFile.bind(s.project);
+    s.project.importFile = function (options) {
+        if (options && options.file) {
+            var fp = String(options.file._slash || options.file.fsName);
+            if (/nested_groups\.psd$/i.test(fp)) {
+                options._mockLayers = mockLayers;
+            }
+        }
+        return origImport(options);
+    };
+
+    /* 11 footage items matching user's exact issue scenario */
+    var hands = addFootage(s, "Hands/nested_groups.psd", psdSrc, [s.intro], { width: 1391, height: 1796 });
+    var rect = addFootage(s, "Rectangle 1/nested_groups.psd", psdSrc, [s.intro], { width: 312, height: 367 });
+    var cup1 = addFootage(s, "Cup/nested_groups.psd", psdSrc, [s.intro], { width: 677, height: 678 });
+    var cup2 = addFootage(s, "Cup/nested_groups.psd", psdSrc, [s.intro], { width: 655, height: 723 });
+    var plant1 = addFootage(s, "Plant/nested_groups.psd", psdSrc, [s.intro], { width: 1322, height: 895 });
+    var plant2 = addFootage(s, "Plant/nested_groups.psd", psdSrc, [s.intro], { width: 1002, height: 878 });
+    var plant3 = addFootage(s, "Plant/nested_groups.psd", psdSrc, [s.intro], { width: 935, height: 953 });
+    var leaf1 = addFootage(s, "Leaf/nested_groups.psd", psdSrc, [s.intro], { width: 2071, height: 959 });
+    var leaf2 = addFootage(s, "Leaf/nested_groups.psd", psdSrc, [s.intro], { width: 1007, height: 951 });
+    var leaf3 = addFootage(s, "Leaf/nested_groups.psd", psdSrc, [s.intro], { width: 870, height: 655 });
+    var leaf4 = addFootage(s, "Leaf/nested_groups.psd", psdSrc, [s.intro], { width: 1347, height: 1353 });
+
+    var report = auditOf(s);
+    var destPsd = null;
+    for (var ri = 0; ri < report.items.length; ri++) {
+        if (report.items[ri].name.indexOf("nested_groups.psd") !== -1) {
+            destPsd = report.items[ri].destPath;
+            break;
+        }
+    }
+    mock.registerFile(destPsd, 65536);
+
+    var planItems = [
+        hands, rect, cup1, cup2, plant1, plant2, plant3, leaf1, leaf2, leaf3, leaf4
+    ].map(function (it) {
+        return {
+            key: "i" + it.id,
+            id: String(it.id),
+            isProxy: false,
+            expectPath: psdSrc,
+            destPath: destPsd,
+            isSequence: false
+        };
+    });
+
+    var plan = s.host.tempFolder() + "/relink-nested-groups.json";
+    s.host.writeTextFile(plan, s.host.jsonEncode({ items: planItems }));
+
+    var result = s.host.commitFromFile(plan);
+    check("все 11 слоев из вложенных групп успешно перелинкованы", result.relinked, 11);
+    check("нет отказов LAYER_MATCH_FAILED для вложенных слоев", result.failures.length, 0);
+
+    /* Verify no temporary pre-comps remain in project */
+    var tempCompsRemaining = 0;
+    var baseCompNames = { MAIN: 1, TEASER: 1, "Интро": 1, "Кейс_1": 1, "Кейс_1_фон": 1, "Финал": 1 };
+    for (var i = 1; i <= s.project.numItems; i++) {
+        var itm = s.project.item(i);
+        if (s.host.isCompItem(itm) && !baseCompNames[itm.name]) {
+            tempCompsRemaining++;
+        }
+    }
+    check("временные композиции групп удалены", tempCompsRemaining, 0);
+})();
+
 group("Старый проект: оставить как есть");
 (function () {
     /*
@@ -1354,6 +1497,162 @@ group("Нормализация новых настроек");
     var escaped = host.normalizeSettings({ routes: { proxy: "../../куда-нибудь" } });
     check("побег из рабочей папки не проходит и здесь",
         escaped.routes.proxy, "01_assets/{branch}/PROXY");
+})();
+
+group("Объединение дубликатов элементов проекта (consolidateProjectItems)");
+(function () {
+    var env = mock.loadHost();
+    var host = env.host;
+    var project = env.project;
+
+    var f1 = project.add(new mock.FootageItem("interview.mp4", "D:/Work/interview.mp4"));
+    var f2 = project.add(new mock.FootageItem("interview copy.mp4", "D:/Work/interview.mp4"));
+    var f3 = project.add(new mock.FootageItem("interview copy 2.mp4", "D:/Work/interview.mp4"));
+
+    var comp1 = project.add(new mock.CompItem("Main Comp"));
+    var l1 = comp1.addLayer(f2, { name: "Interview Layer 1" });
+    var l2 = comp1.addLayer(f3, { name: "Interview Layer 2", locked: true });
+
+    var comp2 = project.add(new mock.CompItem("Promo Comp"));
+    var l3 = comp2.addLayer(f1, { name: "Promo Layer" });
+
+    check("до объединения в проекте 5 элементов", project.items.length, 5);
+    check("слой l1 ссылается на f2", l1.source === f2, true);
+    check("слой l2 ссылается на f3", l2.source === f3, true);
+    check("слой l2 заблокирован", l2.locked, true);
+
+    var res = host.consolidateProjectItems({
+        canonicalId: f1.id,
+        duplicateIds: [f2.id, f3.id]
+    });
+
+    check("операция завершилась успешно", res.ok, true);
+    check("заменено 2 слоя в композициях", res.relinkedLayers, 2);
+    check("удалено 2 дубликата элементов проекта", res.removedItems, 2);
+
+    check("слой l1 теперь ссылается на канонический f1", l1.source === f1, true);
+    check("слой l2 теперь ссылается на канонический f1", l2.source === f1, true);
+    check("слой l2 остался заблокированным", l2.locked, true);
+    check("слой l3 по-прежнему ссылается на f1", l3.source === f1, true);
+
+    check("в проекте остались только f1 и 2 композиции (всего 3)", project.items.length, 3);
+    check("f1 остался в проекте", project.items.indexOf(f1) !== -1, true);
+    check("f2 удалён из проекта", project.items.indexOf(f2) === -1, true);
+    check("f3 удалён из проекта", project.items.indexOf(f3) === -1, true);
+
+    /* Тест JSON вызова */
+    var fJson1 = project.add(new mock.FootageItem("broll.mp4", "D:/Work/broll.mp4"));
+    var fJson2 = project.add(new mock.FootageItem("broll copy.mp4", "D:/Work/broll.mp4"));
+    var comp3 = project.add(new mock.CompItem("Broll Comp"));
+    var l4 = comp3.addLayer(fJson2, { name: "Broll Layer" });
+
+    var jsonResStr = host.consolidateProjectItemsJson(host.jsonEncode({
+        canonicalId: fJson1.id,
+        duplicateIds: [fJson2.id]
+    }));
+    var jsonRes = host.jsonDecode(jsonResStr);
+    check("JSON вызов вернул ok: true", jsonRes.ok, true);
+    check("JSON вызов заменил 1 слой", jsonRes.relinkedLayers, 1);
+    check("слой l4 перелинкован на fJson1", l4.source === fJson1, true);
+    check("fJson2 удален из проекта", project.items.indexOf(fJson2) === -1, true);
+})();
+
+/* ------------------------------------------------ SBS материалы */
+
+group("SBS материалы (sbsar, sbs): маршрутизация и исключение из неиспользуемых");
+(function () {
+    var scope = buildProject();
+    var host = scope.host;
+
+    // 1. SBS материал, не используемый ни в одной композиции
+    var sbsItem = addFootage(scope, "concrete_wall.sbsar", "D:/Downloads/concrete_wall.sbsar", []);
+    var rep = auditOf(scope);
+    var item = itemNamed(rep, "concrete_wall.sbsar");
+
+    check("sbsar классифицирован как material", item.category, "material");
+    check("sbsar не считается unassigned (неиспользуемым)", item.unassigned, false);
+    check("sbsar ветка назначена в _SHARED", item.branch, "_SHARED");
+    check("sbsar эффективная ветка _SHARED", item.branchResolved, "_SHARED");
+    check("sbsar целевой путь содержит 01_assets/_SHARED/3D/МАТЕРИАЛЫ",
+        item.destPath.indexOf("01_assets/_SHARED/3D/МАТЕРИАЛЫ/concrete_wall.sbsar") !== -1, true);
+    check("sbsar целевая папка панели 02_ASSETS/_SHARED/3D/МАТЕРИАЛЫ",
+        item.panelTarget, "02_ASSETS/_SHARED/3D/МАТЕРИАЛЫ");
+    check("счётчик unassigned не включает sbsar", rep.counts.unassigned, 0);
+
+    // 2. Проверка misplaced: если SBS материал лежит в допустимой 3D/материалы папке
+    var sbsProtectedIn3D = addFootage(scope, "metal_gold.sbs", "D:/Projects/2026/Soul/01_assets/_SHARED/3D/МАТЕРИАЛЫ/metal_gold.sbs", []);
+    var sbsIn3D = addFootage(scope, "rough_rock.sbsar", "D:/Projects/2026/Soul/01_assets/_SHARED/3D/rough_rock.sbsar", []);
+    var sbsInMaterials = addFootage(scope, "wood_oak.sbsar", "D:/Projects/2026/Soul/01_assets/_SHARED/MATERIALS/wood_oak.sbsar", []);
+    var rep2 = auditOf(scope);
+
+    var itemGold = itemNamed(rep2, "metal_gold.sbs");
+    var itemRock = itemNamed(rep2, "rough_rock.sbsar");
+    var itemWood = itemNamed(rep2, "wood_oak.sbsar");
+
+    check("sbs в 3D/МАТЕРИАЛЫ защищён", itemGold.state, "protected");
+    check("sbs в 3D/МАТЕРИАЛЫ не misplaced", itemGold.misplaced, false);
+
+    check("sbs в 3D защищён", itemRock.state, "protected");
+    check("sbs в папке 3D не misplaced", itemRock.misplaced, false);
+
+    check("sbs в MATERIALS защищён", itemWood.state, "protected");
+    check("sbs в папке MATERIALS не misplaced", itemWood.misplaced, false);
+
+    // 3. Проверка забытых слоёв: выключенный слой с SBS материалом не является кандидатом
+    var sbsLayerComp = scope.project.add(new mock.CompItem("SBS Comp"));
+    var sbsFootage = scope.project.add(new mock.FootageItem("paint.sbsar", "D:/Projects/2026/Soul/01_assets/_SHARED/3D/МАТЕРИАЛЫ/paint.sbsar"));
+    var sbsLayer = sbsLayerComp.addLayer(sbsFootage, { name: "paint.sbsar", enabled: false });
+    var layerReport = host.scanLayers();
+    var sbsFinding = null;
+    if (layerReport && layerReport.findings) {
+        for (var fi = 0; fi < layerReport.findings.length; fi++) {
+            if (layerReport.findings[fi].layerName === "paint.sbsar") {
+                sbsFinding = layerReport.findings[fi];
+                break;
+            }
+        }
+    }
+    check("выключенный слой с sbsar не попадает в забытые слои", sbsFinding, null);
+})();
+
+group("Приоритет аудио Premiere: классификация, кандидаты на диске и не-misplaced в audio");
+(function () {
+    var s = buildProject();
+
+    // 1. Расширенные ключевые слова голоса и эффектов
+    addFootage(s, "ElevenLabs_dictor.wav", "E:/Downloads/ElevenLabs_dictor.wav", [s.intro]);
+    addFootage(s, "custom_whoosh_effect.wav", "E:/Downloads/custom_whoosh_effect.wav", [s.intro]);
+    var r = auditOf(s);
+
+    check("голос ElevenLabs маршрутизируется в 03_audio/voice",
+        itemNamed(r, "ElevenLabs_dictor.wav").destRel, "03_audio/voice");
+    check("эффект sound/effect маршрутизируется в 03_audio/sfx",
+        itemNamed(r, "custom_whoosh_effect.wav").destRel, "03_audio/sfx");
+
+    // 2. Распознавание существующего аудио-файла Premiere на диске
+    mock.registerFile("D:/Projects/2026/Soul/03_audio/voice/narration_prem.wav", 5000);
+    addFootage(s, "narration_prem.wav", "E:/External/narration_prem.wav", [s.intro]);
+    var r2 = auditOf(s);
+    var premAudioItem = itemNamed(r2, "narration_prem.wav");
+    check("внешний файл находит копию Premiere на диске и направляется в 03_audio/voice",
+        premAudioItem.destRel, "03_audio/voice");
+    check("целевой путь совпадает с файлом Premiere",
+        premAudioItem.destPath, "D:/Projects/2026/Soul/03_audio/voice/narration_prem.wav");
+
+    // 3. Внутренний аудиофайл в 03_audio/voice с длительностью > 30s не считается misplaced
+    var internalVoice = addFootage(s, "long_speech.wav", "D:/Projects/2026/Soul/03_audio/voice/long_speech.wav", [s.intro]);
+    internalVoice.duration = 120;
+    var r3 = auditOf(s);
+    var itemLongVoice = itemNamed(r3, "long_speech.wav");
+    check("длинный голос внутри 03_audio/voice защищен", itemLongVoice.state, "protected");
+    check("длинный голос внутри 03_audio/voice НЕ помечен misplaced", itemLongVoice.misplaced, false);
+
+    // 4. Внутренний аудиофайл в sound/sfx не считается misplaced
+    addFootage(s, "hit.wav", "D:/Projects/2026/Soul/sound/sfx/hit.wav", [s.intro]);
+    var r4 = auditOf(s);
+    var itemHit = itemNamed(r4, "hit.wav");
+    check("эффект внутри sound/sfx защищен", itemHit.state, "protected");
+    check("эффект внутри sound/sfx НЕ помечен misplaced", itemHit.misplaced, false);
 })();
 
 /* ------------------------------------------------------------------ итог */

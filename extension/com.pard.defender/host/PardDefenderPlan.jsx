@@ -85,6 +85,7 @@
                 vector: "01_assets/{branch}/VECTOR",
                 design: "01_assets/{branch}/DESIGN",
                 model: "01_assets/{branch}/3D",
+                material: "01_assets/{branch}/3D/\u041c\u0410\u0422\u0415\u0420\u0418\u0410\u041b\u042b",
                 data: "01_assets/{branch}/DATA",
                 project: "01_assets/{branch}/PROJECTS",
                 other: "01_assets/{branch}/OTHER",
@@ -135,7 +136,11 @@
              */
             adoptedItems: [],
             legacyRedistribute: false,
-            legacyRecycleOld: true
+            legacyRecycleOld: true,
+
+            /* Unused files inbox folder in project root */
+            inboxFolder: "unused",
+            sortUnusedToRoot: false
         };
     }
 
@@ -253,6 +258,10 @@
                 if (p.length > 3 && p.indexOf("/") > 0) out.trustedPaths.push(p);
             }
         }
+
+        out.inboxFolder = raw.inboxFolder ? str(raw.inboxFolder) : defaults.inboxFolder;
+        out.sortUnusedToRoot = raw.sortUnusedToRoot === true;
+
         return out;
     }
 

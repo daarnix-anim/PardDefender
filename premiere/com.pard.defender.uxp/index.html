@@ -12,11 +12,16 @@
 </head>
 <body>
     <div id="app" class="panel-root">
-        <header class="panel-header">
-            <div class="header-left">
-                <span class="logo-icon">&#128737;</span>
-                <span class="app-name">PardDefender</span>
+        <header class="head">
+            <div class="brand-group">
+                <svg class="logo-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+                <span class="brand">PardDefender</span>
+                <span class="version" id="version">v2.3.2</span>
             </div>
+            <button id="btn-pause-ui" class="btn btn-mini btn-pause-toggle" title="Приостановить фоновое сканирование; начатая защита завершится">⏸ Пауза</button>
+            <button id="btn-scan" class="btn btn-mini" title="Повторно проверить файлы и ссылки проекта">↻ Сканировать проект</button>
             <span class="host-badge">Premiere Pro UXP</span>
         </header>
 
@@ -55,9 +60,13 @@
         <div class="tab-pane is-active" id="pane-protect">
             <div class="actions-bar">
                 <button id="btn-protect" class="btn btn-primary">ЗАЩИТИТЬ СЕЙЧАС</button>
-                <button id="btn-scan" class="btn">ОБНОВИТЬ АУДИТ</button>
+                <button id="btn-sort-unused" class="btn btn-unused" title="Сортировать неиспользуемые вне таймлайна файлы в папку unused">📁 В ПАПКУ UNUSED</button>
+                <button id="btn-relink-ae" class="btn btn-ae" hidden>ПЕРЕЛИНКОВАТЬ НА МЕДИА AE</button>
                 <span id="scan-indicator" class="scan-indicator" hidden>Выполняется…</span>
             </div>
+
+            <div id="banner-protect-status" class="alert-banner alert-info" hidden></div>
+            <div id="banner-ae-detected" class="alert-banner alert-ae" hidden></div>
 
             <section class="stats-bar" id="stats-bar">
                 <div class="stat-pill"><span class="stat-num" id="stat-clips">0</span> клипов</div>
@@ -69,7 +78,7 @@
             <section class="items-section">
                 <div class="section-title">Элементы проекта (<span id="items-count">0</span>)</div>
                 <div class="items-list" id="items-list">
-                    <div class="empty-state" id="empty-state">Нет данных аудита. Нажмите «ОБНОВИТЬ АУДИТ».</div>
+                    <div class="empty-state" id="empty-state">Нет данных аудита. Нажмите «СКАНИРОВАТЬ ПРОЕКТ».</div>
                 </div>
             </section>
         </div>
@@ -77,7 +86,7 @@
         <!-- TAB: DUPLICATES -->
         <div class="tab-pane" id="pane-duplicates" hidden>
             <div class="actions-bar">
-                <button id="btn-scan-duplicates" class="btn btn-primary">НАЙТИ ДУБЛИКАТЫ</button>
+                <button id="btn-scan-duplicates" class="btn btn-primary"><span class="btn-icon">⌕</span> НАЙТИ ДУБЛИКАТЫ</button>
             </div>
 
             <div class="duplicates-progress-box" id="duplicates-progress-box" hidden>
@@ -96,6 +105,9 @@
 
         <!-- TAB: LOG -->
         <div class="tab-pane" id="pane-log" hidden>
+            <div class="actions-bar">
+                <button id="btn-clear-log" class="btn btn-mini">Очистить экран журнала</button>
+            </div>
             <div class="log-box" id="log-box"></div>
         </div>
     </div>

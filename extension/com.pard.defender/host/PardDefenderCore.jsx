@@ -14,7 +14,7 @@
 
 (function () {
     var host = {};
-    host.version = "2.0.4";
+    host.version = "2.3.2";
 
     /* ---------------------------------------------------------------- utils */
 
@@ -304,12 +304,13 @@
         design: "psd psb".split(" "),
         model: ("obj c4d fbx abc glb gltf dae 3ds stl ply blend usd usda usdc usdz " +
                 "e3d max ma mb").split(" "),
+        material: "sbsar sbs sbsprs".split(" "),
         data: "json csv mgjson txt xml lottie tsv".split(" "),
         project: "aep aepx aet prproj plproj".split(" "),
         audio: "wav mp3 aif aiff aifc m4a aac flac ogg oga wma opus caf mp2 au".split(" ")
     };
 
-    var CATEGORY_ORDER = ["design", "vector", "model", "project", "audio",
+    var CATEGORY_ORDER = ["design", "vector", "model", "material", "project", "audio",
         "video", "image", "data"];
 
     /* Project-panel folder name per category. */
@@ -319,6 +320,7 @@
         vector: "VECTOR",
         design: "DESIGN",
         model: "3D",
+        material: "3D/\u041c\u0410\u0422\u0415\u0420\u0418\u0410\u041b\u042b",
         data: "DATA",
         project: "PROJECTS",
         sequence: "SEQUENCES",

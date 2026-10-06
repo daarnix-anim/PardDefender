@@ -11,8 +11,16 @@
 
         <header class="head">
             <span class="brand">PardDefender</span>
-            <span class="version" id="version">v2.0.4</span>
+            <div class="head-actions">
+                <button class="icon head-pause-btn" id="head-pause-btn" title="Приостановить процессы и сканирование" aria-label="Пауза / Возобновить">⏸</button>
+                <button class="icon head-scan-btn" id="head-scan-btn" title="Сканировать проект вручную" aria-label="Сканировать проект">↺</button>
+                <span class="version" id="version">v2.3.2</span>
+            </div>
         </header>
+
+        <div class="scan-progress-bar" id="scan-progress-bar" hidden>
+            <div class="scan-progress-fill"></div>
+        </div>
 
         <div class="update" id="update" hidden>
             <div class="update-head">
@@ -20,21 +28,43 @@
                 <button class="close" id="update-dismiss" title="Больше не показывать эту версию">✕</button>
             </div>
             <div class="update-summary" id="update-summary"></div>
+            <div class="update-changelog-container" id="update-changelog-container" hidden>
+                <button class="link update-toggle-changelog" id="update-details-toggle">Что нового ▾</button>
+                <div class="update-changelog" id="update-changelog" hidden></div>
+            </div>
+            <div class="update-progress-bar" id="update-progress-bar" hidden>
+                <div class="update-progress-fill" id="update-progress-fill"></div>
+            </div>
+            <div class="update-message" id="update-message" hidden></div>
             <div class="update-actions">
-                <button class="link" id="update-open">Открыть страницу релиза</button>
+                <button class="primary btn-update-install" id="update-install">⚡ Обновить в фоне</button>
+                <button class="link" id="update-open">GitHub</button>
                 <button class="link dim" id="update-later">Скрыть</button>
             </div>
         </div>
 
         <div class="status neutral" id="status">ЗАПУСК…</div>
         <div class="note" id="note" hidden></div>
+        <button class="link scan-now-btn" id="scan-now" hidden>↺ Проверить сохранение</button>
 
         <button class="primary danger" id="resume" hidden>ВОЗОБНОВИТЬ</button>
 
         <div class="counts" id="counts" hidden></div>
 
+        <div class="scan-progress-box" id="scan-progress-box" hidden>
+            <div class="scan-progress-label" id="scan-progress-label">Сканирование проекта…</div>
+            <div class="scan-progress-track">
+                <div class="scan-progress-fill" id="scan-progress-fill"></div>
+            </div>
+            <div class="scan-progress-stats" id="scan-progress-stats">Проверка медиафайлов и композиций…</div>
+        </div>
+
+        <button class="primary btn-scan-action" id="scan-project">↺ СКАНИРОВАТЬ ПРОЕКТ</button>
+        <button class="primary btn-pause-action" id="pause-project">⏸ ПРИОСТАНОВИТЬ СКАНИРОВАНИЕ</button>
         <button class="primary" id="run-now" disabled>РАЗЛОЖИТЬ СЕЙЧАС</button>
+        <button class="primary" id="duplicates-scan" disabled>НАЙТИ ДУБЛИКАТЫ</button>
         <div class="busy" id="busy" hidden></div>
+        <div class="action-feedback" id="action-feedback" hidden></div>
 
         <nav class="tabs" id="tabs" hidden></nav>
 
@@ -97,9 +127,10 @@
             <section class="unused-section" id="unused-section" hidden>
                 <div class="unused-head">
                     <span class="unused-title" id="unused-title"></span>
-                    <button class="icon" id="unused-reveal" title="Открыть папку 00_UNUSED">&#128194;</button>
+                    <button class="icon" id="unused-reveal" title="Открыть папку unused">&#128194;</button>
                 </div>
                 <div class="unused-note">Эти файлы не используются ни в одной композиции.</div>
+                <button class="primary btn-sort-unused" id="sort-unused">📁 ОТСОРТИРОВАТЬ НЕИСПОЛЬЗУЕМЫЕ В UNUSED</button>
                 <button class="danger-line" id="clean-unused">УБРАТЬ НЕИСПОЛЬЗУЕМЫЕ В КОРЗИНУ</button>
             </section>
         </div>
@@ -109,7 +140,6 @@
             <section class="duplicates-section" id="duplicates-section">
                 <div class="duplicates-head">
                     <span class="section-title" id="duplicates-title">ТОЧНЫЕ ДУБЛИКАТЫ</span>
-                    <button class="primary" id="duplicates-scan">НАЙТИ ДУБЛИКАТЫ</button>
                 </div>
                 <div class="duplicates-note" id="duplicates-note">
                     Это точные побайтовые дубликаты. Файлы пока не изменены и не удалены.

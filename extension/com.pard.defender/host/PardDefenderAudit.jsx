@@ -86,10 +86,10 @@
         try { duration = Number(item.duration) || 0; } catch (e) { duration = 0; }
 
         var name = lower(item.name);
-        if (/(^|[^a-z])(vo|voice|voiceover|narration|dictor|speech)([^a-z]|$)/.test(name)) {
+        if (/(^|[^a-z\u0430-\u044f\u04510-9])(vo|voice|voiceover|narration|dictor|speech|rec|\u0433\u043e\u043b\u043e\u0441|\u0434\u0438\u043a\u0442\u043e\u0440|\u043e\u0437\u0432\u0443\u0447\u043a\u0430|\u0440\u0435\u0447\u044c|elevenlabs|eleven|tts)([^a-z\u0430-\u044f\u04510-9]|$)/i.test(name)) {
             return "voice";
         }
-        if (/(^|[^a-z])(sfx|whoosh|impact|riser|swoosh|transition|foley|click|hit)/.test(name)) {
+        if (/(^|[^a-z\u0430-\u044f\u04510-9])(sfx|whoosh|impact|riser|swoosh|transition|foley|click|hit|effect|fx|noise|sound|\u0448\u0443\u043c|\u044d\u0444\u0444\u0435\u043a\u0442)([^a-z\u0430-\u044f\u04510-9]|$)/i.test(name)) {
             return "sfx";
         }
         if (settings.audioSplitSeconds > 0 && duration > 0 &&
@@ -122,6 +122,28 @@
 
     /* ------------------------------------------------------- panel topology */
 
+    function isMaterialLocation(folderPath) {
+        if (!folderPath) return false;
+        var low = "/" + host.slashes(str(folderPath)).toLowerCase() + "/";
+        return low.indexOf("/\u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u044b/") !== -1 ||
+               low.indexOf("/materials/") !== -1 ||
+               low.indexOf("/3d/") !== -1 ||
+               low.indexOf("/3d \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u044b/") !== -1 ||
+               low.indexOf("/3d_materials/") !== -1 ||
+               low.indexOf("/3d materials/") !== -1 ||
+               low.indexOf("/3d \u043e\u0431\u044a\u0435\u043a\u0442\u044b/") !== -1 ||
+               low.indexOf("/3d_objects/") !== -1 ||
+               low.indexOf("/3d objects/") !== -1;
+    }
+
+    function isAudioLocation(folderPath) {
+        if (!folderPath) return false;
+        var low = "/" + host.slashes(str(folderPath)).toLowerCase() + "/";
+        return low.indexOf("/03_audio/") !== -1 ||
+               low.indexOf("/sound/") !== -1 ||
+               low.indexOf("/audio/") !== -1;
+    }
+
     function managedNameSet(settings, branches) {
         var set = {}, k, i;
         set[host.PANEL_COMPS] = true;
@@ -132,9 +154,29 @@
         set.MUSIC = true;
         set.SFX = true;
         set.VOICE = true;
+        set["3D"] = true;
+        set["\u041c\u0410\u0422\u0415\u0420\u0418\u0410\u041b\u042b"] = true;
+        set["\u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u044b"] = true;
+        set["MATERIALS"] = true;
+        set["Materials"] = true;
+        set["3D \u041c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u044b"] = true;
+        set["3D \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b\u044b"] = true;
+        set["3D Materials"] = true;
+        set["3D \u041e\u0431\u044a\u0435\u043a\u0442\u044b"] = true;
+        set["3D \u043e\u0431\u044a\u0435\u043a\u0442\u044b"] = true;
+        set["3D Objects"] = true;
+        set["3D_OBJECTS"] = true;
+        set["3D_MATERIALS"] = true;
         for (k in host.CATEGORY_PANEL_NAME) {
             if (host.CATEGORY_PANEL_NAME.hasOwnProperty(k)) {
-                set[host.CATEGORY_PANEL_NAME[k]] = true;
+                var pName = host.CATEGORY_PANEL_NAME[k];
+                set[pName] = true;
+                if (pName.indexOf("/") !== -1) {
+                    var segs = pName.split("/");
+                    for (var sIdx = 0; sIdx < segs.length; sIdx++) {
+                        set[segs[sIdx]] = true;
+                    }
+                }
             }
         }
         for (i = 0; i < branches.length; i++) set[branches[i]] = true;
@@ -175,6 +217,15 @@
         if (!folder) return false;
         if (folder === app.project.rootFolder) return true;
 
+        var pPath = panelPathOf(item);
+        var fFile = host.footageFile(item);
+        if (fFile) {
+            var fExt = extensionOf(host.slashes(fFile.fsName));
+            if (host.categoryForExtension(fExt) === "material" && isMaterialLocation(pPath)) {
+                return false;
+            }
+        }
+
         while (folder && folder !== app.project.rootFolder && depth < 8) {
             if (!managed[str(folder.name)]) return false;
             try { folder = folder.parentFolder; } catch (e3) { return false; }
@@ -187,6 +238,9 @@
         if (category === "audio") {
             var leaf = routeKey === "voice" ? "VOICE" : (routeKey === "sfx" ? "SFX" : "MUSIC");
             return host.PANEL_AUDIO + "/" + leaf;
+        }
+        if (category === "material") {
+            return host.PANEL_ASSETS + "/" + (branch || host.SHARED_BRANCH) + "/3D/\u041c\u0410\u0422\u0415\u0420\u0418\u0410\u041b\u042b";
         }
         var name = isSequence
             ? host.CATEGORY_PANEL_NAME.sequence
@@ -333,8 +387,13 @@
                 for (var fuI = 0; fuI < settings.forcedUnused.length; fuI++) {
                     if (settings.forcedUnused[fuI] === str(item.id)) { isForced = true; break; }
                 }
+                var preExt = extensionOf(prePathKey);
+                var preCategory = host.categoryForExtension(preExt);
                 if (!isForced) {
                     var itemBranch = host.branchForItem(item, ctx);
+                    if (preCategory === "material" && !itemBranch) {
+                        itemBranch = host.SHARED_BRANCH;
+                    }
                     if (itemBranch) {
                         fileBranches[prePathKey][itemBranch] = true;
                         fileHasUsedLayer[prePathKey] = true;
@@ -363,14 +422,18 @@
                  * while the layer stays exactly where it is.
                  */
                 var forced = false, fu;
-                for (fu = 0; fu < settings.forcedUnused.length; fu++) {
-                    if (settings.forcedUnused[fu] === str(item.id)) { forced = true; break; }
+                if (category !== "material") {
+                    for (fu = 0; fu < settings.forcedUnused.length; fu++) {
+                        if (settings.forcedUnused[fu] === str(item.id)) { forced = true; break; }
+                    }
                 }
                 var pKey = lower(path);
                 var isLayered = /\.(psd|psb|ai)$/i.test(path);
                 var resolvedFileBranch = host.resolveBranchName(fileBranches[pKey]);
                 var branch;
-                if (isLayered && fileHasUsedLayer[pKey]) {
+                if (category === "material") {
+                    branch = resolvedFileBranch || host.SHARED_BRANCH;
+                } else if (isLayered && fileHasUsedLayer[pKey]) {
                     branch = resolvedFileBranch;
                 } else {
                     branch = forced ? "" : resolvedFileBranch;
@@ -412,6 +475,9 @@
                 try { size = Number(file.length) || 0; } catch (e5) { size = 0; }
 
                 var effectiveBranch = branch || host.INBOX_BRANCH;
+                if (category === "material" && effectiveBranch === host.INBOX_BRANCH) {
+                    effectiveBranch = host.SHARED_BRANCH;
+                }
                 var sequenceInfo = isSequence ? sequenceDescriptor(item, file) : null;
 
                 /*
@@ -430,6 +496,52 @@
                     category === "audio" ? "" : effectiveBranch,
                     destName
                 );
+
+                if (report.workspace && category === "audio") {
+                    var audioFileName = isSequence ? "" : baseName(path);
+                    if (audioFileName) {
+                        var audioCandidates = [
+                            "03_audio/voice/" + audioFileName,
+                            "03_audio/music/" + audioFileName,
+                            "03_audio/sfx/" + audioFileName,
+                            "sound/voice/" + audioFileName,
+                            "sound/music/" + audioFileName,
+                            "sound/sfx/" + audioFileName,
+                            "sound/" + audioFileName,
+                            "03_audio/" + audioFileName
+                        ];
+                        for (var aci = 0; aci < audioCandidates.length; aci++) {
+                            try {
+                                var cTestFile = new File(report.workspace + "/" + audioCandidates[aci]);
+                                if (cTestFile.exists) {
+                                    destRel = audioCandidates[aci].replace(/\/[^\/]*$/, "");
+                                    break;
+                                }
+                            } catch (eCand) {}
+                        }
+                    }
+                }
+
+                var usedInArr = [];
+                try {
+                    var rawU = item.usedIn || [];
+                    for (var uIdx = 0; uIdx < rawU.length; uIdx++) {
+                        if (host.isCompItem(rawU[uIdx])) {
+                            usedInArr.push({ id: str(rawU[uIdx].id), name: str(rawU[uIdx].name) });
+                        }
+                    }
+                } catch (eUsedIn) {}
+
+                var unusedFolder = (settings && settings.inboxFolder) ? settings.inboxFolder : "unused";
+                var unusedCatName = isSequence
+                    ? host.CATEGORY_PANEL_NAME.sequence
+                    : (host.CATEGORY_PANEL_NAME[category] || host.CATEGORY_PANEL_NAME.other);
+                var unusedRel = unusedFolder + "/" + unusedCatName;
+                var unusedTarget = unusedFolder + "/" + unusedCatName;
+
+                if (settings && settings.sortUnusedToRoot && (branch === "" || effectiveBranch === host.INBOX_BRANCH)) {
+                    destRel = unusedRel;
+                }
 
                 var entry = {
                     /*
@@ -450,7 +562,7 @@
                     sequence: sequenceInfo,
                     branch: branch,
                     branchResolved: effectiveBranch,
-                    unassigned: branch === "",
+                    unassigned: (category === "material") ? false : (branch === ""),
                     /*
                      * Forced elements look unassigned so they file into
                      * 00_UNUSED, but a composition still USES them - deleting
@@ -460,8 +572,12 @@
                     forcedUnused: forced,
                     size: size,
                     state: state,
+                    usedInCount: usedInArr.length,
+                    usedInComps: usedInArr,
                     destRel: destRel,
                     destFile: isSequence ? "" : baseName(path),
+                    unusedDestRel: unusedRel,
+                    unusedPanelTarget: unusedTarget,
                     /*
                      * A route names a FOLDER. For an ordinary file the original
                      * file name has to be appended, or the copy lands as a file
@@ -474,8 +590,9 @@
                     destPath: !report.workspace ? "" : (isSequence
                         ? report.workspace + "/" + destRel
                         : report.workspace + "/" + destRel + "/" + baseName(path)),
-                    panelTarget: panelTargetForFootage(
-                        category, isSequence, routeKey, branch),
+                    panelTarget: (settings && settings.sortUnusedToRoot && (branch === "" || effectiveBranch === host.INBOX_BRANCH))
+                        ? unusedTarget
+                        : panelTargetForFootage(category, isSequence, routeKey, branch),
                     panelPath: panelPathOf(item),
                     panelEligible: adopted
                         ? false
@@ -498,8 +615,18 @@
                     var destFolder = isSequence
                         ? entry.destPath
                         : entry.destPath.replace(/\/[^\/]*$/, "");
-                    entry.misplaced =
-                        lower(path.replace(/\/[^\/]*$/, "")) !== lower(destFolder);
+                    var curFolder = path.replace(/\/[^\/]*$/, "");
+                    if (category === "material") {
+                        if (!isMaterialLocation(curFolder)) {
+                            entry.misplaced = lower(curFolder) !== lower(destFolder);
+                        }
+                    } else if (category === "audio") {
+                        if (!isAudioLocation(curFolder)) {
+                            entry.misplaced = lower(curFolder) !== lower(destFolder);
+                        }
+                    } else {
+                        entry.misplaced = lower(curFolder) !== lower(destFolder);
+                    }
                 }
 
                 if (entry.misplaced) report.counts.misplaced++;
@@ -610,6 +737,8 @@
                         adopted: adopted,
                         size: pSize,
                         state: pState,
+                        usedInCount: usedInArr.length,
+                        usedInComps: usedInArr,
                         destRel: pDestRel,
                         destFile: pIsSequence ? "" : baseName(pPath),
                         destPath: pDestPath,

@@ -28,8 +28,14 @@ if "%IS_ADMIN%"=="0" (
     )
 )
 
+rem Extract version from manifest.json
+set "VERSION=2.3.2"
+for /f "tokens=2 delims=:, " %%A in ('findstr /C:"\"version\"" "%UXP_SOURCE%\manifest.json"') do (
+    set "VERSION=%%~A"
+)
+
 echo ========================================================
-echo Installing PardDefender 2.0.4 for AE and Premiere Pro...
+echo Installing PardDefender %VERSION% for AE and Premiere Pro...
 echo ========================================================
 
 rem 1. Check sources
@@ -67,9 +73,9 @@ if errorlevel 1 (
     exit /b 1
 )
 
-findstr /C:"2.0.4" "%AE_TARGET%\CSXS\manifest.xml" >nul
+findstr /C:"%VERSION%" "%AE_TARGET%\CSXS\manifest.xml" >nul
 if errorlevel 1 (
-    echo ERROR: Installed After Effects manifest verification failed.
+    echo ERROR: Installed After Effects manifest verification failed [expected %VERSION%].
     pause
     exit /b 1
 )
@@ -104,6 +110,13 @@ if "%IS_ADMIN%"=="1" (
         mkdir "%UXP_SYS_COMMON%" >nul 2>&1
         xcopy "%UXP_SOURCE%\*" "%UXP_SYS_COMMON%\" /E /I /Y >nul
         echo       Installed into Common Files Adobe UXP directory.
+    )
+    if exist "C:\Program Files\Common Files\Adobe\UXP\Plugins\External" (
+        set "UXP_SYS_FALLBACK=C:\Program Files\Common Files\Adobe\UXP\Plugins\External\%UXP_ID%"
+        if exist "C:\Program Files\Common Files\Adobe\UXP\Plugins\External\%UXP_ID%" rmdir /s /q "C:\Program Files\Common Files\Adobe\UXP\Plugins\External\%UXP_ID%"
+        mkdir "C:\Program Files\Common Files\Adobe\UXP\Plugins\External\%UXP_ID%" >nul 2>&1
+        xcopy "%UXP_SOURCE%\*" "C:\Program Files\Common Files\Adobe\UXP\Plugins\External\%UXP_ID%\" /E /I /Y >nul
+        echo       Installed into Common Files UXP Plugins External directory.
     )
 ) else (
     echo       Note: System directory copy skipped - run as Admin to copy to Program Files.

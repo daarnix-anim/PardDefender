@@ -56,6 +56,65 @@ html, body {
     justify-content: space-between;
 }
 
+.head-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.head-scan-btn {
+    padding: 0 4px;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    border-radius: 2px;
+}
+
+.head-scan-btn:hover:not(:disabled) {
+    color: var(--blue);
+}
+
+.head-scan-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.head-pause-btn {
+    padding: 0 4px;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-dim);
+    background: transparent;
+    border: none;
+    border-radius: 2px;
+    transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.head-pause-btn:hover:not(:disabled) {
+    color: var(--yellow);
+    transform: scale(1.15);
+}
+
+.head-pause-btn.is-paused {
+    color: var(--yellow);
+    animation: headPausePulse 1.8s infinite ease-in-out;
+}
+
+@keyframes headPausePulse {
+    0%, 100% {
+        transform: scale(1);
+        filter: drop-shadow(0 0 1px rgba(216, 161, 58, 0.4));
+    }
+    50% {
+        transform: scale(1.18);
+        filter: drop-shadow(0 0 6px rgba(255, 209, 102, 0.85));
+    }
+}
+
 .brand {
     font-size: 13px;
     font-weight: 600;
@@ -65,6 +124,169 @@ html, body {
 .version {
     font-size: 10px;
     color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------------ progress */
+
+.scan-progress-bar {
+    height: 3px;
+    width: 100%;
+    background: var(--surface-2);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+    margin-bottom: -2px;
+}
+
+.scan-progress-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 45%;
+    background: linear-gradient(90deg, transparent, var(--blue), transparent);
+    animation: scanProgressAnim 1.2s infinite ease-in-out;
+}
+
+@keyframes scanProgressAnim {
+    0% { left: -45%; }
+    100% { left: 100%; }
+}
+
+/* ------------------------------------------------------------------ update */
+
+.update {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px 10px;
+    border: 1px solid #33506b;
+    border-left: 3px solid var(--blue);
+    border-radius: 3px;
+    background: #1f2733;
+}
+
+.update-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+}
+
+.update-title {
+    color: var(--blue);
+    font-weight: 600;
+}
+
+.update-summary {
+    color: var(--text-dim);
+    line-height: 1.4;
+    font-size: 11px;
+}
+
+.update-changelog-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 2px;
+}
+
+.update-toggle-changelog {
+    align-self: flex-start;
+    padding: 0;
+    font-size: 11px;
+    color: var(--blue);
+}
+
+.update-changelog {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 6px 8px;
+    max-height: 130px;
+    overflow-y: auto;
+    font-size: 11px;
+    color: var(--text);
+    line-height: 1.45;
+}
+
+.update-changelog ul {
+    margin: 0;
+    padding-left: 16px;
+}
+
+.update-changelog li {
+    margin-bottom: 3px;
+}
+
+.update-changelog li:last-child {
+    margin-bottom: 0;
+}
+
+.update-progress-bar {
+    height: 4px;
+    background: var(--surface-2);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 2px;
+}
+
+.update-progress-fill {
+    height: 100%;
+    background: var(--green);
+    width: 0%;
+    transition: width 0.2s ease;
+}
+
+.update-message {
+    font-size: 11px;
+    line-height: 1.4;
+    padding: 6px 8px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--text);
+    border-left: 3px solid var(--blue);
+}
+
+.update-message.success {
+    border-left-color: var(--green);
+    background: #212c1f;
+    color: #9fd9b8;
+}
+
+.update-message.error {
+    border-left-color: var(--red);
+    background: #331f1f;
+    color: #e09f9f;
+}
+
+.update-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+}
+
+.btn-update-install {
+    width: auto !important;
+    padding: 5px 10px !important;
+    background: #2e4d29 !important;
+    border: 1px solid var(--green) !important;
+    color: #fff !important;
+    font-size: 11px !important;
+    letter-spacing: 0.03em !important;
+    border-radius: 3px !important;
+    cursor: pointer !important;
+    flex: none !important;
+}
+
+.btn-update-install:hover:not(:disabled) {
+    background: #3d6836 !important;
+}
+
+.btn-update-install:disabled {
+    opacity: 0.5 !important;
+    cursor: default !important;
 }
 
 /* ------------------------------------------------------------------ status */
@@ -90,6 +312,26 @@ html, body {
     color: var(--text-dim);
     line-height: 1.45;
     padding: 0 2px;
+}
+
+.scan-now-btn {
+    align-self: center;
+    font-size: 11px;
+    padding: 4px 10px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--blue);
+    cursor: pointer;
+    margin-top: 2px;
+    letter-spacing: 0.03em;
+    transition: all 0.15s ease;
+}
+
+.scan-now-btn:hover {
+    border-color: var(--blue);
+    color: #fff;
+    background: #253347;
 }
 
 .workspace-row {
@@ -149,6 +391,63 @@ html, body {
 .primary:hover:not(:disabled) { border-color: var(--blue); color: #fff; }
 .primary:disabled { opacity: 0.4; cursor: default; }
 
+.primary.btn-scan-action {
+    border-color: #2f4963;
+    background: #1c2736;
+    color: #9eccf7;
+    margin-bottom: 2px;
+}
+
+.primary.btn-scan-action:hover:not(:disabled) {
+    border-color: var(--blue);
+    background: #25364b;
+    color: #fff;
+}
+
+.primary.btn-pause-action {
+    border-color: #4a3e20;
+    background: #242017;
+    color: #e5c178;
+    margin-bottom: 2px;
+    transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.primary.btn-pause-action:hover:not(:disabled) {
+    border-color: var(--yellow);
+    background: #332b1c;
+    color: #fff;
+    box-shadow: 0 0 8px rgba(216, 161, 58, 0.3);
+}
+
+.primary.btn-pause-action.is-paused {
+    border-color: #d8a13a;
+    background: linear-gradient(135deg, #3d2f14 0%, #292010 100%);
+    color: #ffe082;
+    font-weight: 700;
+    animation: pauseActionPulse 2s infinite ease-in-out;
+    box-shadow: 0 0 12px rgba(216, 161, 58, 0.35);
+}
+
+.primary.btn-pause-action.is-paused:hover:not(:disabled) {
+    border-color: #ffd54f;
+    background: linear-gradient(135deg, #4d3c19 0%, #352a15 100%);
+    color: #ffffff;
+    box-shadow: 0 0 18px rgba(255, 213, 79, 0.6);
+}
+
+@keyframes pauseActionPulse {
+    0%, 100% {
+        box-shadow: 0 0 6px rgba(216, 161, 58, 0.25);
+        border-color: #d8a13a;
+    }
+    50% {
+        box-shadow: 0 0 16px rgba(216, 161, 58, 0.55), inset 0 0 8px rgba(216, 161, 58, 0.2);
+        border-color: #ffc107;
+    }
+}
+
 .busy {
     color: var(--blue);
     text-align: center;
@@ -156,6 +455,99 @@ html, body {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* ----------------------------------------------------------- scan-progress */
+
+.scan-progress-box {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 8px 10px;
+    background: #19222d;
+    border: 1px solid #2d3c50;
+    border-radius: 4px;
+    margin: 4px 0;
+}
+
+.scan-progress-box[hidden] {
+    display: none;
+}
+
+.scan-progress-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #cbd5e1;
+}
+
+.scan-progress-track {
+    height: 4px;
+    background: var(--surface-2);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+}
+
+.scan-progress-fill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: 40%;
+    background: var(--blue);
+    border-radius: 2px;
+    animation: scanIndeterminate 1.2s infinite ease-in-out;
+}
+
+@keyframes scanIndeterminate {
+    0% { left: -40%; width: 40%; }
+    50% { width: 60%; }
+    100% { left: 100%; width: 40%; }
+}
+
+.scan-progress-stats {
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+.action-feedback {
+    margin: 4px 0 2px 0;
+    padding: 6px 10px;
+    border-radius: 3px;
+    font-size: 11px;
+    line-height: 1.4;
+    text-align: center;
+    font-weight: 500;
+    transition: all 0.2s ease;
+    word-break: break-word;
+}
+
+.action-feedback[hidden] {
+    display: none;
+}
+
+.action-feedback.good {
+    background: rgba(46, 204, 113, 0.15);
+    border: 1px solid rgba(46, 204, 113, 0.4);
+    color: #4ade80;
+}
+
+.action-feedback.warn {
+    background: rgba(241, 196, 15, 0.15);
+    border: 1px solid rgba(241, 196, 15, 0.4);
+    color: #facc15;
+}
+
+.action-feedback.bad {
+    background: rgba(231, 76, 60, 0.15);
+    border: 1px solid rgba(231, 76, 60, 0.4);
+    color: #f87171;
+}
+
+.action-feedback.work {
+    background: rgba(74, 144, 226, 0.15);
+    border: 1px solid rgba(74, 144, 226, 0.4);
+    color: #70b4fc;
 }
 
 /* -------------------------------------------------------------------- disk */
@@ -650,7 +1042,26 @@ html, body {
 }
 
 .unused-title { color: var(--yellow); font-weight: 600; }
-.unused-note { color: var(--text-dim); line-height: 1.4; }
+.unused-note { color: var(--text-dim); line-height: 1.4; margin-bottom: 4px; }
+
+.btn-sort-unused {
+    width: 100%;
+    padding: 7px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    cursor: pointer;
+    background: #3a68a4;
+    border: 1px solid #4a7bc4;
+    border-radius: 3px;
+    color: #fff;
+    transition: background 0.15s ease;
+    margin-bottom: 6px;
+}
+
+.btn-sort-unused:hover:not(:disabled) {
+    background: #4a7bc4;
+}
 
 .danger-line {
     width: 100%;
@@ -868,6 +1279,10 @@ html, body {
     gap: 6px;
 }
 
+.duplicate-group.is-project-item {
+    border-left: 3px solid var(--blue);
+}
+
 .duplicate-group-head {
     display: flex;
     align-items: center;
@@ -883,6 +1298,10 @@ html, body {
 .duplicate-group-reclaim {
     color: var(--green);
     font-weight: 600;
+}
+
+.duplicate-group-reclaim.project {
+    color: var(--blue);
 }
 
 .duplicate-group-rec {
@@ -1020,6 +1439,42 @@ html, body {
     margin-top: 6px;
     padding-top: 6px;
     border-top: 1px solid var(--line);
+}
+
+.btn {
+    width: 100%;
+    padding: 6px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+    font: inherit;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.btn:hover:not(:disabled) {
+    border-color: var(--blue);
+    color: #fff;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.btn-warn {
+    border-color: #5c2d2d !important;
+    background: #3a2323 !important;
+    color: #fff !important;
+}
+
+.btn-warn:hover:not(:disabled) {
+    border-color: var(--red) !important;
+    background: #4a2929 !important;
 }
 
 .duplicates-recoverable {

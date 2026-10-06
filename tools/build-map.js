@@ -92,6 +92,7 @@ function listFiles(dir) {
     var names;
     try { names = fs.readdirSync(full); } catch (e) { return out; }
     names.sort().forEach(function (name) {
+        if (name.charAt(0) === ".") return;
         if (CONFLICT_COPY.test(name)) return;
         var rel = dir + "/" + name;
         var stats;

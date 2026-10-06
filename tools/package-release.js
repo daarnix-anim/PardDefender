@@ -5,16 +5,15 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const RELEASE_DIR = path.join(ROOT, 'release');
 const STAGING_DIR = path.join(os.tmpdir(), 'parddefender-staging-' + Date.now());
 
-if (fs.existsSync(RELEASE_DIR)) {
-  fs.rmSync(RELEASE_DIR, { recursive: true, force: true });
+if (!fs.existsSync(RELEASE_DIR)) {
+  fs.mkdirSync(RELEASE_DIR, { recursive: true });
 }
-fs.mkdirSync(RELEASE_DIR, { recursive: true });
 fs.mkdirSync(STAGING_DIR, { recursive: true });
 
 
@@ -48,20 +47,36 @@ if (fs.existsSync(path.join(ROOT, 'docs'))) {
 }
 
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'premiere', 'com.pard.defender.uxp', 'manifest.json'), 'utf8'));
-const VERSION = manifest.version || '2.0.4';
+const VERSION = manifest.version || '2.3.2';
+
+function createArchive(source, destination) {
+  const temporary = destination + '.' + process.pid + '.tmp';
+  const quote = value => "'" + value.replace(/'/g, "''") + "'";
+  const command = "$ErrorActionPreference = 'Stop'; " +
+    "Add-Type -AssemblyName System.IO.Compression.FileSystem; " +
+    "[System.IO.Compression.ZipFile]::CreateFromDirectory(" +
+    quote(source) + ", " + quote(temporary) +
+    ", [System.IO.Compression.CompressionLevel]::Optimal, $false)";
+  // Argument arrays preserve paths with spaces. No Archive-module dependency.
+  execFileSync('powershell.exe', ['-NoProfile', '-Command', command], { stdio: 'inherit' });
+  fs.renameSync(temporary, destination);
+}
 
 console.log(`2. Creating PardDefender-${VERSION}.zip (all-in-one)...`);
 const zipPath = path.join(RELEASE_DIR, `PardDefender-${VERSION}.zip`);
-execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${STAGING_DIR}\\*' -DestinationPath '${zipPath}' -Force"`);
+createArchive(STAGING_DIR, zipPath);
 
 console.log(`3. Creating PardDefender-${VERSION}.ccx (Premiere Pro UXP package)...`);
-const ccxTempZip = path.join(RELEASE_DIR, `PardDefender-${VERSION}-uxp.zip`);
 const ccxPath = path.join(RELEASE_DIR, `PardDefender-${VERSION}.ccx`);
 const uxpSource = path.join(ROOT, 'premiere', 'com.pard.defender.uxp');
-execSync(`powershell -NoProfile -Command "Compress-Archive -Path '${uxpSource}\\*' -DestinationPath '${ccxTempZip}' -Force"`);
-fs.renameSync(ccxTempZip, ccxPath);
+createArchive(uxpSource, ccxPath);
 
 // Clean staging
+const stagingRoot = path.resolve(os.tmpdir());
+const cleanupTarget = path.resolve(STAGING_DIR);
+if (path.dirname(cleanupTarget) !== stagingRoot || !/^parddefender-staging-\d+$/.test(path.basename(cleanupTarget))) {
+  throw new Error('Refusing to clean a directory outside this build staging area: ' + cleanupTarget);
+}
 fs.rmSync(STAGING_DIR, { recursive: true, force: true });
 
 console.log('Build finished successfully:');

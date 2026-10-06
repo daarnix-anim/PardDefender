@@ -155,6 +155,39 @@ var PardHostAdapter = (function () {
         );
     };
 
+    api.consolidateProjectItemsFromFileJson = function (planPath, callback) {
+        evalScript(
+            "$.global.PardDefenderHost.consolidateProjectItemsFromFileJson('" +
+            escapeForExtendScript(planPath) + "');",
+            callback
+        );
+    };
+
+    api.consolidateProjectItemsJson = function (plan, callback) {
+        var planBody = typeof plan === "string" ? plan : JSON.stringify(plan);
+        var os = null, pathMod = null, fsMod = null;
+        try { os = require("os"); } catch (e) {}
+        try { pathMod = require("path"); } catch (e) {}
+        try { fsMod = require("fs"); } catch (e) {}
+
+        if (fsMod && os && pathMod) {
+            var pPath = pathMod.join(os.tmpdir(), "consolidate-proj-items-" + Date.now() + ".json");
+            try {
+                fsMod.writeFileSync(pPath, planBody, "utf8");
+                api.consolidateProjectItemsFromFileJson(pPath.replace(/\\/g, "/"), function (raw) {
+                    try { fsMod.unlinkSync(pPath); } catch (eU) {}
+                    callback(raw);
+                });
+                return;
+            } catch (eFs) {}
+        }
+        evalScript(
+            "$.global.PardDefenderHost.consolidateProjectItemsJson('" +
+            escapeForExtendScript(planBody) + "');",
+            callback
+        );
+    };
+
     api.scanLayersToFile = function (callback) {
         evalScript("$.global.PardDefenderHost.scanLayersToFile();", callback);
     };

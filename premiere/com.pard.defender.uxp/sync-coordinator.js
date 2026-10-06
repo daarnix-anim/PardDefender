@@ -27,8 +27,106 @@ var PardSyncCoordinator = (function () {
     try { crypto = require("crypto"); } catch (e) {}
     try { workspaceStore = require("./workspace-store.js"); } catch (e) {}
 
-    api.setFs = function (customFs) { fs = customFs; };
+    function ensureExistsSync(targetFs) {
+        if (!targetFs) return;
+        // UXP exposes lstatSync, not Node's statSync.
+        if (typeof targetFs.statSync !== "function" && typeof targetFs.lstatSync === "function") {
+            targetFs.statSync = function (p) { return targetFs.lstatSync(p); };
+        }
+        if (typeof targetFs.existsSync !== "function") {
+            try {
+                targetFs.existsSync = function (p) {
+                    try {
+                        if (typeof targetFs.statSync === "function") {
+                            targetFs.statSync(p);
+                            return true;
+                        }
+                        if (typeof targetFs.accessSync === "function") {
+                            targetFs.accessSync(p);
+                            return true;
+                        }
+                    } catch (e) {
+                        return false;
+                    }
+                    return false;
+                };
+            } catch (ePoly) {}
+        }
+    }
+
+    ensureExistsSync(fs);
+
+    function ensurePathFallback(targetPath) {
+        if (targetPath && typeof targetPath.dirname === "function" && targetPath.sep) return targetPath;
+        var isWin = (typeof process !== "undefined" && process.platform === "win32") ||
+                    (typeof navigator !== "undefined" && /win/i.test(navigator.platform || navigator.userAgent)) ||
+                    true; // Premiere Windows default
+        var sepChar = isWin ? "\\" : "/";
+        return {
+            sep: sepChar,
+            dirname: function (p) {
+                if (!p) return ".";
+                var s = String(p).replace(/\\/g, "/");
+                var idx = s.lastIndexOf("/");
+                if (idx === -1) return ".";
+                if (idx === 0) return "/";
+                var d = s.substring(0, idx);
+                return sepChar === "\\" ? d.replace(/\//g, "\\") : d;
+            },
+            basename: function (p, ext) {
+                if (!p) return "";
+                var s = String(p).replace(/\\/g, "/");
+                var b = s.substring(s.lastIndexOf("/") + 1);
+                if (ext && b.indexOf(ext) === b.length - ext.length) b = b.substring(0, b.length - ext.length);
+                return b;
+            },
+            join: function () {
+                var parts = [];
+                for (var i = 0; i < arguments.length; i++) {
+                    if (arguments[i]) parts.push(String(arguments[i]));
+                }
+                var joined = parts.join("/").replace(/\\/g, "/").replace(/\/+/g, "/");
+                return sepChar === "\\" ? joined.replace(/\//g, "\\") : joined;
+            }
+        };
+    }
+
+    path = ensurePathFallback(path);
+
+    api.setFs = function (customFs) {
+        fs = customFs;
+        ensureExistsSync(fs);
+    };
+    api.setPath = function (customPath) {
+        path = ensurePathFallback(customPath);
+    };
     api.setWorkspaceStore = function (customStore) { workspaceStore = customStore; };
+
+    function fileExists(p) {
+        if (!fs || !p) return false;
+        if (typeof fs.existsSync === "function") {
+            try { return fs.existsSync(p); } catch (eEx) { return false; }
+        }
+        try {
+            if (typeof fs.statSync === "function") {
+                fs.statSync(p);
+                return true;
+            }
+        } catch (eStat) {
+            return false;
+        }
+        try {
+            if (typeof fs.accessSync === "function") {
+                fs.accessSync(p);
+                return true;
+            }
+        } catch (eAcc) {
+            return false;
+        }
+        return false;
+    }
+
+    api.fileExists = fileExists;
 
     function getStore() {
         return workspaceStore || (typeof PardWorkspaceStore !== "undefined" ? PardWorkspaceStore : null);
@@ -41,7 +139,9 @@ var PardSyncCoordinator = (function () {
 
     function normalizePath(p) {
         if (!p) return "";
-        var s = String(p).replace(/\\/g, "/").trim().replace(/\/+/g, "/");
+        var s = String(p).trim().replace(/\\/g, "/");
+        s = s.replace(/^\/+(\?|\.)\//, "");
+        s = s.replace(/\/+/g, "/");
         if (/^[a-zA-Z]:\//.test(s)) {
             s = s.charAt(0).toLowerCase() + s.substring(1);
         }
@@ -77,7 +177,7 @@ var PardSyncCoordinator = (function () {
         if (!fs || !workspace || !snapshotData || !snapshotData.projectId) return false;
         var pDir = projectsDir(workspace);
         try {
-            if (!fs.existsSync(nativePath(pDir))) {
+            if (typeof fs.mkdirSync === "function" && !fileExists(nativePath(pDir))) {
                 fs.mkdirSync(nativePath(pDir), { recursive: true });
             }
         } catch (e) {
@@ -96,10 +196,14 @@ var PardSyncCoordinator = (function () {
         };
 
         var nFile = nativePath(sFile);
+        if (typeof fs.renameSync !== "function") {
+            var engine = typeof PardPremiereCopyEngine !== "undefined" ? PardPremiereCopyEngine : require("./copy-engine.js");
+            return engine.writeJsonAtomic(nFile, snapshot);
+        }
         var tmpFile = nFile + "." + Date.now().toString(36) + ".tmp";
         try {
-            fs.writeFileSync(tmpFile, JSON.stringify(snapshot, null, 2), "utf8");
-            if (fs.existsSync(nFile)) {
+            fs.writeFileSync(tmpFile, JSON.stringify(snapshot, null, 2), { encoding: "utf-8" });
+            if (fileExists(nFile)) {
                 try { fs.unlinkSync(nFile); } catch (eDel) {}
             }
             fs.renameSync(tmpFile, nFile);
@@ -114,7 +218,7 @@ var PardSyncCoordinator = (function () {
         if (!fs || !workspace || !projectId) return null;
         var sFile = projectsDir(workspace) + "/" + projectId + ".media.json";
         try {
-            var raw = fs.readFileSync(nativePath(sFile), "utf8");
+            var raw = fs.readFileSync(nativePath(sFile), { encoding: "utf-8" });
             return JSON.parse(raw);
         } catch (e) {
             return null;
@@ -124,14 +228,14 @@ var PardSyncCoordinator = (function () {
     api.listSnapshots = function (workspace) {
         if (!fs || !workspace) return [];
         var pDir = projectsDir(workspace);
-        if (!fs.existsSync(nativePath(pDir))) return [];
+        if (!fileExists(nativePath(pDir))) return [];
         var out = [];
         try {
             var files = fs.readdirSync(nativePath(pDir));
             for (var i = 0; i < files.length; i++) {
                 if (files[i].slice(-11) === ".media.json") {
                     try {
-                        var raw = fs.readFileSync(nativePath(pDir + "/" + files[i]), "utf8");
+                        var raw = fs.readFileSync(nativePath(pDir + "/" + files[i]), { encoding: "utf-8" });
                         var parsed = JSON.parse(raw);
                         if (parsed && parsed.projectId) out.push(parsed);
                     } catch (eR) {}
@@ -378,11 +482,11 @@ var PardSyncCoordinator = (function () {
             var lockRes = store.withLock(workspace, "events", function () {
                 var evFile = metaDir(workspace) + "/events.jsonl";
                 var nEvFile = nativePath(evFile);
-                if (!fs.existsSync(nEvFile)) {
+                if (!fileExists(nEvFile)) {
                     return { ok: true, compacted: 0 };
                 }
 
-                var raw = fs.readFileSync(nEvFile, "utf8");
+                var raw = fs.readFileSync(nEvFile, { encoding: "utf-8" });
                 var lines = raw.split(/\r?\n/);
                 var events = [];
                 for (var i = 0; i < lines.length; i++) {
@@ -441,8 +545,8 @@ var PardSyncCoordinator = (function () {
                 // Crash-safe atomic swap
                 var tmpFile = nEvFile + "." + Date.now().toString(36) + ".tmp";
                 var body = keptEvents.map(function (evObj) { return JSON.stringify(evObj); }).join("\n") + "\n";
-                fs.writeFileSync(tmpFile, body, "utf8");
-                if (fs.existsSync(nEvFile)) {
+                fs.writeFileSync(tmpFile, body, { encoding: "utf-8" });
+                if (fileExists(nEvFile)) {
                     try { fs.unlinkSync(nEvFile); } catch (eD) {}
                 }
                 fs.renameSync(tmpFile, nEvFile);
@@ -460,4 +564,10 @@ var PardSyncCoordinator = (function () {
 
 if (typeof module !== "undefined" && module.exports) {
     module.exports = PardSyncCoordinator;
+}
+if (typeof window !== "undefined") {
+    window.PardSyncCoordinator = PardSyncCoordinator;
+}
+if (typeof globalThis !== "undefined") {
+    globalThis.PardSyncCoordinator = PardSyncCoordinator;
 }

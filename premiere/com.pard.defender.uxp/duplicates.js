@@ -17,14 +17,51 @@ var PardPremiereDuplicates = (function () {
     var fs = null;
     var path = null;
 
-    try { fs = require("fs"); } catch (e) {}
-    try { path = require("path"); } catch (e) {}
+    function ensurePathFallback(targetPath) {
+        if (targetPath && typeof targetPath.dirname === "function" && targetPath.sep) return targetPath;
+        var isWin = (typeof process !== "undefined" && process.platform === "win32") ||
+                    (typeof navigator !== "undefined" && /win/i.test(navigator.platform || navigator.userAgent)) ||
+                    true; // Premiere Windows default
+        var sepChar = isWin ? "\\" : "/";
+        return {
+            sep: sepChar,
+            dirname: function (p) {
+                if (!p) return ".";
+                var s = String(p).replace(/\\/g, "/");
+                var idx = s.lastIndexOf("/");
+                if (idx === -1) return ".";
+                if (idx === 0) return "/";
+                var d = s.substring(0, idx);
+                return sepChar === "\\" ? d.replace(/\//g, "\\") : d;
+            },
+            basename: function (p, ext) {
+                if (!p) return "";
+                var s = String(p).replace(/\\/g, "/");
+                var b = s.substring(s.lastIndexOf("/") + 1);
+                if (ext && b.indexOf(ext) === b.length - ext.length) b = b.substring(0, b.length - ext.length);
+                return b;
+            },
+            join: function () {
+                var parts = [];
+                for (var i = 0; i < arguments.length; i++) {
+                    if (arguments[i]) parts.push(String(arguments[i]));
+                }
+                var joined = parts.join("/").replace(/\\/g, "/").replace(/\/+/g, "/");
+                return sepChar === "\\" ? joined.replace(/\//g, "\\") : joined;
+            }
+        };
+    }
+
+    path = ensurePathFallback(path);
 
     api.setFs = function (customFs) { fs = customFs; };
+    api.setPath = function (customPath) { path = ensurePathFallback(customPath); };
 
     function normalizePath(p) {
         if (!p) return "";
-        var s = String(p).replace(/\\/g, "/").trim().replace(/\/+/g, "/");
+        var s = String(p).trim().replace(/\\/g, "/");
+        s = s.replace(/^\/+(\?|\.)\//, "");
+        s = s.replace(/\/+/g, "/");
         if (/^[a-zA-Z]:\//.test(s)) {
             s = s.charAt(0).toLowerCase() + s.substring(1);
         }

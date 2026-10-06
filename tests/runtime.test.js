@@ -383,13 +383,22 @@ group("Источники обновления и безопасность URL")
 
     var release = Updater.normalizeRelease({
         tag_name: "v1.3.0",
-        body: "# Заголовок\nПервая строка описания.",
+        body: "# Заголовок\nПервая строка описания.\n- Новая функция автообновления\n* Исправление поиска дубликатов\n1. Быстрый перенос",
         html_url: "https://github.com/daarnix-anim/PardDefender/releases/tag/v1.3.0"
     });
     check("релиз: версия", release.version, "1.3.0");
     check("релиз: первая непустая строка как описание", release.summary, "Заголовок");
     check("релиз: своя ссылка сохранена",
         release.url, "https://github.com/daarnix-anim/PardDefender/releases/tag/v1.3.0");
+    check("релиз: извлечено 3 пункта изменений", release.changes.length, 3);
+    check("релиз: пункт 1", release.changes[0], "Новая функция автообновления");
+    check("релиз: пункт 2", release.changes[1], "Исправление поиска дубликатов");
+    check("релиз: пункт 3", release.changes[2], "Быстрый перенос");
+    check("релиз: сформирован downloadUrl",
+        release.downloadUrl, "https://github.com/daarnix-anim/PardDefender/releases/download/v1.3.0/PardDefender-1.3.0.zip");
+
+    check("extractChanges: пустой текст", Updater.extractChanges("").length, 0);
+    check("extractChanges: текст без списков", Updater.extractChanges("Просто текст без пунктов").length, 0);
 
     check("пустой ответ не роняет", Updater.normalizeFeed(null), null);
     check("ответ без версии не роняет", Updater.normalizeFeed({ summary: "x" }), null);

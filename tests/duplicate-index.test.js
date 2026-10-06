@@ -431,6 +431,50 @@ steps.push(function (next) {
     next();
 });
 
+/* ------------------------------------------------------------- 12 */
+
+var fProjItem = writeFile("media/interview_source.mov", "INTERVIEW_SOURCE_BYTES_12345");
+
+steps.push(function (next) {
+    group("12. Дубликаты элементов проекта (project items) с одним и тем же исходником");
+
+    var itemUnused = {
+        id: "201",
+        name: "interview_source copy.mov",
+        path: fProjItem,
+        usedInCount: 0,
+        usedInComps: []
+    };
+    var itemUsed = {
+        id: "202",
+        name: "interview_source.mov",
+        path: fProjItem,
+        usedInCount: 2,
+        usedInComps: [{ id: 1, name: "Comp 1" }, { id: 2, name: "Comp 2" }]
+    };
+
+    // Test rankCanonicalProjectItem
+    var rankResult = engine.rankCanonicalProjectItem(itemUsed, itemUnused);
+    check("используемый элемент ранжируется выше неиспользуемого", rankResult < 0, true);
+
+    engine.scan({
+        workspaceRoot: testDir,
+        items: [itemUnused, itemUsed]
+    }, function (err, res) {
+        check("сканирование прошло успешно", !err, true);
+        check("дисковых дубликатов 0 (один файл на диске)", res.duplicateGroups.length, 0);
+        check("найдена 1 группа дубликатов элементов проекта", (res.projectItemGroups || []).length, 1);
+
+        var pGroup = res.projectItemGroups[0];
+        check("вид группы - project-item", pGroup.kind, "project-item");
+        check("подтип - same-source", pGroup.subType, "same-source");
+        check("в группе 2 элемента проекта", pGroup.files.length, 2);
+        check("каноническим выбран элемент с использованием в композициях", pGroup.recommendedCanonical, "202");
+        check("reclaimableBytes равен 0 (диск не освобождается)", pGroup.reclaimableBytes, 0);
+        next();
+    });
+});
+
 /* ------------------------------------------------------------------ run */
 
 function runSteps() {

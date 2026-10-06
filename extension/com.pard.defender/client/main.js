@@ -21,6 +21,7 @@
     "use strict";
 
     var TICK_MS = 5000;
+    var FAST_POLL_MS = 2500;
     var STABILITY_MS = 5000;
     var MAX_LOG_ROWS = 60;
     var BREAKER_THRESHOLD = 3;
@@ -31,6 +32,7 @@
         hostReady: false,
         hostError: "",
         busy: false,
+        auditing: false,
         report: null,
         settings: null,
         workspace: "",
@@ -42,13 +44,15 @@
         lastAuditAt: 0,
         log: [],
         paused: null,
+        userPaused: false,
         update: null,
+        updateInstalling: false,
         layers: null,
         lastLayerScanAt: 0,
         layersBusy: false,
         layerScanSeq: 0,
         // Состояние сессии
-        version: "2.0.4",
+        version: "2.3.2",
         confirmCleanupUntil: 0,
         confirmAdoptUntil: 0,
         confirmRedistUntil: 0,
@@ -121,7 +125,10 @@
     /* --------------------------------------------------------------- audit */
 
     function runAudit(callback) {
+        state.auditing = true;
+        render();
         PardHostAdapter.auditToFile(function (raw) {
+            state.auditing = false;
             var text = String(raw || "");
             if (text.indexOf("OK|") !== 0) {
                 callback(null, text || "Аудит не вернул результат.");
@@ -132,6 +139,7 @@
             var parsed = null;
             try { parsed = JSON.parse(body); } catch (e) { parsed = null; }
             if (!parsed) { callback(null, "Отчёт аудита повреждён."); return; }
+            if (parsed.ok && parsed.items) enrichAudioWithPremiereLinks(parsed);
             callback(parsed, parsed.ok ? "" : parsed.error);
         });
     }
@@ -216,6 +224,277 @@
      * once - but a legacy project is exactly the case that rule was not written
      * for, and the owner has to ask for this explicitly, per project.
      */
+    function publishMediaSnapshot(report) {
+        if (!report || !report.workspace) return;
+        if (typeof PardSyncCoordinator === "undefined" || !PardSyncCoordinator.publishSnapshot) return;
+
+        var snapProjectId = "";
+        if (report.projectId) {
+            snapProjectId = report.projectId;
+        } else if (typeof PardWorkspaceStore !== "undefined" && PardWorkspaceStore.currentSession) {
+            var sess = PardWorkspaceStore.currentSession();
+            if (sess && sess.projectId) snapProjectId = sess.projectId;
+        }
+        if (!snapProjectId) return;
+
+        var rawItems = report.items || [];
+        var snapItems = [];
+
+        // Enrich items with original oldPath from assets.tsv if available
+        var oldPathByCanonical = {};
+        try {
+            var metaDir = report.workspace + "/.parddefender";
+            var tsvContent = (typeof PardCopyQueue !== "undefined" && PardCopyQueue.readText)
+                ? PardCopyQueue.readText(metaDir + "/assets.tsv")
+                : null;
+            if (tsvContent) {
+                var tsvLines = tsvContent.split("\n");
+                for (var tli = 0; tli < tsvLines.length; tli++) {
+                    var tl = tsvLines[tli].trim();
+                    if (!tl) continue;
+                    var parts = tl.split("\t");
+                    if (parts.length >= 5 && parts[2] && parts[4]) {
+                        var normCan = (typeof PardCopyQueue !== "undefined" && PardCopyQueue.toSlash)
+                            ? PardCopyQueue.toSlash(parts[4]).toLowerCase()
+                            : String(parts[4]).replace(/\\/g, "/").toLowerCase();
+                        oldPathByCanonical[normCan] = (typeof PardCopyQueue !== "undefined" && PardCopyQueue.toSlash)
+                            ? PardCopyQueue.toSlash(parts[2])
+                            : String(parts[2]).replace(/\\/g, "/");
+                    }
+                }
+            }
+        } catch (eTsvRead) {}
+
+        for (var si = 0; si < rawItems.length; si++) {
+            var sIt = rawItems[si];
+            if (sIt.state === "protected") {
+                var canonicalP = sIt.path || sIt.destPath;
+                if (canonicalP) {
+                    var ext = canonicalP.indexOf(".") !== -1 ? canonicalP.substring(canonicalP.lastIndexOf(".") + 1).toLowerCase() : "";
+                    var is3D = /^(c4d|obj|fbx|abc|glb|gltf|e3d|sbsar|sbs|sbsprs)$/.test(ext) || sIt.category === "model" || sIt.category === "3d" || sIt.category === "material";
+                    var isMedia = /^(mp4|mov|avi|mkv|mxf|wmv|flv|webm|m4v|prores|r3d|braw|mts|m2ts|vob|mpg|mpeg|3gp|mp3|wav|aif|aiff|aifc|m4a|aac|flac|ogg|oga|wma|opus|caf|mp2|au|png|jpg|jpeg|tga|tiff|tif|exr|bmp|webp|gif|dpx|cr2|cr3|nef|arw|dng|psd|psb|ai|eps|svg)$/.test(ext);
+                    if (is3D || !isMedia) continue;
+
+                    var normCan = (typeof PardCopyQueue !== "undefined" && PardCopyQueue.toSlash)
+                        ? PardCopyQueue.toSlash(canonicalP).toLowerCase()
+                        : String(canonicalP).replace(/\\/g, "/").toLowerCase();
+                    var originalOldPath = sIt.oldPath || oldPathByCanonical[normCan] || undefined;
+                    snapItems.push({
+                        id: sIt.id,
+                        key: sIt.key || ("i" + sIt.id),
+                        name: sIt.name || "",
+                        path: canonicalP,
+                        oldPath: (originalOldPath && originalOldPath !== canonicalP) ? originalOldPath : undefined,
+                        contentId: sIt.contentId || "",
+                        size: sIt.size || 0,
+                        classification: sIt.category || "clip",
+                        forPremiere: true
+                    });
+                }
+            }
+        }
+
+        try {
+            PardSyncCoordinator.publishSnapshot(report.workspace, {
+                projectId: snapProjectId,
+                host: "aftereffects",
+                projectName: report.projectName || (state.report && state.report.projectName) || "AfterEffects",
+                projectPath: report.projectPath || (state.report && state.report.projectPath) || "",
+                items: snapItems
+            });
+        } catch (eSnap) {}
+    }
+
+    /*
+     * Audio files priority: Adobe Premiere is the primary authority for audio.
+     * When external audio enters AE:
+     * - Check if it already exists in the project workspace (internal).
+     * - If external, check if Premiere already copied/linked it (via snapshots, assets.tsv, or workspace audio folders).
+     * - If Premiere already linked it, relink AE directly to Premiere's link without duplicate copies.
+     * - If not in project and not linked by Premiere, AE copies to its own project folders.
+     */
+    function enrichAudioWithPremiereLinks(report) {
+        if (!report || !report.workspace || !report.items) return;
+        var ws = report.workspace;
+        var normWs = (typeof PardCopyQueue !== "undefined" && PardCopyQueue.toSlash)
+            ? PardCopyQueue.toSlash(ws)
+            : String(ws).replace(/\\/g, "/");
+
+        // 1. Gather Premiere Media Snapshots
+        var premSnapshots = [];
+        if (typeof PardSyncCoordinator !== "undefined" && PardSyncCoordinator.listSnapshots) {
+            try {
+                var allSnaps = PardSyncCoordinator.listSnapshots(normWs) || [];
+                for (var si = 0; si < allSnaps.length; si++) {
+                    if (allSnaps[si] && allSnaps[si].host === "premiere") {
+                        premSnapshots.push(allSnaps[si]);
+                    }
+                }
+            } catch (eSnap) {}
+        }
+
+        // Build indexes from Premiere snapshots
+        var snapByOldPath = {};
+        var snapByPath = {};
+        var snapByNameAndSize = {};
+        var snapByName = {};
+        for (var pi = 0; pi < premSnapshots.length; pi++) {
+            var snapItems = premSnapshots[pi].items || [];
+            for (var pii = 0; pii < snapItems.length; pii++) {
+                var sIt = snapItems[pii];
+                var sCan = sIt.path ? String(sIt.path).replace(/\\/g, "/") : "";
+                if (!sCan || sIt.protected === false ||
+                    sCan.toLowerCase().indexOf(normWs.toLowerCase() + "/03_audio/") !== 0) continue;
+                var sOld = sIt.oldPath ? String(sIt.oldPath).replace(/\\/g, "/") : "";
+                var sBase = sCan.substring(sCan.lastIndexOf("/") + 1).toLowerCase();
+                var sSize = Number(sIt.size) || 0;
+
+                snapByPath[sCan.toLowerCase()] = sCan;
+                if (sOld) snapByOldPath[sOld.toLowerCase()] = sCan;
+                if (sSize > 0) snapByNameAndSize[sBase + ":" + sSize] = sCan;
+                if (!snapByName[sBase]) snapByName[sBase] = sCan;
+            }
+        }
+
+        // 2. Read assets.tsv
+        var tsvByOldPath = {};
+        var tsvByNameAndSize = {};
+        var tsvByName = {};
+        var originalByCanonical = {};
+        try {
+            var tsvPath = normWs + "/.parddefender/assets.tsv";
+            var tsvContent = (typeof PardCopyQueue !== "undefined" && PardCopyQueue.readText)
+                ? PardCopyQueue.readText(tsvPath)
+                : null;
+            if (tsvContent) {
+                var tsvLines = tsvContent.split("\n");
+                for (var tli = 0; tli < tsvLines.length; tli++) {
+                    var tl = tsvLines[tli].trim();
+                    if (!tl) continue;
+                    var cols = tl.split("\t");
+                    if (cols.length >= 5) {
+                        var cOld = cols[2] ? String(cols[2]).replace(/\\/g, "/") : "";
+                        var cCan = cols[4] ? String(cols[4]).replace(/\\/g, "/") : "";
+                        var cSize = parseInt(cols[3], 10) || 0;
+                        var cCat = cols[6] || "";
+                        var ext = cCan.indexOf(".") !== -1 ? cCan.substring(cCan.lastIndexOf(".") + 1).toLowerCase() : "";
+                        var isAud = cCat === "audio" || /^(mp3|wav|aif|aiff|aifc|m4a|aac|flac|ogg|oga|wma|opus|caf|mp2|au)$/.test(ext);
+                        if (cCan && isAud) {
+                            if (cOld) originalByCanonical[cCan.toLowerCase()] = cOld;
+                            if (cOld) tsvByOldPath[cOld.toLowerCase()] = cCan;
+                            var canBase = cCan.substring(cCan.lastIndexOf("/") + 1).toLowerCase();
+                            if (cSize > 0) tsvByNameAndSize[canBase + ":" + cSize] = cCan;
+                            if (!tsvByName[canBase]) tsvByName[canBase] = cCan;
+                        }
+                    }
+                }
+            }
+        } catch (eTsv) {}
+
+        // 3. Scan & Enrich items
+        for (var i = 0; i < report.items.length; i++) {
+            var item = report.items[i];
+            var ext = item.ext || (item.path && item.path.indexOf(".") !== -1 ? item.path.substring(item.path.lastIndexOf(".") + 1).toLowerCase() : "");
+            var isAudio = (item.category === "audio") || /^(mp3|wav|aif|aiff|aifc|m4a|aac|flac|ogg|oga|wma|opus|caf|mp2|au)$/.test(ext);
+            if (!isAudio) continue;
+
+            var normPath = item.path ? String(item.path).replace(/\\/g, "/") : "";
+            var fName = normPath.substring(normPath.lastIndexOf("/") + 1);
+            var fNameLow = fName.toLowerCase();
+            var fSize = Number(item.size) || 0;
+
+            // Internal audio file
+            if (item.state === "protected") {
+                var curFolder = normPath.replace(/\/[^\/]*$/, "").toLowerCase();
+                if (curFolder.indexOf("/03_audio") !== -1 || curFolder.indexOf("/sound") !== -1 || curFolder.indexOf("/audio") !== -1) {
+                    item.misplaced = false;
+                }
+            }
+
+            // Also follow Premiere when AE already points at an older internal copy.
+            if (item.state === "pending" || item.state === "protected") {
+                var matchedPremPath = null;
+                var matchReason = "";
+                var originalPath = originalByCanonical[normPath.toLowerCase()] || normPath;
+
+                // A. Match via Premiere snapshot
+                if (snapByOldPath[originalPath.toLowerCase()]) {
+                    matchedPremPath = snapByOldPath[originalPath.toLowerCase()];
+                    matchReason = "snap_old_path";
+                } else if (normPath && snapByOldPath[normPath.toLowerCase()]) {
+                    matchedPremPath = snapByOldPath[normPath.toLowerCase()];
+                    matchReason = "snap_old_path";
+                } else if (normPath && snapByPath[normPath.toLowerCase()]) {
+                    matchedPremPath = snapByPath[normPath.toLowerCase()];
+                    matchReason = "snap_path";
+                } else if (fSize > 0 && snapByNameAndSize[fNameLow + ":" + fSize]) {
+                    matchedPremPath = snapByNameAndSize[fNameLow + ":" + fSize];
+                    matchReason = "snap_name_size";
+                }
+
+                // B. Match via assets.tsv
+                if (!matchedPremPath && item.state === "pending") {
+                    if (normPath && tsvByOldPath[normPath.toLowerCase()]) {
+                        matchedPremPath = tsvByOldPath[normPath.toLowerCase()];
+                        matchReason = "tsv_old_path";
+                    } else if (fSize > 0 && tsvByNameAndSize[fNameLow + ":" + fSize]) {
+                        matchedPremPath = tsvByNameAndSize[fNameLow + ":" + fSize];
+                        matchReason = "tsv_name_size";
+                    }
+                }
+
+                // C. Match via disk candidate in project workspace
+                if (!matchedPremPath && item.state === "pending") {
+                    var candidates = [
+                        normWs + "/03_audio/voice/" + fName,
+                        normWs + "/03_audio/music/" + fName,
+                        normWs + "/03_audio/sfx/" + fName,
+                        normWs + "/sound/voice/" + fName,
+                        normWs + "/sound/music/" + fName,
+                        normWs + "/sound/sfx/" + fName,
+                        normWs + "/sound/" + fName,
+                        normWs + "/03_audio/" + fName
+                    ];
+                    for (var ci = 0; ci < candidates.length; ci++) {
+                        var cP = candidates[ci];
+                        var cStat = (typeof PardCopyQueue !== "undefined" && PardCopyQueue.statOf)
+                            ? PardCopyQueue.statOf(cP)
+                            : null;
+                        if (cStat && cStat.isFile()) {
+                            if (fSize === 0 || cStat.size === fSize || (!normPath && cStat.size > 0)) {
+                                matchedPremPath = cP;
+                                matchReason = "disk_candidate";
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Verify matched file exists on disk
+                if (matchedPremPath && matchedPremPath.toLowerCase() !== normPath.toLowerCase() &&
+                    matchedPremPath.toLowerCase().indexOf(normWs.toLowerCase() + "/03_audio/") === 0 &&
+                    (item.state === "pending" || matchReason === "snap_old_path")) {
+                    var mStat = (typeof PardCopyQueue !== "undefined" && PardCopyQueue.statOf)
+                        ? PardCopyQueue.statOf(matchedPremPath)
+                        : null;
+                    if (mStat && mStat.isFile()) {
+                        item.state = "pending";
+                        item.unassigned = false;
+                        item.premiereCanonicalPath = matchedPremPath;
+                        item.destPath = matchedPremPath;
+                        item.allowReuse = true;
+                        item.crossHost = {
+                            host: "premiere",
+                            canonicalPath: matchedPremPath,
+                            isPremiereAudio: true,
+                            matchReason: matchReason
+                        };
+                    }
+                }
+            }
+        }
+    }
+
     function relocating() {
         return !!(state.settings && state.settings.legacyRedistribute);
     }
@@ -253,7 +532,8 @@
             recordedDest = PardVerify.destinationForSource(item.path);
             var srcKey = PardCopyQueue.toSlash(item.path).toLowerCase();
             var sharedDest = seenSources[srcKey] ? seenSources[srcKey].destPath : null;
-            taskDest = recordedDest || sharedDest || item.destPath;
+            var premDest = item.premiereCanonicalPath || null;
+            taskDest = (item.category === "audio" && premDest) ? premDest : (recordedDest || sharedDest || premDest || item.destPath);
             if (item.isSequence && (recordedDest || sharedDest)) {
                 taskDest = PardCopyQueue.toSlash(recordedDest || sharedDest).replace(/\/[^\/]*$/, "");
             }
@@ -265,7 +545,8 @@
                 name: item.name,
                 sourcePath: item.path,
                 destPath: taskDest,
-                allowReuse: !!(recordedDest || sharedDest),
+                allowReuse: !!(recordedDest || sharedDest || premDest),
+                premiereCanonicalPath: premDest,
                 isSequence: item.isSequence,
                 sequence: item.sequence,
                 size: item.size,
@@ -393,6 +674,24 @@
                 return;
             }
             callback(parsed, parsed.ok ? "" : parsed.error, entries);
+        });
+    }
+
+    function commitRelinkDirect(entries, callback) {
+        if (!entries || !entries.length) { callback({ relinked: 0, failures: [] }, ""); return; }
+        var planPath = tempRoot() + "/relink-plan.json";
+        if (!PardCopyQueue.writeText(planPath, JSON.stringify({ items: entries }))) {
+            callback(null, "План перелинковки не удалось записать.");
+            return;
+        }
+        PardHostAdapter.commitFromFileJson(planPath, function (raw) {
+            var parsed = null;
+            try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
+            if (!parsed) {
+                callback(null, "Хост не вернул результат перелинковки.");
+                return;
+            }
+            callback(parsed, parsed.ok ? "" : parsed.error);
         });
     }
 
@@ -576,7 +875,7 @@
 
     function runPass(force) {
         if (state.busy || !state.hostReady) return;
-        if (state.paused && !force) return;
+        if ((state.paused || state.userPaused) && !force) return;
         var report = state.report;
         if (!report || !report.ok || !report.projectSaved || report.workspaceIssue) return;
 
@@ -710,6 +1009,7 @@
             setBusyLabel("");
             PardIssues.save();
             PardStats.save();
+            publishMediaSnapshot(state.report);
             /* Paths and folders changed, so the cached report is stale. */
             tick(true);
         }
@@ -718,6 +1018,7 @@
     /* ------------------------------------------------------- verification */
 
     function sweepProtected(full) {
+        if (state.userPaused && !full) return null;
         if (!state.report || !state.report.items || !state.workspace) return null;
         if (!PardCopyQueue.available()) return null;
 
@@ -774,6 +1075,8 @@
             /* A proxy belongs to an element a composition uses. It is never
              * loose, whatever its own branch says. */
             if (item.isProxy) continue;
+            if (item.category === "material") continue;
+            if (/\.(sbsar|sbs|sbsprs)$/i.test(item.path || "") || /\.(sbsar|sbs|sbsprs)$/i.test(item.name || "")) continue;
             if (!item.unassigned) continue;
             /*
              * Sent to 00_UNUSED by hand, but a composition still uses it.
@@ -876,6 +1179,231 @@
                 tick(true);
             });
         });
+    }
+
+    function allUnusedItems() {
+        var out = [], i, item;
+        var report = state.report;
+        if (!report || !report.items) return out;
+
+        for (i = 0; i < report.items.length; i++) {
+            item = report.items[i];
+            if (item.isProxy) continue;
+            if (item.category === "material") continue;
+            if (/\.(sbsar|sbs|sbsprs)$/i.test(item.path || "") || /\.(sbsar|sbs|sbsprs)$/i.test(item.name || "")) continue;
+            var isUnassigned = !!item.unassigned || (item.usedInCount === 0 && (!item.usedInComps || item.usedInComps.length === 0));
+            if (!isUnassigned && !item.forcedUnused) continue;
+            if (item.state === "missing") continue;
+            out.push(item);
+        }
+        return out;
+    }
+
+    function checkAndSortUnusedFiles(options, callback) {
+        var cb = typeof callback === "function" ? callback : (typeof options === "function" ? options : function () {});
+        var opt = (typeof options === "object" && options !== null) ? options : {};
+        var report = state.report;
+        if (!report || !report.workspace) {
+            var noWsMsg = "Проект не сохранён: невозможно определить рабочую папку.";
+            log(noWsMsg, "bad");
+            showActionFeedback(noWsMsg, "warn");
+            cb({ ok: false, error: "no_workspace" });
+            return;
+        }
+
+        var ws = report.workspace.replace(/\\/g, "/");
+        var candidates = allUnusedItems();
+        if (!candidates.length) {
+            var zeroMsg = "Неиспользуемых файлов в проекте не обнаружено.";
+            log(zeroMsg, "good");
+            showActionFeedback(zeroMsg, "good");
+            cb({ ok: true, sorted: 0, moved: 0, items: [] });
+            return;
+        }
+
+        state.busy = true;
+        setBusyLabel("Сортировка " + candidates.length + " неиспользуемых файлов в /unused…");
+        render();
+
+        var fsMod = null, pathMod = null;
+        try { fsMod = require("fs"); } catch (e) {}
+        try { pathMod = require("path"); } catch (e2) {}
+
+        var unusedRoot = ws + "/unused";
+        if (fsMod) {
+            try {
+                var nativeUnusedRoot = unusedRoot.replace(/\//g, pathMod ? pathMod.sep : "\\");
+                if (!fsMod.existsSync(nativeUnusedRoot)) {
+                    fsMod.mkdirSync(nativeUnusedRoot, { recursive: true });
+                }
+            } catch (eDir) {}
+        }
+
+        var copyTasks = [];
+        var internalMoves = [];
+        var relinkEntries = [];
+        var panelMoves = [];
+        var seenDestinations = {};
+
+        var i, item, cat, subFolder, fileName, destDir, destPath;
+        for (i = 0; i < candidates.length; i++) {
+            item = candidates[i];
+            cat = item.category || "other";
+            subFolder = item.isSequence ? "SEQUENCES" : (cat.toUpperCase() || "OTHER");
+            destDir = unusedRoot + "/" + subFolder;
+            if (item.isSequence && item.sequence) {
+                var seqName = item.destName || "SEQUENCE";
+                destDir = unusedRoot + "/SEQUENCES/" + seqName;
+            }
+            if (fsMod) {
+                try {
+                    var nativeDestDir = destDir.replace(/\//g, pathMod ? pathMod.sep : "\\");
+                    if (!fsMod.existsSync(nativeDestDir)) {
+                        fsMod.mkdirSync(nativeDestDir, { recursive: true });
+                    }
+                } catch (eMk) {}
+            }
+
+            fileName = item.destFile || (item.path ? item.path.substring(item.path.lastIndexOf("/") + 1) : ("file_" + item.id));
+            destPath = destDir + "/" + fileName;
+
+            var normSrc = (item.path || "").replace(/\\/g, "/");
+            var normDest = destPath.replace(/\\/g, "/");
+
+            var disambig = 2;
+            var baseWithoutExt = fileName.replace(/\.[^.]+$/, "");
+            var ext = fileName.indexOf(".") !== -1 ? fileName.substring(fileName.lastIndexOf(".")) : "";
+            while (seenDestinations[normDest.toLowerCase()]) {
+                fileName = baseWithoutExt + " (" + disambig + ")" + ext;
+                destPath = destDir + "/" + fileName;
+                normDest = destPath.replace(/\\/g, "/");
+                disambig++;
+            }
+            seenDestinations[normDest.toLowerCase()] = true;
+
+            var isInternal = normSrc.toLowerCase().indexOf(ws.toLowerCase() + "/") === 0;
+
+            if (normSrc.toLowerCase() === normDest.toLowerCase()) {
+                panelMoves.push({ id: item.id, target: "unused/" + subFolder });
+                continue;
+            }
+
+            if (isInternal) {
+                internalMoves.push({
+                    item: item,
+                    sourcePath: normSrc,
+                    destPath: normDest,
+                    subFolder: subFolder
+                });
+            } else {
+                copyTasks.push({
+                    key: item.key || ("i" + item.id),
+                    id: item.id,
+                    name: item.name,
+                    sourcePath: normSrc,
+                    destPath: normDest,
+                    branch: "unused",
+                    category: cat,
+                    isSequence: item.isSequence === true,
+                    sequence: item.sequence,
+                    size: item.size
+                });
+            }
+        }
+
+        var movedCount = 0;
+        var totalBytes = 0;
+        for (i = 0; i < internalMoves.length; i++) {
+            var moveOp = internalMoves[i];
+            var src = moveOp.sourcePath;
+            var dst = moveOp.destPath;
+            var nativeSrc = src.replace(/\//g, pathMod ? pathMod.sep : "\\");
+            var nativeDst = dst.replace(/\//g, pathMod ? pathMod.sep : "\\");
+
+            var success = false;
+            if (fsMod && fsMod.existsSync(nativeSrc)) {
+                try {
+                    var srcStat = fsMod.statSync(nativeSrc);
+                    var canReuse = false;
+                    if (fsMod.existsSync(nativeDst)) {
+                        var dstStat = fsMod.statSync(nativeDst);
+                        if (dstStat.size === srcStat.size) canReuse = true;
+                    }
+
+                    if (canReuse) {
+                        success = true;
+                    } else {
+                        var partDst = nativeDst + ".pdpart";
+                        fsMod.copyFileSync(nativeSrc, partDst);
+                        var partStat = fsMod.statSync(partDst);
+                        if (partStat.size === srcStat.size) {
+                            if (fsMod.existsSync(nativeDst)) fsMod.unlinkSync(nativeDst);
+                            fsMod.renameSync(partDst, nativeDst);
+                            try { fsMod.unlinkSync(nativeSrc); } catch (eUnl) {}
+                            success = true;
+                        } else {
+                            try { fsMod.unlinkSync(partDst); } catch (eCl) {}
+                        }
+                    }
+                    if (success) {
+                        movedCount++;
+                        totalBytes += (srcStat ? srcStat.size : 0);
+                        relinkEntries.push({
+                            key: moveOp.item.key || ("i" + moveOp.item.id),
+                            id: moveOp.item.id,
+                            isProxy: false,
+                            expectPath: moveOp.item.path,
+                            destPath: dst,
+                            isSequence: moveOp.item.isSequence === true
+                        });
+                        panelMoves.push({ id: moveOp.item.id, target: "unused/" + moveOp.subFolder });
+                    }
+                } catch (eMove) {
+                    log("Не удалось переместить файл в unused: " + src + " — " + eMove.message, "warn");
+                }
+            }
+        }
+
+        function finishAll() {
+            commitRelinkDirect(relinkEntries, function (relinkRes, relinkErr) {
+                applyPanel(panelMoves, function (panelRes, panelErr) {
+                    state.busy = false;
+                    setBusyLabel("");
+                    var count = relinkEntries.length;
+                    var summaryMsg = "Сортировка завершена: " + count + " неиспользуемых файлов перемещено в папку /unused (" + formatBytes(totalBytes) + ").";
+                    log(summaryMsg, "good");
+                    showActionFeedback(summaryMsg, "good");
+                    tick(true);
+                    cb({ ok: true, sorted: count, moved: count, bytes: totalBytes });
+                });
+            });
+        }
+
+        if (copyTasks.length > 0) {
+            journalTasks(copyTasks);
+            PardCopyQueue.run(copyTasks, state.settings, {}, function (results) {
+                recordManifest(copyTasks, results);
+                for (var rIdx = 0; rIdx < results.length; rIdx++) {
+                    var cr = results[rIdx];
+                    if (cr.ok && cr.destPath) {
+                        var cTask = copyTasks[rIdx];
+                        relinkEntries.push({
+                            key: cTask.key,
+                            id: cTask.id,
+                            isProxy: false,
+                            expectPath: cTask.sourcePath,
+                            destPath: cr.destPath,
+                            isSequence: cTask.isSequence === true
+                        });
+                        panelMoves.push({ id: cTask.id, target: "unused/" + (cTask.category ? cTask.category.toUpperCase() : "OTHER") });
+                        totalBytes += (cr.bytes || cTask.size || 0);
+                    }
+                }
+                finishAll();
+            });
+        } else {
+            finishAll();
+        }
     }
 
     /* ------------------------------------------------------ legacy projects */
@@ -1227,7 +1755,7 @@
                     renderLayers();
                 }));
 
-            if (finding.kind === "layer" && finding.itemId) {
+            if (finding.kind === "layer" && finding.itemId && finding.path) {
                 actions.appendChild(iconButton("↓",
                     "Отправить файл в 00_UNUSED, не трогая слой в композиции",
                     function () { forceUnused(finding); }));
@@ -1300,20 +1828,43 @@
         return (report.projectPath || "") + "|" + (report.workspace || "") + "|" + itemsLen + "|" + countPart;
     }
 
-    function tick(force) {
-        if (!state.hostReady || state.busy) return;
+    function tick(force, callback) {
+        if (!state.hostReady || state.busy) {
+            if (callback) callback(null, "HOST_BUSY");
+            return;
+        }
 
-        var due = force || !state.report ||
-            (Date.now() - state.lastAuditAt) >= (state.settings
-                ? state.settings.scanIntervalMs
-                : 180000);
-        if (!due) { render(); return; }
+        if (state.userPaused && !force) {
+            render();
+            if (callback) callback(state.report, null);
+            return;
+        }
+
+        var isUnsavedOrInitial = !state.report || !state.report.projectSaved;
+        var defaultInterval = isUnsavedOrInitial ? FAST_POLL_MS : 180000;
+        var configured = (state.settings && typeof state.settings.scanIntervalMs === "number")
+            ? state.settings.scanIntervalMs
+            : defaultInterval;
+        var interval = Math.min(defaultInterval, configured);
+
+        var due = force || (Date.now() - state.lastAuditAt) >= interval;
+        if (!due) {
+            render();
+            if (callback) callback(state.report, null);
+            return;
+        }
+
+        if (state.auditing) {
+            if (callback) callback(null, "ALREADY_AUDITING");
+            return;
+        }
 
         runAudit(function (report, error) {
             state.lastAuditAt = Date.now();
             if (!report) {
                 state.hostError = error;
                 render();
+                if (callback) callback(null, error);
                 return;
             }
             state.hostError = report.ok ? "" : report.error;
@@ -1337,15 +1888,23 @@
                 if (reg && reg.conflict) {
                     log(reg.error, "warn");
                 }
+                publishMediaSnapshot(report);
             }
             refreshTracking(report);
             maybeFinishRedistribute();
             refreshDisk();
             maybeWeigh();
             maybeCheckPin();
-            sweepProtected(false);
-            maybeScanLayers();
-            render();
+            sweepProtected(!!force);
+            if (callback) {
+                scanLayers(!!force, function () {
+                    render();
+                    callback(report, null);
+                });
+            } else {
+                maybeScanLayers(!!force);
+                render();
+            }
 
             /*
              * The legacy pass keeps going whether or not automatic mode is on:
@@ -1353,7 +1912,7 @@
              * batches as that takes, and it switches itself off when the last
              * misplaced file is gone.
              */
-            if (state.settings && !state.paused &&
+            if (state.settings && !state.paused && !state.userPaused &&
                 (state.settings.autoEnabled || relocating())) {
                 runPass(false);
             }
@@ -1420,36 +1979,161 @@
         });
     }
 
-    function scanLayers(force) {
-        if (!state.settings || state.settings.scanLayersEnabled === false) {
-            if (!force) state.layers = null;
+    function scanLayers(force, callback) {
+        if (state.userPaused && !force) {
+            if (callback) callback(state.layers);
             return;
         }
-        if (!state.workspace) return;
-        if (state.layersBusy) return;
-        if (!force && Date.now() - state.lastLayerScanAt < state.settings.scanIntervalMs) return;
+        if (!state.settings || state.settings.scanLayersEnabled === false) {
+            if (!force) state.layers = null;
+            if (callback) callback(null);
+            return;
+        }
+        if (!state.workspace) {
+            if (callback) callback(null);
+            return;
+        }
+        if (state.layersBusy) {
+            if (callback) callback(state.layers);
+            return;
+        }
+        if (!force && Date.now() - state.lastLayerScanAt < state.settings.scanIntervalMs) {
+            if (callback) callback(state.layers);
+            return;
+        }
 
         state.layersBusy = true;
         var seq = ++state.layerScanSeq;
         renderLayers();
 
         runLayerScan(function (report) {
-            if (seq !== state.layerScanSeq) return;
+            if (seq !== state.layerScanSeq) {
+                if (callback) callback(null);
+                return;
+            }
             state.layersBusy = false;
             if (!report || !report.ok) {
                 log("Не удалось обновить список слоёв.", "warn");
                 renderLayers();
+                if (callback) callback(null);
                 return;
             }
             state.layers = report;
             state.lastLayerScanAt = Date.now();
             renderLayers();
             renderTabs();
+            if (callback) callback(report);
         });
     }
 
-    function maybeScanLayers() {
-        scanLayers(false);
+    function maybeScanLayers(force, callback) {
+        if (state.userPaused && !force) {
+            if (callback) callback(state.layers);
+            return;
+        }
+        scanLayers(!!force, callback);
+    }
+
+    function handleManualScan() {
+        if (!state.hostReady || state.busy || state.auditing) return;
+        log("Ручное сканирование проекта…", "work");
+        showActionFeedback("");
+        var startTime = Date.now();
+
+        if (el.scanProgressBar) el.scanProgressBar.hidden = false;
+        if (el.scanProgressBox) {
+            el.scanProgressBox.hidden = false;
+            if (el.scanProgressLabel) el.scanProgressLabel.textContent = "Сканирование проекта…";
+            if (el.scanProgressStats) el.scanProgressStats.textContent = "Проверка медиафайлов и композиций…";
+        }
+        if (el.scanProject) {
+            el.scanProject.disabled = true;
+            el.scanProject.textContent = "↺ Сканирование…";
+        }
+        if (el.headScanBtn) {
+            el.headScanBtn.disabled = true;
+        }
+
+        state.lastAuditAt = 0;
+        state.lastLayerScanAt = 0;
+
+        tick(true, function (report, error) {
+            if (el.scanProject) {
+                el.scanProject.disabled = !state.hostReady || state.busy || state.auditing;
+                el.scanProject.textContent = "↺ СКАНИРОВАТЬ ПРОЕКТ";
+            }
+            if (el.headScanBtn) {
+                el.headScanBtn.disabled = !state.hostReady || state.busy || state.auditing;
+            }
+            if (el.scanProgressBar) {
+                el.scanProgressBar.hidden = !state.auditing;
+            }
+            if (el.scanProgressBox) {
+                el.scanProgressBox.hidden = true;
+            }
+
+            if (error) {
+                log("Ошибка сканирования: " + error, "bad");
+                showActionFeedback("Ошибка сканирования: " + error, "bad");
+                render();
+                return;
+            }
+
+            if (report && !report.projectSaved) {
+                log("Проект ещё не сохранён на диск. Сохраните проект (.aep).", "warn");
+                showActionFeedback("Проект ещё не сохранён на диск. Сохраните проект (.aep).", "warn");
+            } else if (report && report.ok) {
+                var itemsCount = (report.items || []).length;
+                var queueCount = (report.queue || []).length;
+                var openLayers = openFindingCount();
+                var missingCount = (report.counts && report.counts.missing) || 0;
+                var issuesCount = (report.issues || []).length;
+
+                var summary = "Сканирование завершено: " + itemsCount + " элементов в проекте.";
+                var feedbackMsg = "";
+                var feedbackTone = "good";
+
+                if (openLayers > 0) {
+                    feedbackMsg = "⚠ Найдено выключенных объектов: " + openLayers + ". Проверьте «ВЫКЛЮЧЕНО И ЗАБЫТО».";
+                    feedbackTone = "warn";
+                    summary += " Выключенных слоёв: " + openLayers + ".";
+                    showTab("layers");
+                } else if (queueCount > 0) {
+                    feedbackMsg = "✓ В очереди на раскладку: " + queueCount + " элементов.";
+                    feedbackTone = "good";
+                    summary += " В очереди: " + queueCount + ".";
+                } else if (missingCount > 0) {
+                    feedbackMsg = "⚠ Потеряно файлов на диске: " + missingCount + ".";
+                    feedbackTone = "warn";
+                    summary += " Потеряно: " + missingCount + ".";
+                } else {
+                    feedbackMsg = "✓ Все файлы защищены, выключенных слоёв не обнаружено.";
+                    feedbackTone = "good";
+                }
+
+                if (issuesCount > 0) summary += " Проблем: " + issuesCount + ".";
+                log(summary, (queueCount > 0 || issuesCount > 0 || openLayers > 0) ? "work" : "good");
+                showActionFeedback(feedbackMsg, feedbackTone, 7000);
+            }
+            render();
+        });
+    }
+
+    function toggleUserPause(desiredState) {
+        var nextState = (typeof desiredState === "boolean") ? desiredState : !state.userPaused;
+        if (state.userPaused === nextState) return;
+        state.userPaused = nextState;
+
+        if (state.userPaused) {
+            log("Фоновое сканирование и процессы приостановлены.", "warn");
+            showActionFeedback("⏸ Сканирование и фоновые процессы приостановлены", "warn");
+            render();
+        } else {
+            log("Фоновое сканирование и процессы возобновлены.", "work");
+            showActionFeedback("▶ Сканирование возобновлено, запуск проверки…", "good");
+            render();
+            tick(true);
+        }
     }
 
     /*
@@ -1464,6 +2148,7 @@
     var PIN_CHECK_INTERVAL_MS = 900000;
 
     function maybeCheckPin() {
+        if (state.userPaused) return;
         if (!state.workspace || !PardHousekeeping.available()) return;
         state.cloud = PardHousekeeping.cloudInfo(state.workspace);
         if (!state.cloud.cloud) { state.pin = null; return; }
@@ -1505,6 +2190,7 @@
     }
 
     function maybeWeigh() {
+        if (state.userPaused) return;
         if (!state.workspace || !PardHousekeeping.available()) return;
         if (Date.now() - state.lastWeighAt < WEIGH_INTERVAL_MS) return;
         state.lastWeighAt = Date.now();
@@ -1520,9 +2206,44 @@
         el.busy.hidden = !text;
     }
 
+    var actionFeedbackTimer = null;
+    function showActionFeedback(text, tone, durationMs) {
+        if (!el.actionFeedback) return;
+        if (actionFeedbackTimer) {
+            window.clearTimeout(actionFeedbackTimer);
+            actionFeedbackTimer = null;
+        }
+        if (!text) {
+            el.actionFeedback.hidden = true;
+            el.actionFeedback.textContent = "";
+            return;
+        }
+        el.actionFeedback.textContent = text;
+        el.actionFeedback.className = "action-feedback " + (tone || "good");
+        el.actionFeedback.hidden = false;
+
+        var ms = durationMs || 7000;
+        actionFeedbackTimer = window.setTimeout(function () {
+            if (el.actionFeedback) {
+                el.actionFeedback.hidden = true;
+            }
+            actionFeedbackTimer = null;
+        }, ms);
+    }
+
     function statusFor() {
         if (!state.hostReady) {
             return { label: "ОШИБКА ЗАГРУЗКИ", tone: "red", note: state.hostError };
+        }
+        if (state.auditing) {
+            var isInitial = !state.report || !state.report.projectSaved;
+            return {
+                label: isInitial ? "ПОДГОТОВКА К СКАНИРОВАНИЮ…" : "СКАНИРОВАНИЕ…",
+                tone: "blue",
+                note: isInitial
+                    ? "Проверка сохранения проекта и структуры папок…"
+                    : "Анализ ассетов и композиций проекта…"
+            };
         }
         var report = state.report;
         if (!report) return { label: "ЗАПУСК…", tone: "neutral", note: "" };
@@ -1536,6 +2257,13 @@
         }
         if (report.workspaceIssue) {
             return { label: "ПРОВЕРЬТЕ ПАПКУ", tone: "yellow", note: report.workspaceIssue };
+        }
+        if (state.userPaused) {
+            return {
+                label: "ПАУЗА",
+                tone: "yellow",
+                note: "Фоновое сканирование и процессы приостановлены."
+            };
         }
         if (state.paused) {
             return {
@@ -1577,9 +2305,36 @@
             el.note.textContent = status.note || "";
             el.note.hidden = !status.note;
         }
+        if (el.scanProgressBar) {
+            el.scanProgressBar.hidden = !state.auditing;
+        }
+        if (el.scanProgressBox) {
+            el.scanProgressBox.hidden = !state.auditing;
+        }
         el.resume.hidden = !state.paused;
 
+        if (el.pauseProject) {
+            el.pauseProject.textContent = state.userPaused
+                ? "▶ ВОЗОБНОВИТЬ СКАНИРОВАНИЕ"
+                : "⏸ ПРИОСТАНОВИТЬ СКАНИРОВАНИЕ";
+            el.pauseProject.title = state.userPaused
+                ? "Возобновить сканирование и фоновые процессы"
+                : "Приостановить фоновое сканирование и процессы";
+            el.pauseProject.className = "primary btn-pause-action" + (state.userPaused ? " is-paused" : "");
+        }
+        if (el.headPauseBtn) {
+            el.headPauseBtn.textContent = state.userPaused ? "▶" : "⏸";
+            el.headPauseBtn.title = state.userPaused
+                ? "Возобновить сканирование и фоновые процессы"
+                : "Приостановить фоновое сканирование и процессы";
+            el.headPauseBtn.className = "icon head-pause-btn" + (state.userPaused ? " is-paused" : "");
+            el.headPauseBtn.setAttribute("aria-label", state.userPaused ? "Возобновить процессы" : "Приостановить процессы");
+        }
+
         var report = state.report;
+        if (el.scanNow) {
+            el.scanNow.hidden = !(report && !report.projectSaved && !state.auditing);
+        }
         if (report && report.workspace) {
             if (changed("workspace", report.workspace)) {
                 el.workspace.textContent = report.workspace.replace(/^.*\//, "");
@@ -1616,9 +2371,17 @@
         }
 
         var canAct = state.hostReady && report && report.ok &&
-            report.projectSaved && !report.workspaceIssue && !state.busy;
+            report.projectSaved && !report.workspaceIssue && !state.busy && !state.auditing;
         el.runNow.disabled = !canAct;
         el.verifyAll.disabled = !canAct;
+
+        if (el.scanProject) {
+            el.scanProject.disabled = !state.hostReady || state.busy || state.auditing;
+            el.scanProject.textContent = state.auditing ? "↺ Сканирование…" : "↺ СКАНИРОВАТЬ ПРОЕКТ";
+        }
+        if (el.headScanBtn) {
+            el.headScanBtn.disabled = !state.hostReady || state.busy || state.auditing;
+        }
 
         if (state.settings) {
             el.autoEnabled.checked = state.settings.autoEnabled;
@@ -1674,20 +2437,33 @@
 
     function renderUnused() {
         var totals = unusedTotals();
-        var signature = totals.count + "|" + totals.bytes + "|" + totals.onlyCopies +
+        var allUnused = allUnusedItems();
+        var totalCount = Math.max(totals.count, allUnused.length);
+        var totalBytes = totals.bytes;
+        if (!totalBytes && allUnused.length) {
+            for (var ubi = 0; ubi < allUnused.length; ubi++) totalBytes += (allUnused[ubi].size || 0);
+        }
+
+        var signature = totals.count + "|" + allUnused.length + "|" + totalBytes + "|" + totals.onlyCopies +
             "|" + (state.confirmCleanupUntil > Date.now() ? "confirm" : "idle") +
             "|" + (state.busy ? "busy" : "free");
 
-        el.unusedSection.hidden = totals.count === 0;
-        if (totals.count === 0) { state.confirmCleanupUntil = 0; return; }
+        el.unusedSection.hidden = totalCount === 0;
+        if (totalCount === 0) { state.confirmCleanupUntil = 0; return; }
         if (!changed("unused", signature)) return;
 
-        el.unusedTitle.textContent = "Не используется: " + totals.count +
-            " файл. · " + formatBytes(totals.bytes);
+        el.unusedTitle.textContent = "Не используется: " + totalCount +
+            " файл. · " + formatBytes(totalBytes);
+
+        if (el.sortUnused) {
+            el.sortUnused.disabled = state.busy || totalCount === 0;
+            el.sortUnused.textContent = "📁 СОРТИРОВАТЬ НЕИСПОЛЬЗУЕМЫЕ В UNUSED" +
+                (totalCount > 0 ? " (" + totalCount + ")" : "");
+        }
 
         var confirming = state.confirmCleanupUntil > Date.now();
         el.cleanUnused.className = "danger-line" + (confirming ? " confirming" : "");
-        el.cleanUnused.disabled = state.busy;
+        el.cleanUnused.disabled = state.busy || totals.count === 0;
         el.cleanUnused.textContent = confirming
             ? "ПОДТВЕРДИТЬ: " + totals.count + " файл. В КОРЗИНУ" +
                 (totals.onlyCopies
@@ -1900,11 +2676,12 @@
             return open ? String(open) : "";
         }
         if (name === "unused") {
-            var count = unusedTotals().count;
+            var count = Math.max(unusedTotals().count, allUnusedItems().length);
             return count ? String(count) : "";
         }
         if (name === "duplicates") {
-            var dupGroups = (state.duplicates && state.duplicates.result && state.duplicates.result.duplicateGroups) || [];
+            var res = state.duplicates && state.duplicates.result;
+            var dupGroups = ((res && res.duplicateGroups) || []).concat((res && res.projectItemGroups) || []);
             return dupGroups.length ? String(dupGroups.length) : "";
         }
         if (name === "legacy") {
@@ -1921,12 +2698,13 @@
         if (!live) return false;
         /* These exist only while there is something to act on. */
         if (name === "layers") return layerFindings().length > 0;
-        if (name === "unused") return unusedTotals().count > 0;
+        if (name === "unused") return allUnusedItems().length > 0 || unusedTotals().count > 0;
         if (name === "duplicates") {
             if (state.tab === "duplicates" || (state.duplicates && state.duplicates.scanning)) return true;
             if (!state.duplicates || !state.duplicates.result) return false;
             var res = state.duplicates.result;
-            var hasGroups = res.duplicateGroups && res.duplicateGroups.length > 0;
+            var hasGroups = (res.duplicateGroups && res.duplicateGroups.length > 0) ||
+                            (res.projectItemGroups && res.projectItemGroups.length > 0);
             var hasErrors = (res.errors && res.errors.length > 0) || !!state.duplicates.error;
             return hasGroups || hasErrors;
         }
@@ -2229,13 +3007,17 @@
         for (i = 0; i < rows.length; i++) {
             var row = document.createElement("div");
             row.className = "queue-row";
-            /* Both sides in the tooltip: where the file is now, and where it goes. */
-            row.title = (rows[i].state === "protected" ? "Внутренний: " : "Внешний: ") +
-                rows[i].path + "\n→ " + (rows[i].destPath || rows[i].destRel);
+            var destDisplay = rows[i].destPath || rows[i].destRel;
+            if (rows[i].premiereCanonicalPath) {
+                row.title = "Внешний (приоритет Premiere): " + rows[i].path + "\n→ [Premiere] " + rows[i].premiereCanonicalPath;
+            } else {
+                row.title = (rows[i].state === "protected" ? "Внутренний: " : "Внешний: ") +
+                    rows[i].path + "\n→ " + destDisplay;
+            }
 
             var dot = document.createElement("span");
             dot.className = "dot " + (rows[i].state === "missing" ? "red"
-                : (rows[i].unassigned ? "grey" : "yellow"));
+                : (rows[i].premiereCanonicalPath ? "green" : (rows[i].unassigned ? "grey" : "yellow")));
 
             var name = document.createElement("span");
             name.className = "queue-name";
@@ -2245,7 +3027,9 @@
             target.className = "queue-target";
             target.textContent = rows[i].state === "missing"
                 ? "нет на диске"
-                : (rows[i].unassigned ? "не в композициях" : rows[i].branchResolved);
+                : (rows[i].premiereCanonicalPath
+                    ? "Premiere (перелинковка)"
+                    : (rows[i].unassigned ? "не в композициях" : rows[i].branchResolved));
 
             row.appendChild(dot);
             row.appendChild(name);
@@ -2328,6 +3112,25 @@
         if (!changed("update", state.update.version)) return;
         el.updateVersion.textContent = state.update.version;
         el.updateSummary.textContent = state.update.summary;
+
+        if (el.updateChangelog && el.updateChangelogContainer) {
+            var changes = state.update.changes || [];
+            if (changes.length > 0) {
+                el.updateChangelog.innerHTML = "";
+                var ul = document.createElement("ul");
+                for (var ci = 0; ci < changes.length; ci++) {
+                    var li = document.createElement("li");
+                    li.textContent = changes[ci];
+                    ul.appendChild(li);
+                }
+                el.updateChangelog.appendChild(ul);
+                el.updateChangelogContainer.hidden = false;
+                el.updateChangelog.hidden = true;
+                if (el.updateDetailsToggle) el.updateDetailsToggle.textContent = "Что нового ▾";
+            } else {
+                el.updateChangelogContainer.hidden = true;
+            }
+        }
     }
 
     function renderLog() {
@@ -2430,7 +3233,9 @@
                 state.duplicates.result = res;
                 state.duplicates.stale = false;
                 state.duplicates.auditSignature = scanAuditSig;
-                log("Поиск дубликатов завершён. Найдено групп: " + (res.duplicateGroups || []).length, "good");
+                var totalFound = (res.duplicateGroups || []).length + (res.projectItemGroups || []).length;
+                log("Поиск дубликатов завершён. Найдено групп: " + totalFound +
+                    ((res.projectItemGroups && res.projectItemGroups.length) ? " (в проекте: " + res.projectItemGroups.length + ")" : ""), "good");
                 cleanObsoleteOverrides(res);
             }
             invalidate("duplicates");
@@ -2449,10 +3254,9 @@
         if (!state.settings || !state.settings.duplicateCanonicalOverrides) return;
         var overrides = state.settings.duplicateCanonicalOverrides;
         var activeContentIds = {};
-        if (res && res.duplicateGroups) {
-            for (var i = 0; i < res.duplicateGroups.length; i++) {
-                activeContentIds[res.duplicateGroups[i].contentId] = true;
-            }
+        var allGroups = (res.duplicateGroups || []).concat(res.projectItemGroups || []);
+        for (var i = 0; i < allGroups.length; i++) {
+            activeContentIds[allGroups[i].contentId] = true;
         }
         var changed = false;
         for (var cId in overrides) {
@@ -2535,7 +3339,7 @@
             return;
         }
 
-        var groups = res.duplicateGroups || [];
+        var groups = (res.duplicateGroups || []).concat(res.projectItemGroups || []);
         var errors = res.errors || [];
         var overrides = (state.settings && state.settings.duplicateCanonicalOverrides) || {};
 
@@ -2551,9 +3355,18 @@
 
         if (!changed("duplicates-list", signature)) return;
 
-        el.duplicatesSummary.hidden = false;
-        el.duplicatesSummary.textContent = "Найдено групп дубликатов: " + groups.length +
-            " · Можно освободить: " + formatBytes(res.reclaimableBytes || 0);
+        var projDupCount = 0;
+        for (var g = 0; g < groups.length; g++) {
+            if (groups[g].kind === "project-item") projDupCount++;
+        }
+        var summaryText = "Найдено групп дубликатов: " + groups.length;
+        if (projDupCount > 0) {
+            summaryText += " (в проекте: " + projDupCount + ")";
+        }
+        if (res.reclaimableBytes > 0) {
+            summaryText += " · На диске освободится: " + formatBytes(res.reclaimableBytes);
+        }
+        el.duplicatesSummary.textContent = summaryText;
 
         el.duplicatesList.innerHTML = "";
         if (groups.length === 0) {
@@ -2579,21 +3392,28 @@
     }
 
     function renderDuplicateGroup(group, overrides) {
+        var isProjItem = (group.kind === "project-item");
         var item = document.createElement("div");
-        item.className = "duplicate-group";
+        item.className = "duplicate-group" + (isProjItem ? " is-project-item" : "");
 
         var head = document.createElement("div");
         head.className = "duplicate-group-head";
 
         var title = document.createElement("span");
         title.className = "duplicate-group-title";
-        var kindName = group.kind === "sequence" ? "Секвенция" : (group.kind === "proxy" ? "Proxy" : "Файл");
-        title.textContent = kindName + " · " + formatBytes(group.size) + " за копию";
+        if (isProjItem) {
+            title.textContent = "Дубликаты в проекте · " + group.files.length + " элементов";
+        } else {
+            var kindName = group.kind === "sequence" ? "Секвенция" : (group.kind === "proxy" ? "Proxy" : "Файл");
+            title.textContent = kindName + " · " + formatBytes(group.size) + " за копию";
+        }
         head.appendChild(title);
 
         var reclaim = document.createElement("span");
-        reclaim.className = "duplicate-group-reclaim";
-        reclaim.textContent = "+" + formatBytes(group.reclaimableBytes) + " освободится";
+        reclaim.className = "duplicate-group-reclaim" + (isProjItem ? " project" : "");
+        reclaim.textContent = isProjItem
+            ? "Один исходник"
+            : ("+" + formatBytes(group.reclaimableBytes) + " освободится");
         head.appendChild(reclaim);
 
         item.appendChild(head);
@@ -2601,7 +3421,7 @@
         var recBox = document.createElement("div");
         recBox.className = "duplicate-group-rec";
         var reasonStr = (group.reasons || []).join("; ");
-        recBox.textContent = "Рекомендация: " + (reasonStr ? reasonStr : "Оптимальный файл");
+        recBox.textContent = "Рекомендация: " + (reasonStr ? reasonStr : "Оптимальный элемент");
         item.appendChild(recBox);
 
         var effectiveCanonical = overrides[group.contentId] || group.recommendedCanonical;
@@ -2611,7 +3431,9 @@
 
         for (var f = 0; f < group.files.length; f++) {
             var file = group.files[f];
-            var isCan = (PardDuplicateIndex.normalizePath(file.path) === PardDuplicateIndex.normalizePath(effectiveCanonical));
+            var isCan = isProjItem
+                ? (String(file.id) === String(effectiveCanonical))
+                : (PardDuplicateIndex.normalizePath(file.path) === PardDuplicateIndex.normalizePath(effectiveCanonical));
 
             var row = document.createElement("div");
             row.className = "duplicate-file-row" + (isCan ? " is-canonical" : "");
@@ -2624,24 +3446,29 @@
             radio.setAttribute("type", "radio");
             radio.name = "canonical-" + group.groupId;
             radio.checked = isCan;
-            (function (cId, fPath) {
+            (function (cId, canVal) {
                 radio.onchange = function () {
-                    setCanonicalOverride(cId, fPath);
+                    setCanonicalOverride(cId, canVal);
                 };
-            })(group.contentId, file.path);
+            })(group.contentId, isProjItem ? file.id : file.path);
             top.appendChild(radio);
 
             if (isCan) {
                 var canBadge = document.createElement("span");
                 canBadge.className = "canonical-badge";
-                canBadge.textContent = "КАНОНИКАЛ";
+                canBadge.textContent = isProjItem ? "ОСНОВНОЙ" : "КАНОНИКАЛ";
                 top.appendChild(canBadge);
             }
 
             var pSpan = document.createElement("span");
             pSpan.className = "duplicate-file-path";
-            pSpan.textContent = file.path;
-            pSpan.title = file.path;
+            if (isProjItem) {
+                pSpan.textContent = file.name + " (ID: " + file.id + ")";
+                pSpan.title = "Путь к исходнику: " + file.path;
+            } else {
+                pSpan.textContent = file.path;
+                pSpan.title = file.path;
+            }
             top.appendChild(pSpan);
 
             var revBtn = document.createElement("button");
@@ -2659,9 +3486,17 @@
 
             var meta = document.createElement("div");
             meta.className = "duplicate-file-meta";
-            var refsCount = (file.references || []).length;
-            var ownerText = file.isOwned ? "проект (assets.tsv)" : (file.inWorkspace ? "в рабочей папке" : "вне проекта");
-            meta.textContent = refsCount + " ссылок в проекте · Владелец: " + ownerText;
+            if (isProjItem) {
+                var compNames = (file.usedInComps || []).map(function (c) { return c.name; }).join(", ");
+                var usageText = (Number(file.usedInCount) > 0)
+                    ? ("Используется в " + file.usedInCount + " комп." + (compNames ? " (" + compNames + ")" : ""))
+                    : "Не используется в композициях";
+                meta.textContent = usageText + " · Исходник: " + file.path;
+            } else {
+                var refsCount = (file.references || []).length;
+                var ownerText = file.isOwned ? "проект (assets.tsv)" : (file.inWorkspace ? "в рабочей папке" : "вне проекта");
+                meta.textContent = refsCount + " ссылок в проекте · Владелец: " + ownerText;
+            }
             row.appendChild(meta);
 
             filesBox.appendChild(row);
@@ -2677,28 +3512,54 @@
             consBtn.className = "btn";
 
             var isArm = (state.consolidationGroupId === group.groupId && Date.now() < state.consolidationConfirmUntil);
-            if (isArm) {
-                consBtn.className = "btn btn-warn";
-                consBtn.textContent = "ПОДТВЕРДИТЬ ОБЪЕДИНЕНИЕ (оригиналы не удаляются)";
-                consBtn.onclick = function () {
-                    executeConsolidation(group, effectiveCanonical);
-                };
+            if (isProjItem) {
+                if (isArm) {
+                    consBtn.className = "btn btn-warn";
+                    consBtn.textContent = "ПОДТВЕРДИТЬ: ОБЪЕДИНИТЬ В ПРОЕКТЕ (удалить " + (group.files.length - 1) + " дубликатов)";
+                    consBtn.onclick = function () {
+                        executeProjectItemConsolidation(group, effectiveCanonical);
+                    };
+                } else {
+                    consBtn.textContent = "ОБЪЕДИНИТЬ ЭЛЕМЕНТЫ В ПРОЕКТЕ";
+                    consBtn.onclick = function () {
+                        state.consolidationGroupId = group.groupId;
+                        state.consolidationConfirmUntil = Date.now() + 6000;
+                        invalidate("duplicates-list");
+                        render();
+                        setTimeout(function () {
+                            if (state.consolidationGroupId === group.groupId) {
+                                state.consolidationGroupId = null;
+                                state.consolidationConfirmUntil = 0;
+                                invalidate("duplicates-list");
+                                render();
+                            }
+                        }, 6050);
+                    };
+                }
             } else {
-                consBtn.textContent = "ОБЪЕДИНИТЬ В ОДИН ФАЙЛ";
-                consBtn.onclick = function () {
-                    state.consolidationGroupId = group.groupId;
-                    state.consolidationConfirmUntil = Date.now() + 6000;
-                    invalidate("duplicates-list");
-                    render();
-                    setTimeout(function () {
-                        if (state.consolidationGroupId === group.groupId) {
-                            state.consolidationGroupId = null;
-                            state.consolidationConfirmUntil = 0;
-                            invalidate("duplicates-list");
-                            render();
-                        }
-                    }, 6050);
-                };
+                if (isArm) {
+                    consBtn.className = "btn btn-warn";
+                    consBtn.textContent = "ПОДТВЕРДИТЬ ОБЪЕДИНЕНИЕ (оригиналы не удаляются)";
+                    consBtn.onclick = function () {
+                        executeConsolidation(group, effectiveCanonical);
+                    };
+                } else {
+                    consBtn.textContent = "ОБЪЕДИНИТЬ В ОДИН ФАЙЛ";
+                    consBtn.onclick = function () {
+                        state.consolidationGroupId = group.groupId;
+                        state.consolidationConfirmUntil = Date.now() + 6000;
+                        invalidate("duplicates-list");
+                        render();
+                        setTimeout(function () {
+                            if (state.consolidationGroupId === group.groupId) {
+                                state.consolidationGroupId = null;
+                                state.consolidationConfirmUntil = 0;
+                                invalidate("duplicates-list");
+                                render();
+                            }
+                        }, 6050);
+                    };
+                }
             }
 
             actBox.appendChild(consBtn);
@@ -2706,6 +3567,59 @@
         }
 
         return item;
+    }
+
+    function executeProjectItemConsolidation(group, canonicalId) {
+        if (state.busy || state.consolidationBusy) return;
+        if (!state.report) return;
+
+        state.consolidationBusy = true;
+        state.consolidationGroupId = null;
+        state.consolidationConfirmUntil = 0;
+        showActionFeedback("");
+        setBusyLabel("Объединение элементов в проекте…");
+        log("Объединение дубликатов проекта в основной элемент ID " + canonicalId + "…", "work");
+        render();
+
+        var duplicateIds = [];
+        for (var i = 0; i < group.files.length; i++) {
+            var fId = String(group.files[i].id);
+            if (fId !== String(canonicalId)) {
+                duplicateIds.push(fId);
+            }
+        }
+
+        var plan = {
+            canonicalId: String(canonicalId),
+            duplicateIds: duplicateIds
+        };
+
+        PardHostAdapter.consolidateProjectItemsJson(plan, function (raw) {
+            state.consolidationBusy = false;
+            setBusyLabel("");
+            var res = null;
+            try { res = JSON.parse(String(raw || "")); } catch (e) { res = null; }
+
+            if (!res || !res.ok) {
+                var errMsg = res ? res.error : ("Сбой хоста: " + raw);
+                log("Ошибка объединения элементов проекта: " + errMsg, "bad");
+                trip("CONSOLIDATE_PROJECT_ITEMS_FAILED", errMsg);
+                showActionFeedback("Ошибка объединения: " + errMsg, "bad");
+            } else {
+                var msg = "✓ Элементы проекта объединены: перелинковано слоёв: " +
+                    res.relinkedLayers + ", удалено дубликатов: " + res.removedItems + ".";
+                log("✅ " + msg, "good");
+                showActionFeedback(msg, "good", 8000);
+            }
+
+            if (state.duplicates) {
+                state.duplicates.stale = true;
+            }
+            invalidate("duplicates");
+            invalidate("duplicates-list");
+            render();
+            tick(true);
+        });
     }
 
     function executeConsolidation(group, canonicalPath) {
@@ -2716,6 +3630,7 @@
         state.consolidationBusy = true;
         state.consolidationGroupId = null;
         state.consolidationConfirmUntil = 0;
+        showActionFeedback("");
         setBusyLabel("Объединяю дубликаты…");
         log("Объединение дубликатов в " + canonicalPath + "…", "work");
         render();
@@ -2729,15 +3644,21 @@
             hostAdapter: PardHostAdapter
         }, function (err, res) {
             state.consolidationBusy = false;
+            setBusyLabel("");
             if (err) {
                 log("Ошибка объединения дубликатов: " + err.message, "bad");
                 trip("CONSOLIDATE_FAILED", err.message);
+                showActionFeedback("Ошибка объединения: " + err.message, "bad");
             } else if (res && res.op) {
                 var r = res.op.results;
                 if (res.ok) {
-                    log("Дубликаты успешно объединены: перелинковано " + r.relinked + " ссылок (оригиналы сохранены).", "good");
+                    var okMsg = "✓ Дубликаты успешно объединены: перелинковано " + r.relinked + " ссылок.";
+                    log(okMsg, "good");
+                    showActionFeedback(okMsg, "good", 8000);
                 } else if (res.partial) {
-                    log("Частичное объединение дубликатов: перелинковано " + r.relinked + ", пропущено " + r.skipped + ", ошибок " + r.failed, "bad");
+                    var partMsg = "Частичное объединение: перелинковано " + r.relinked + ", пропущено " + r.skipped;
+                    log(partMsg, "bad");
+                    showActionFeedback(partMsg, "warn", 8000);
                 }
             }
             if (state.duplicates) {
@@ -2756,6 +3677,7 @@
         if (typeof PardConsolidation === "undefined") return;
 
         state.consolidationBusy = true;
+        showActionFeedback("");
         setBusyLabel("Возобновление объединения…");
         log("Возобновление операции " + op.operationId + "…", "work");
         render();
@@ -2768,10 +3690,14 @@
             hostAdapter: PardHostAdapter
         }, function (err, res) {
             state.consolidationBusy = false;
+            setBusyLabel("");
             if (err) {
                 log("Ошибка возобновления операции: " + err.message, "bad");
+                showActionFeedback("Ошибка возобновления: " + err.message, "bad");
             } else {
-                log("Операция " + op.operationId + " завершена (" + (res && res.ok ? "успешно" : "частично") + ").", (res && res.ok) ? "good" : "bad");
+                var resMsg = "Операция " + op.operationId + " завершена (" + (res && res.ok ? "успешно" : "частично") + ").";
+                log(resMsg, (res && res.ok) ? "good" : "bad");
+                showActionFeedback(resMsg, (res && res.ok) ? "good" : "warn", 8000);
             }
             if (state.duplicates) {
                 state.duplicates.stale = true;
@@ -2846,8 +3772,17 @@
             layers: "layers",
             resume: "resume", update: "update", updateVersion: "update-version",
             updateSummary: "update-summary", updateOpen: "update-open",
-            updateDismiss: "update-dismiss", unusedSection: "unused-section",
+            updateDismiss: "update-dismiss", updateLater: "update-later",
+            updateInstall: "update-install",
+            updateDetailsToggle: "update-details-toggle",
+            updateChangelogContainer: "update-changelog-container",
+            updateChangelog: "update-changelog",
+            updateProgressBar: "update-progress-bar",
+            updateProgressFill: "update-progress-fill",
+            updateMessage: "update-message",
+            unusedSection: "unused-section",
             unusedTitle: "unused-title", unusedReveal: "unused-reveal",
+            sortUnused: "sort-unused",
             cleanUnused: "clean-unused",
             legend: "legend", legendToggle: "legend-toggle",
             legendCaret: "legend-caret", legendBody: "legend-body",
@@ -2856,7 +3791,7 @@
             legacyNote: "legacy-note", legacyAdopt: "legacy-adopt",
             legacyRedistribute: "legacy-redistribute",
             legacyRecycle: "legacy-recycle", legacyRecycleNote: "legacy-recycle-note",
-            tabs: "tabs", updateLater: "update-later",
+            tabs: "tabs",
             duplicatesSection: "duplicates-section",
             duplicatesTitle: "duplicates-title",
             duplicatesScan: "duplicates-scan",
@@ -2874,7 +3809,17 @@
             duplicatesErrors: "duplicates-errors",
             duplicatesRecoverable: "duplicates-recoverable",
             duplicatesRecoverableText: "duplicates-recoverable-text",
-            duplicatesRecoverableBtn: "duplicates-recoverable-btn"
+            duplicatesRecoverableBtn: "duplicates-recoverable-btn",
+            scanProgressBar: "scan-progress-bar",
+            scanProgressBox: "scan-progress-box",
+            scanProgressLabel: "scan-progress-label",
+            scanProgressStats: "scan-progress-stats",
+            actionFeedback: "action-feedback",
+            headScanBtn: "head-scan-btn",
+            headPauseBtn: "head-pause-btn",
+            pauseProject: "pause-project",
+            scanProject: "scan-project",
+            scanNow: "scan-now"
         };
         var key;
         for (key in ids) {
@@ -2887,12 +3832,43 @@
             el.panes[TABS[t].name] = document.getElementById("pane-" + TABS[t].name);
         }
 
+        if (el.scanNow) {
+            el.scanNow.onclick = function () {
+                log("Проверка сохранения проекта…", "work");
+                tick(true);
+            };
+        }
+
+        if (el.scanProject) {
+            el.scanProject.onclick = handleManualScan;
+        }
+
+        if (el.headScanBtn) {
+            el.headScanBtn.onclick = handleManualScan;
+        }
+
+        if (el.pauseProject) {
+            el.pauseProject.onclick = function () {
+                toggleUserPause();
+            };
+        }
+
+        if (el.headPauseBtn) {
+            el.headPauseBtn.onclick = function () {
+                toggleUserPause();
+            };
+        }
+
         el.runNow.onclick = function () {
             log("Ручной запуск.", "work");
             runPass(true);
         };
 
         el.resume.onclick = function () {
+            if (state.userPaused) {
+                toggleUserPause(false);
+                return;
+            }
             if (!state.paused) return;
             PardIssues.clear("sys:" + state.paused.code);
             PardIssues.save();
@@ -2921,11 +3897,28 @@
         };
 
         el.unusedReveal.onclick = function () {
+            if (state.report && state.report.workspace) {
+                var unusedDir = state.report.workspace + "/unused";
+                var fsMod = null;
+                try { fsMod = require("fs"); } catch (e) {}
+                if (fsMod && fsMod.existsSync(unusedDir.replace(/\//g, "\\"))) {
+                    revealAndReport(unusedDir, "Папка unused");
+                    return;
+                }
+            }
             var totals = unusedTotals();
             if (totals.count) {
                 revealAndReport(totals.list[0].path, "Папка 00_UNUSED");
+            } else if (state.report && state.report.workspace) {
+                revealAndReport(state.report.workspace, "Рабочая папка");
             }
         };
+
+        if (el.sortUnused) {
+            el.sortUnused.onclick = function () {
+                checkAndSortUnusedFiles();
+            };
+        }
 
         /*
          * Two presses, not a modal. The first arms the button and spells out
@@ -3018,6 +4011,58 @@
         el.updateDismiss.onclick = dismissUpdate;
         el.updateLater.onclick = dismissUpdate;
 
+        if (el.updateDetailsToggle && el.updateChangelog) {
+            el.updateDetailsToggle.onclick = function () {
+                var isHidden = el.updateChangelog.hidden;
+                el.updateChangelog.hidden = !isHidden;
+                el.updateDetailsToggle.textContent = isHidden ? "Что нового ▴" : "Что нового ▾";
+            };
+        }
+
+        if (el.updateInstall) {
+            el.updateInstall.onclick = function () {
+                if (!state.update || state.updateInstalling) return;
+                state.updateInstalling = true;
+                el.updateInstall.disabled = true;
+                if (el.updateProgressBar) el.updateProgressBar.hidden = false;
+                if (el.updateProgressFill) el.updateProgressFill.style.width = "0%";
+                if (el.updateMessage) {
+                    el.updateMessage.hidden = false;
+                    el.updateMessage.className = "update-message";
+                    el.updateMessage.textContent = "Подключение к GitHub...";
+                }
+                log("Начало фонового обновления до v" + state.update.version + "…", "work");
+
+                PardUpdater.installUpdate(state.update, function (progress) {
+                    if (el.updateProgressFill && typeof progress.percent === "number") {
+                        el.updateProgressFill.style.width = progress.percent + "%";
+                    }
+                    if (el.updateMessage && progress.message) {
+                        el.updateMessage.textContent = progress.message;
+                    }
+                }, function (err, result) {
+                    state.updateInstalling = false;
+                    if (err) {
+                        if (el.updateInstall) el.updateInstall.disabled = false;
+                        if (el.updateProgressBar) el.updateProgressBar.hidden = true;
+                        if (el.updateMessage) {
+                            el.updateMessage.className = "update-message error";
+                            el.updateMessage.textContent = "❌ " + (err.message || "Ошибка обновления");
+                        }
+                        log("Ошибка фонового обновления: " + (err.message || err), "bad");
+                    } else {
+                        if (el.updateProgressBar) el.updateProgressBar.hidden = true;
+                        if (el.updateInstall) el.updateInstall.hidden = true;
+                        if (el.updateMessage) {
+                            el.updateMessage.className = "update-message success";
+                            el.updateMessage.textContent = "✅ Обновление до v" + result.version + " успешно установлено! После перезагрузки After Effects приложение будет обновлено до новой версии.";
+                        }
+                        log("✅ Обновление до v" + result.version + " установлено. После перезагрузки After Effects приложение будет обновлено до новой версии.", "good");
+                    }
+                });
+            };
+        }
+
         el.autoEnabled.onchange = function () {
             pushSettings({ autoEnabled: el.autoEnabled.checked });
         };
@@ -3039,7 +4084,10 @@
         };
 
         if (el.duplicatesScan) {
-            el.duplicatesScan.onclick = function () { scanDuplicates(); };
+            el.duplicatesScan.onclick = function () {
+                showTab("duplicates");
+                scanDuplicates();
+            };
         }
         if (el.duplicatesScanSettings) {
             el.duplicatesScanSettings.onclick = function () {
@@ -3092,6 +4140,22 @@
 
             tick(true);
             window.setInterval(function () { tick(false); }, TICK_MS);
+            window.addEventListener("focus", function () {
+                if (state.userPaused) return;
+                if (!state.report || !state.report.projectSaved || (Date.now() - state.lastAuditAt) > 5000) {
+                    tick(true);
+                }
+            });
+            window.PardDefender = {
+                state: state,
+                showActionFeedback: showActionFeedback,
+                executeProjectItemConsolidation: executeProjectItemConsolidation,
+                toggleUserPause: toggleUserPause,
+                enrichAudioWithPremiereLinks: enrichAudioWithPremiereLinks,
+                buildCopyTasks: buildCopyTasks,
+                checkAndSortUnusedFiles: checkAndSortUnusedFiles,
+                allUnusedItems: allUnusedItems
+            };
         });
     }
 

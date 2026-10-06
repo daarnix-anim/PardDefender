@@ -198,6 +198,10 @@ function launch(options) {
             callback(JSON.stringify({ ok: true, removed: 1 }));
             return;
         }
+        if (has("consolidateProjectItemsFromFileJson")) {
+            callback(JSON.stringify({ ok: true, relinkedLayers: 4, removedItems: 2 }));
+            return;
+        }
         if (has("commitFromFileJson")) {
             callback(JSON.stringify({ ok: true, relinked: 0, skipped: 0, failures: [] }));
             return;
@@ -366,7 +370,7 @@ group("Кнопки: у каждой есть своё дело");
         controls.push(node);
     });
 
-    check("интерактивных элементов в разметке", controls.length, 24);
+    check("интерактивных элементов в разметке", controls.length, 32);
 
     var orphans = controls.filter(function (node) {
         return !node.onclick && !node.onchange;
@@ -979,6 +983,12 @@ group("Лестница статусов");
     check("несохранённый проект — важнее всего",
         p.id("status").textContent, "СОХРАНИТЕ ПРОЕКТ");
     check("и он красный", p.id("status").className.indexOf("red") >= 0, true);
+    check("кнопка проверить сохранение видна для несохранённого проекта",
+        p.id("scan-now").hidden, false);
+
+    p.tick(baseReport({ saved: true, settings: { autoEnabled: true } }));
+    check("кнопка проверить сохранение скрыта для сохранённого проекта",
+        p.id("scan-now").hidden, true);
 })();
 
 group("Облачная папка");
@@ -1351,6 +1361,380 @@ group("Отчёт о дубликатах: вкладка, скан, progress/ca
     });
     check("read-only UI дубликатов ни разу не вызывал relink в хосте", relinkCalls.length, 0);
     check("read-only UI дубликатов ни разу не вызывал recycle", p.calls.recycled.length, 0);
+})();
+
+group("Кнопка ручного сканирования проекта");
+(function () {
+    var p = launch();
+
+    // 1. Элементы присутствуют в разметке и привязаны
+    check("кнопка scan-project есть в DOM", !!p.id("scan-project"), true);
+    check("кнопка head-scan-btn есть в DOM", !!p.id("head-scan-btn"), true);
+    check("scan-project начальный текст", p.id("scan-project").textContent, "↺ СКАНИРОВАТЬ ПРОЕКТ");
+    check("scan-project доступна для готового хоста", p.id("scan-project").disabled, false);
+    check("head-scan-btn доступна", p.id("head-scan-btn").disabled, false);
+
+    // 2. Нажатие запускает аудит и принудительное сканирование слоёв
+    var initialAudits = p.calls.scripts.filter(function (s) {
+        return s.indexOf("auditToFile") >= 0;
+    }).length;
+    var initialLayers = p.calls.scripts.filter(function (s) {
+        return s.indexOf("scanLayersToFile") >= 0;
+    }).length;
+
+    p.click("scan-project");
+
+    var auditsAfterClick = p.calls.scripts.filter(function (s) {
+        return s.indexOf("auditToFile") >= 0;
+    }).length;
+    var layersAfterClick = p.calls.scripts.filter(function (s) {
+        return s.indexOf("scanLayersToFile") >= 0;
+    }).length;
+
+    check("клик по scan-project вызывает auditToFile", auditsAfterClick > initialAudits, true);
+    check("клик по scan-project форсирует сканирование слоёв без ожидания интервала",
+        layersAfterClick > initialLayers, true);
+    check("после завершения кнопка снова активна", p.id("scan-project").disabled, false);
+    check("текст кнопки восстановился", p.id("scan-project").textContent, "↺ СКАНИРОВАТЬ ПРОЕКТ");
+
+    // 3. Клик по иконке в шапке также инициирует сканирование
+    var auditsBeforeHead = p.calls.scripts.filter(function (s) {
+        return s.indexOf("auditToFile") >= 0;
+    }).length;
+    p.click("head-scan-btn");
+    var auditsAfterHead = p.calls.scripts.filter(function (s) {
+        return s.indexOf("auditToFile") >= 0;
+    }).length;
+    check("клик по head-scan-btn запускает аудит", auditsAfterHead > auditsBeforeHead, true);
+})();
+
+group("Отчёт и прогресс сканирования, баннер оповещения и очистка busy-метки");
+(function () {
+    // 1. Проверка наличия элементов прогресса и фидбека
+    var p = launch();
+    check("блок прогресса scan-progress-box присутствует в DOM", !!p.id("scan-progress-box"), true);
+    check("баннер оповещений action-feedback присутствует в DOM", !!p.id("action-feedback"), true);
+    check("изначально прогресс-бокс скрыт", p.id("scan-progress-box").hidden, true);
+    check("изначально баннер фидбека скрыт", p.id("action-feedback").hidden, true);
+
+    // 2. Сканирование чистого проекта
+    p.click("scan-project");
+    check("после сканирования чистого проекта баннер фидбека показан", p.id("action-feedback").hidden, false);
+    check("баннер сообщает об отсутствии проблем",
+        p.id("action-feedback").textContent.indexOf("Все файлы защищены") >= 0, true);
+    check("класс баннера — good", p.id("action-feedback").className.indexOf("good") >= 0, true);
+
+    // 3. Сканирование проекта с найденными выключенными слоями
+    var pWithFindings = launch({
+        layers: layersReport([
+            {
+                kind: "layer",
+                key: "L1|2|T",
+                compId: "1",
+                compName: "MAIN",
+                layerIndex: 6,
+                layerName: "T",
+                itemId: "2",
+                itemName: "T",
+                path: "",
+                size: 0,
+                status: "open"
+            }
+        ])
+    });
+
+    pWithFindings.click("scan-project");
+    check("при нахождении выключенных объектов баннер сообщает об этом",
+        pWithFindings.id("action-feedback").textContent.indexOf("выключенных объектов: 1") >= 0, true);
+    check("класс баннера — warn", pWithFindings.id("action-feedback").className.indexOf("warn") >= 0, true);
+    check("панель автоматически переключилась на вкладку 'layers'",
+        pWithFindings.visiblePanes(), ["layers"]);
+    check("панель 'pane-layers' видна", pWithFindings.id("pane-layers").hidden, false);
+
+    // 4. Очистка busy-метки и показ фидбека после консолидации элементов проекта
+    p.sandbox.window.PardDefender.executeProjectItemConsolidation({
+        canonicalPath: "project-item://1",
+        files: [{ id: "1" }, { id: "2" }]
+    }, "1");
+
+    check("после объединения busy-метка очищена и скрыта", p.id("busy").hidden, true);
+    check("после объединения показан баннер об успехе", p.id("action-feedback").hidden, false);
+    check("баннер содержит количество перелинкованных слоёв",
+        p.id("action-feedback").textContent.indexOf("перелинковано слоёв: 4") >= 0, true);
+})();
+
+group("Кнопки паузы и возобновления фоновых процессов и сканирования");
+(function () {
+    var p = launch();
+
+    // 1. Проверка наличия элементов в DOM и исходного состояния
+    check("кнопка pause-project присутствует в DOM", !!p.id("pause-project"), true);
+    check("кнопка head-pause-btn присутствует в DOM", !!p.id("head-pause-btn"), true);
+    check("исходный текст pause-project", p.id("pause-project").textContent, "⏸ ПРИОСТАНОВИТЬ СКАНИРОВАНИЕ");
+    check("исходный текст head-pause-btn", p.id("head-pause-btn").textContent, "⏸");
+    check("pause-project не имеет класса is-paused", p.id("pause-project").className.indexOf("is-paused") === -1, true);
+    check("head-pause-btn не имеет класса is-paused", p.id("head-pause-btn").className.indexOf("is-paused") === -1, true);
+
+    // 2. Нажатие на кнопку «⏸ ПРИОСТАНОВИТЬ СКАНИРОВАНИЕ»
+    p.click("pause-project");
+    check("состояние userPaused активно", p.sandbox.window.PardDefender.state.userPaused, true);
+    check("статус панели переключился на ПАУЗА", p.id("status").textContent, "ПАУЗА");
+    check("класс статуса — yellow", p.id("status").className.indexOf("yellow") >= 0, true);
+    check("текст pause-project сменился на возобновление", p.id("pause-project").textContent, "▶ ВОЗОБНОВИТЬ СКАНИРОВАНИЕ");
+    check("pause-project получил класс is-paused", p.id("pause-project").className.indexOf("is-paused") >= 0, true);
+    check("head-pause-btn отображает ▶", p.id("head-pause-btn").textContent, "▶");
+    check("head-pause-btn получил класс is-paused", p.id("head-pause-btn").className.indexOf("is-paused") >= 0, true);
+    check("показан баннер с уведомлением о паузе", p.id("action-feedback").textContent.indexOf("приостановлены") >= 0, true);
+
+    // 3. Во время паузы фоновый tick(false) не вызывает аудит
+    var scriptCallsBefore = p.calls.scripts.filter(function (s) { return s.indexOf("auditToFile") >= 0; }).length;
+    p.tick();
+    var scriptCallsAfter = p.calls.scripts.filter(function (s) { return s.indexOf("auditToFile") >= 0; }).length;
+    check("во время паузы фоновый tick не отправляет скрипты аудита в хост", scriptCallsAfter, scriptCallsBefore);
+
+    // 4. Повторное нажатие (через head-pause-btn) снимает паузу и возобновляет работу
+    p.click("head-pause-btn");
+    check("состояние userPaused снято", p.sandbox.window.PardDefender.state.userPaused, false);
+    check("статус панели вернулся в активный режим", p.id("status").textContent, "РУЧНОЙ РЕЖИМ");
+    check("текст pause-project вернулся к приостановке", p.id("pause-project").textContent, "⏸ ПРИОСТАНОВИТЬ СКАНИРОВАНИЕ");
+    check("pause-project потерял класс is-paused", p.id("pause-project").className.indexOf("is-paused") === -1, true);
+    check("head-pause-btn вернулся к ⏸", p.id("head-pause-btn").textContent, "⏸");
+    check("показан баннер о возобновлении сканирования", p.id("action-feedback").textContent.indexOf("возобновлено") >= 0, true);
+
+    // 5. Ручное сканирование (scan-project) работает даже если проект временно на паузе
+    p.click("pause-project");
+    check("снова включена пауза", p.sandbox.window.PardDefender.state.userPaused, true);
+    p.click("scan-project");
+    check("ручное сканирование отработало и показало баннер", p.id("action-feedback").hidden, false);
+    check("состояние паузы сохраняется после разового ручного сканирования", p.sandbox.window.PardDefender.state.userPaused, true);
+    check("статус панели остаётся ПАУЗА", p.id("status").textContent, "ПАУЗА");
+})();
+
+group("Приоритет аудио Premiere: сопоставление в AE, Zero-Copy переиспользование и очередь");
+(function () {
+    var p = launch();
+    var enrich = p.sandbox.window.PardDefender.enrichAudioWithPremiereLinks;
+    var buildTasks = p.sandbox.window.PardDefender.buildCopyTasks;
+    p.sandbox.PardSyncCoordinator = require("../extension/com.pard.defender/client/sync-coordinator.js");
+
+    check("enrichAudioWithPremiereLinks экспортирован", typeof enrich, "function");
+
+    // 1. Сопоставление через снимок Premiere (.media.json)
+    var wsAud = root + "/ws_audio_sync";
+    mkdir(wsAud + "/.parddefender/projects");
+    mkdir(wsAud + "/03_audio/voice");
+
+    var premAudioFile = wsAud + "/03_audio/voice/ElevenLabs_voiceover.wav";
+    write(premAudioFile, "PREMIERE_AUDIO_BYTES_TEST");
+    var statPrem = fs.statSync(native(premAudioFile));
+
+    var premSnapshot = {
+        schemaVersion: 1,
+        workspace: wsAud,
+        projectId: "prem-guid-audio-1",
+        host: "premiere",
+        items: [{
+            id: "p10",
+            name: "ElevenLabs_voiceover.wav",
+            path: premAudioFile,
+            oldPath: "C:/Downloads/ElevenLabs_voiceover.wav",
+            size: statPrem.size,
+            classification: "audio"
+        }]
+    };
+    write(wsAud + "/.parddefender/projects/prem-guid-audio-1.media.json", JSON.stringify(premSnapshot, null, 2));
+
+    var aeReport1 = {
+        ok: true,
+        workspace: wsAud,
+        projectPath: wsAud + "/04_edit/AeComp.aep",
+        settings: settings(),
+        items: [{
+            id: "101",
+            key: "i101",
+            name: "ElevenLabs_voiceover.wav",
+            path: "C:/Downloads/ElevenLabs_voiceover.wav",
+            size: statPrem.size,
+            category: "audio",
+            state: "pending",
+            destPath: wsAud + "/03_audio/music/ElevenLabs_voiceover.wav",
+            branchResolved: "Интро"
+        }]
+    };
+
+    enrich(aeReport1);
+    var item1 = aeReport1.items[0];
+    check("внешний аудиофайл AE определил путь из Premiere", item1.premiereCanonicalPath, premAudioFile);
+    check("destPath перенаправлен на ссылку Premiere", item1.destPath, premAudioFile);
+    check("allowReuse установлен в true для переиспользования без дублей", item1.allowReuse, true);
+    check("crossHost хост — premiere", item1.crossHost && item1.crossHost.host, "premiere");
+
+    // Проверка генерации задач: перелинковка на путь Premiere с allowReuse
+    p.sandbox.window.PardDefender.state.seen[item1.key] = {
+        firstSeen: Date.now() - 10000,
+        size: item1.size,
+        stableSince: Date.now() - 10000
+    };
+    var tasks1 = buildTasks(aeReport1, true);
+    check("создана 1 задача", tasks1.length, 1);
+    check("задача назначения ведет на файл Premiere", tasks1[0].destPath, premAudioFile);
+    check("задача allowReuse = true", tasks1[0].allowReuse, true);
+
+    // 2. Сопоставление через assets.tsv
+    var wsTsvAud = root + "/ws_audio_tsv";
+    mkdir(wsTsvAud + "/.parddefender");
+    mkdir(wsTsvAud + "/03_audio/sfx");
+    var premSfxFile = wsTsvAud + "/03_audio/sfx/foley_punch.wav";
+    write(premSfxFile, "PUNCH_AUDIO_BYTES");
+    var statSfx = fs.statSync(native(premSfxFile));
+
+    var tsvRow = [
+        new Date().toISOString(),
+        "p22",
+        "E:/SoundLibrary/foley_punch.wav",
+        statSfx.size,
+        premSfxFile,
+        "_SHARED",
+        "audio"
+    ].join("\t") + "\n";
+    write(wsTsvAud + "/.parddefender/assets.tsv", tsvRow);
+
+    var aeReport2 = {
+        ok: true,
+        workspace: wsTsvAud,
+        settings: settings(),
+        items: [{
+            id: "102",
+            key: "i102",
+            name: "foley_punch.wav",
+            path: "E:/SoundLibrary/foley_punch.wav",
+            size: statSfx.size,
+            category: "audio",
+            state: "pending",
+            destPath: wsTsvAud + "/03_audio/sfx/foley_punch.wav"
+        }]
+    };
+
+    enrich(aeReport2);
+    var item2 = aeReport2.items[0];
+    check("аудиофайл найден через assets.tsv", item2.premiereCanonicalPath, premSfxFile);
+    check("destPath совпадает с каноническим путем", item2.destPath, premSfxFile);
+    check("item2 allowReuse = true", item2.allowReuse, true);
+
+    // 3. Сопоставление через существующий файл в папках проекта (кандидат на диске)
+    var wsDiskAud = root + "/ws_audio_disk";
+    mkdir(wsDiskAud + "/03_audio/music");
+    var premMusicFile = wsDiskAud + "/03_audio/music/background_track.wav";
+    write(premMusicFile, "MUSIC_BACKGROUND_BYTES");
+    var statMusic = fs.statSync(native(premMusicFile));
+
+    var aeReport3 = {
+        ok: true,
+        workspace: wsDiskAud,
+        settings: settings(),
+        items: [{
+            id: "103",
+            key: "i103",
+            name: "background_track.wav",
+            path: "D:/TempImports/background_track.wav",
+            size: statMusic.size,
+            category: "audio",
+            state: "pending",
+            destPath: wsDiskAud + "/03_audio/music/background_track.wav"
+        }]
+    };
+
+    enrich(aeReport3);
+    var item3 = aeReport3.items[0];
+    check("аудиофайл найден в папке проекта на диске", item3.premiereCanonicalPath, premMusicFile);
+    check("item3 allowReuse = true", item3.allowReuse, true);
+
+    // 4. Внутренний аудиофайл в 03_audio не помечается как misplaced
+    var aeReport4 = {
+        ok: true,
+        workspace: wsDiskAud,
+        settings: settings(),
+        items: [{
+            id: "104",
+            key: "i104",
+            name: "background_track.wav",
+            path: premMusicFile,
+            size: statMusic.size,
+            category: "audio",
+            state: "protected",
+            misplaced: true
+        }]
+    };
+    enrich(aeReport4);
+    check("внутренний файл в 03_audio очищает флаг misplaced", aeReport4.items[0].misplaced, false);
+
+    // AE already copied the same original before Premiere classified it as voice.
+    var oldAePath = wsAud + "/03_audio/music/ElevenLabs_voiceover.wav";
+    mkdir(wsAud + "/03_audio/music");
+    write(oldAePath, "PREMIERE_AUDIO_BYTES_TEST");
+    write(wsAud + "/.parddefender/assets.tsv", [
+        new Date().toISOString(), "i101", "C:/Downloads/ElevenLabs_voiceover.wav",
+        statPrem.size, oldAePath, "_SHARED", "audio"
+    ].join("\t") + "\n");
+    var aeInternal = {
+        workspace: wsAud, settings: settings(),
+        items: [{
+            id: "105", key: "i105", path: oldAePath, category: "audio",
+            size: statPrem.size, state: "protected", unassigned: true
+        }]
+    };
+    enrich(aeInternal);
+    check("внутреннее аудио AE следует новому пути Premiere", aeInternal.items[0].premiereCanonicalPath, premAudioFile);
+    check("внутреннее аудио попало в очередь relink", aeInternal.items[0].state, "pending");
+    check("аудио не ждёт ветку AE", aeInternal.items[0].unassigned, false);
+    p.sandbox.window.PardDefender.state.seen.i105 = {
+        firstSeen: Date.now() - 10000, size: statPrem.size, stableSince: Date.now() - 10000
+    };
+    var internalTasks = buildTasks(aeInternal, true);
+    check("создана задача для внутреннего аудио", internalTasks.length, 1);
+    check("внутренняя задача использует путь Premiere", internalTasks[0].destPath, premAudioFile);
+})();
+
+group("Неиспользуемые файлы: кнопка сортировки в папку unused");
+(function () {
+    var wsUnused = root + "/ws_unused_sort";
+    mkdir(wsUnused);
+    mkdir(wsUnused + "/(Pard Defender)");
+    mkdir(wsUnused + "/01_assets/00_UNUSED/VIDEO");
+    var existingUnused = wsUnused + "/01_assets/00_UNUSED/VIDEO/old_clip.mp4";
+    write(existingUnused, "OLD_CLIP_BYTES");
+    var statClip = fs.statSync(native(existingUnused));
+
+    var rep = {
+        ok: true,
+        workspace: wsUnused,
+        settings: settings(),
+        items: [{
+            id: 201,
+            key: "k201",
+            name: "old_clip.mp4",
+            path: existingUnused,
+            size: statClip.size,
+            category: "video",
+            state: "protected",
+            unassigned: true,
+            usedInComps: 0
+        }]
+    };
+
+    var p = launch({ report: rep });
+    check("кнопка сортировки в unused присутствует", Boolean(p.id("sort-unused")), true);
+
+    var doneRes = null;
+    p.sandbox.window.PardDefender.checkAndSortUnusedFiles({}, function (res) {
+        doneRes = res;
+    });
+
+    check("сортировка выполнена успешно", Boolean(doneRes && doneRes.ok), true);
+    check("перемещено файлов", doneRes.moved, 1);
+    var targetFile = wsUnused + "/unused/VIDEO/old_clip.mp4";
+    check("файл перемещён в корневую папку unused", fs.existsSync(native(targetFile)), true);
+    check("исходный файл удалён из старого места", fs.existsSync(native(existingUnused)), false);
 })();
 
 /* ------------------------------------------------------------------ итог */

@@ -96,12 +96,22 @@ MockTransform.prototype.property = function (matchName) {
     return null;
 };
 
+function isAudioItemSource(source) {
+    if (!source) return false;
+    var name = source.name || (source.mainSource && source.mainSource.file && source.mainSource.file.name) || "";
+    return /\.(wav|mp3|aif|aiff|aifc|m4a|aac|flac|ogg|oga|wma|opus|caf|mp2|au)$/i.test(name);
+}
+
 function MockLayer(comp, source, options) {
     var o = options || {};
     this.containingComp = comp;
     this.source = source || null;
     this.name = o.name || (source ? source.name : "layer");
-    this.enabled = o.enabled === undefined ? true : o.enabled;
+    var isAudio = isAudioItemSource(source);
+    this.hasAudio = o.hasAudio !== undefined ? o.hasAudio === true : isAudio;
+    this.hasVideo = o.hasVideo !== undefined ? o.hasVideo === true : !isAudio;
+    this.enabled = o.enabled === undefined ? (this.hasVideo ? true : false) : o.enabled;
+    this.audioEnabled = o.audioEnabled !== undefined ? o.audioEnabled === true : (this.hasAudio ? true : false);
     this.adjustmentLayer = o.adjustmentLayer === true;
     this.guideLayer = o.guideLayer === true;
     this.isTrackMatte = o.isTrackMatte === true;
@@ -379,25 +389,36 @@ Project.prototype.importFile = function (options) {
         var folderItem = new FolderItem(baseName + " Layers");
         this.add(folderItem);
         var layers = options._mockLayers || ["Head", "Body", "Arm"];
-        for (var i = 0; i < layers.length; i++) {
-            var layerDef = layers[i];
-            var layerName, layerW, layerH;
-            if (typeof layerDef === "object" && layerDef !== null) {
-                layerName = layerDef.name || "Layer " + i;
-                layerW = layerDef.width || 200;
-                layerH = layerDef.height || 200;
-            } else {
-                layerName = String(layerDef);
-                layerW = 200;
-                layerH = 200;
+        var self = this;
+        function addLayersToTarget(targetComp, layerList) {
+            for (var i = 0; i < layerList.length; i++) {
+                var layerDef = layerList[i];
+                if (typeof layerDef === "object" && layerDef !== null && layerDef.subLayers) {
+                    var subComp = new CompItem(layerDef.name || ("Group " + i));
+                    self.add(subComp);
+                    targetComp.addLayer(subComp, { name: subComp.name });
+                    addLayersToTarget(subComp, layerDef.subLayers);
+                } else {
+                    var layerName, layerW, layerH;
+                    if (typeof layerDef === "object" && layerDef !== null) {
+                        layerName = layerDef.name || "Layer " + i;
+                        layerW = layerDef.width || 200;
+                        layerH = layerDef.height || 200;
+                    } else {
+                        layerName = String(layerDef);
+                        layerW = 200;
+                        layerH = 200;
+                    }
+                    var fItem = new FootageItem(layerName + "/" + slashName, p, {
+                        width: layerW, height: layerH
+                    });
+                    fItem.parentFolder = folderItem;
+                    self.add(fItem);
+                    targetComp.addLayer(fItem, { name: layerName });
+                }
             }
-            var fItem = new FootageItem(layerName + "/" + slashName, p, {
-                width: layerW, height: layerH
-            });
-            fItem.parentFolder = folderItem;
-            this.add(fItem);
-            comp.addLayer(fItem, { name: layerName });
         }
+        addLayersToTarget(comp, layers);
         return comp;
     }
     var fItem = new FootageItem(slashName, p);

@@ -39,8 +39,8 @@ if (!fs.existsSync(manifestPath)) {
         if (manifest.id !== "com.pard.defender.uxp") fail("Неверный ID плагина: " + manifest.id);
         else pass("Plugin ID === com.pard.defender.uxp");
 
-        if (manifest.version !== "2.0.4") fail("Версия плагина должна быть 2.0.4 (получено: " + manifest.version + ")");
-        else pass("Version === 2.0.4");
+        if (manifest.version !== "2.3.2") fail("Версия плагина должна быть 2.3.2 (получено: " + manifest.version + ")");
+        else pass("Version === 2.3.2");
 
         var pproHost = Array.isArray(manifest.host)
             ? manifest.host.find(function (h) { return h.app === "premierepro"; })

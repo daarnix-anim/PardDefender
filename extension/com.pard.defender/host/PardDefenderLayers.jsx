@@ -22,6 +22,9 @@
  *                      a layer without showing it
  *   named in an expression   removing it breaks the expression
  *   PIN label          the manual opt-out used everywhere else in this panel
+ *   HDR file           environment/lighting maps work correctly when disabled
+ *   audio file/layer   audio layers are invisible by design; only reported when
+ *                      their audio track (audioEnabled) is switched off
  *
  * Keyframed opacity is deliberately NOT an exclusion. Owner's decision,
  * 2026-08-29: such a layer may be a forgotten fade-in just as easily as a spare
@@ -97,17 +100,117 @@
 
     /* ------------------------------------------------------------ candidates */
 
-    function fileSourceOf(layer) {
+    function layerSourceOf(layer) {
         var source = null;
         try { source = layer.source; } catch (e) { return null; }
-        if (!source || !host.isFootageItem(source)) return null;
-        return host.footageFile(source) ? source : null;
+        if (!source) return null;
+        if (host.isCompItem(source)) return source;
+        if (host.isFootageItem(source)) {
+            return host.footageFile(source) ? source : null;
+        }
+        return null;
+    }
+
+    function isHdrSource(source) {
+        if (!source) return false;
+        try {
+            var file = host.footageFile(source);
+            if (file) {
+                var fileName = str(file.name);
+                if (/\.hdr$/i.test(fileName)) return true;
+                var fsName = str(file.fsName);
+                if (/\.hdr$/i.test(fsName)) return true;
+            }
+            if (source.name && /\.hdr$/i.test(str(source.name))) return true;
+        } catch (e) {}
+        return false;
+    }
+
+    function isAudioSource(source) {
+        if (!source) return false;
+        try {
+            var file = host.footageFile(source);
+            if (file) {
+                var fileName = str(file.name);
+                if (/\.(wav|mp3|aif|aiff|aifc|m4a|aac|flac|ogg|oga|wma|opus|caf|mp2|au)$/i.test(fileName)) return true;
+                var fsName = str(file.fsName);
+                if (/\.(wav|mp3|aif|aiff|aifc|m4a|aac|flac|ogg|oga|wma|opus|caf|mp2|au)$/i.test(fsName)) return true;
+            }
+            if (source.name && /\.(wav|mp3|aif|aiff|aifc|m4a|aac|flac|ogg|oga|wma|opus|caf|mp2|au)$/i.test(str(source.name))) return true;
+        } catch (e) {}
+        return false;
+    }
+
+    function isSbsSource(source) {
+        if (!source) return false;
+        try {
+            var file = host.footageFile(source);
+            if (file) {
+                var fileName = str(file.name);
+                if (/\.(sbsar|sbs|sbsprs)$/i.test(fileName)) return true;
+                var fsName = str(file.fsName);
+                if (/\.(sbsar|sbs|sbsprs)$/i.test(fsName)) return true;
+            }
+            if (source.name && /\.(sbsar|sbs|sbsprs)$/i.test(str(source.name))) return true;
+        } catch (e) {}
+        return false;
     }
 
     function isCandidate(layer, settings) {
-        var enabled = true;
-        try { enabled = layer.enabled; } catch (e) { return false; }
-        if (enabled !== false) return false;
+        var source = layerSourceOf(layer);
+        if (!source) return false;
+
+        /*
+         * HDR files (environment/lighting maps) work correctly specifically
+         * when disabled and are never forgotten layers.
+         */
+        try {
+            if (layer.name && /\.hdr$/i.test(str(layer.name))) return false;
+        } catch (eHdr) {}
+        if (isHdrSource(source)) return false;
+
+        /*
+         * SBS materials (Substance 3D materials) are used from project-level
+         * and are never forgotten layers.
+         */
+        try {
+            if (layer.name && /\.(sbsar|sbs|sbsprs)$/i.test(str(layer.name))) return false;
+        } catch (eSbs) {}
+        if (isSbsSource(source)) return false;
+
+        /*
+         * Audio check:
+         * In After Effects, audio files (and video layers whose audio is in use)
+         * have an audio track (speaker icon in timeline).
+         * Audio files are always invisible (hasVideo === false, no eyeball).
+         * If audio is enabled (audioEnabled === true), the layer is actively playing
+         * sound and is NOT forgotten.
+         * If the audio track is switched off (audioEnabled === false), it signals that
+         * the layer is muted and may be forgotten/unused.
+         */
+        var hasAudio = false;
+        try { hasAudio = layer.hasAudio === true; } catch (eAudio) {}
+
+        var audioEnabled = false;
+        try { audioEnabled = layer.audioEnabled === true; } catch (eAudioEn) {}
+
+        var isAudio = hasAudio || isAudioSource(source);
+
+        /* If audio is ON, the layer is producing sound in the comp -> not forgotten. */
+        if (isAudio && audioEnabled) return false;
+
+        /* If video is present and video eyeball is ON -> not forgotten. */
+        var hasVideo = true;
+        try { if (layer.hasVideo !== undefined) hasVideo = layer.hasVideo === true; } catch (eVideo) {}
+        if (isAudio && !hasAudio) {
+            try { if (layer.hasVideo === undefined) hasVideo = false; } catch (eV2) {}
+        }
+
+        if (hasVideo) {
+            var enabled = true;
+            try { enabled = layer.enabled; } catch (eEn) { return false; }
+            if (enabled !== false) return false;
+        }
 
         try { if (layer.adjustmentLayer === true) return false; } catch (e1) {}
         try { if (layer.guideLayer === true) return false; } catch (e2) {}
@@ -121,7 +224,7 @@
             if (settings.pinLabel > 0 && layer.label === settings.pinLabel) return false;
         } catch (e4) {}
 
-        return fileSourceOf(layer) !== null;
+        return true;
     }
 
     function hasChildren(comp, layer) {
@@ -261,7 +364,7 @@
                         break;
                     }
                     layer = candidates[j];
-                    source = fileSourceOf(layer);
+                    source = layerSourceOf(layer);
                     if (!source) continue;
 
                     if (refs.referenced[layer.index]) continue;
@@ -271,9 +374,9 @@
                     key = layerKey(comp, layer, source);
                     if (exceptionFor(settings, key)) continue;
 
-                    var file = host.footageFile(source);
+                    var file = host.isFootageItem(source) ? host.footageFile(source) : null;
                     var size = 0;
-                    try { size = Number(file.length) || 0; } catch (eSize) { size = 0; }
+                    try { size = file ? (Number(file.length) || 0) : 0; } catch (eSize) { size = 0; }
 
                     report.findings.push({
                         kind: "layer",
@@ -284,7 +387,7 @@
                         layerName: str(layer.name),
                         itemId: str(source.id),
                         itemName: str(source.name),
-                        path: host.slashes(file.fsName),
+                        path: file ? host.slashes(file.fsName) : "",
                         size: size,
                         status: listHas(settings.disabledLayerForgotten, key)
                             ? "forgotten" : "open"

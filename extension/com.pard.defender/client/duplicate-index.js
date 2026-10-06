@@ -175,6 +175,22 @@ var PardDuplicateIndex = (function () {
         return reasons;
     };
 
+    api.rankCanonicalProjectItem = function (itemA, itemB) {
+        var aUses = Number(itemA.usedInCount) || 0;
+        var bUses = Number(itemB.usedInCount) || 0;
+        if (aUses !== bUses) return bUses - aUses; // Большее число использований побеждает
+
+        var aCopy = /(copy|\u043a\u043e\u043f\u0438\u044f|\s+\d+$)/i.test(itemA.name);
+        var bCopy = /(copy|\u043a\u043e\u043f\u0438\u044f|\s+\d+$)/i.test(itemB.name);
+        if (aCopy !== bCopy) return aCopy ? 1 : -1; // Имя без суффикса копии побеждает
+
+        if (itemA.name.length !== itemB.name.length) return itemA.name.length - itemB.name.length;
+
+        var aId = parseInt(itemA.id, 10) || 0;
+        var bId = parseInt(itemB.id, 10) || 0;
+        return aId - bId;
+    };
+
     /* ------------------------------------------------------- scan engine */
 
     api.scan = function (options, callback) {
@@ -222,6 +238,18 @@ var PardDuplicateIndex = (function () {
                 continue;
             }
 
+            var pItemDesc = {
+                id: String(it.id || ""),
+                key: it.key || ("i" + (it.id || "")),
+                name: String(it.name || normP.substring(normP.lastIndexOf("/") + 1)),
+                path: rawP,
+                normalizedPath: normP,
+                branch: it.branch || "",
+                usedInCount: typeof it.usedInCount === "number" ? it.usedInCount : (it.usedInComps ? it.usedInComps.length : 0),
+                usedInComps: it.usedInComps || [],
+                isProxy: !!it.isProxy
+            };
+
             var key = (it.isProxy ? "proxy:" : "orig:") + normP;
             if (!uniqueFiles[key]) {
                 var inWs = workspaceRoot ? normP.indexOf(workspaceRoot + "/") === 0 : false;
@@ -235,6 +263,7 @@ var PardDuplicateIndex = (function () {
                     inWorkspace: inWs,
                     isOwned: !!ownedPaths[normP],
                     isTemporaryRoute: isTemp,
+                    projectItems: [pItemDesc],
                     references: [String(it.id || it.name || it.key || "")],
                     size: null,
                     mtimeMs: null,
@@ -243,6 +272,7 @@ var PardDuplicateIndex = (function () {
                 };
             } else {
                 uniqueFiles[key].references.push(String(it.id || it.name || it.key || ""));
+                uniqueFiles[key].projectItems.push(pItemDesc);
             }
         }
 
@@ -456,6 +486,7 @@ var PardDuplicateIndex = (function () {
         /* Step 5: Group duplicates into final report */
         function buildFinalResult(seqResults) {
             var duplicateGroups = [];
+            var projectItemGroups = [];
             var gCounter = 1;
 
             /* Group files by (isProxy, sha256) */
@@ -533,6 +564,56 @@ var PardDuplicateIndex = (function () {
                 }
             }
 
+            /* Group project item duplicates (same source file used by multiple project items in AE) */
+            for (var uKey in uniqueFiles) {
+                if (!uniqueFiles.hasOwnProperty(uKey)) continue;
+                var uFile = uniqueFiles[uKey];
+                if (uFile.projectItems && uFile.projectItems.length > 1) {
+                    var pItems = uFile.projectItems.slice();
+                    pItems.sort(api.rankCanonicalProjectItem);
+
+                    var canonProjItem = pItems[0];
+                    var fSize = uFile.size || 0;
+
+                    projectItemGroups.push({
+                        groupId: "group-proj-" + (gCounter++),
+                        kind: "project-item",
+                        subType: "same-source",
+                        title: "Дубликаты в проекте (один исходник)",
+                        contentId: "projitem:" + uFile.normalizedPath,
+                        sourcePath: uFile.path,
+                        normalizedPath: uFile.normalizedPath,
+                        size: fSize,
+                        files: pItems.map(function (pi) {
+                            return {
+                                id: pi.id,
+                                key: pi.key,
+                                name: pi.name,
+                                path: pi.path,
+                                normalizedPath: pi.normalizedPath,
+                                usedInCount: pi.usedInCount,
+                                usedInComps: pi.usedInComps,
+                                references: [pi.id],
+                                inWorkspace: uFile.inWorkspace,
+                                isOwned: uFile.isOwned,
+                                isProjectItemDup: true
+                            };
+                        }),
+                        projectItems: pItems,
+                        references: pItems.map(function (pi) { return pi.id; }),
+                        totalBytes: fSize * pItems.length,
+                        reclaimableBytes: 0,
+                        recommendedCanonical: canonProjItem.id,
+                        recommendedCanonicalName: canonProjItem.name,
+                        reasons: [
+                            "Один и тот же файл-исходник используется несколькими элементами проекта (" + pItems.length + " шт.)",
+                            "Рекомендуемый основной: «" + canonProjItem.name + "» (ID: " + canonProjItem.id +
+                                (canonProjItem.usedInCount ? ", используется в " + canonProjItem.usedInCount + " комп." : "") + ")"
+                        ]
+                    });
+                }
+            }
+
             var totalReclaimable = 0;
             for (var d = 0; d < duplicateGroups.length; d++) {
                 totalReclaimable += duplicateGroups[d].reclaimableBytes;
@@ -579,6 +660,7 @@ var PardDuplicateIndex = (function () {
                 hashedFiles: filesToHash.length,
                 scannedSequences: sequences.length,
                 duplicateGroups: duplicateGroups,
+                projectItemGroups: projectItemGroups,
                 errors: errors,
                 reclaimableBytes: totalReclaimable
             });

@@ -131,7 +131,7 @@ check("порядок загрузки JSX-модулей", loadedFiles, [
 /* Fallback к window.location при отсутствии явного root */
 var h2b = createHarness(undefined, {
     evalResponse: function (script) {
-        if (script.indexOf("PardDefenderHost.version") >= 0) return "OK|2.0.4";
+        if (script.indexOf("PardDefenderHost.version") >= 0) return "OK|2.3.2";
         return "OK";
     }
 });
@@ -141,7 +141,7 @@ h2b.adapter.initialize(function (ok, info) {
     initDefaultInfo = info;
 });
 check("initialize без root использует window.location", initDefaultOk, true);
-check("initialize без root вернул версию", initDefaultInfo, "2.0.4");
+check("initialize без root вернул версию", initDefaultInfo, "2.3.2");
 
 /* Ошибка при пустом root */
 var h2c = createHarness();
@@ -294,6 +294,11 @@ h4.adapter.revealWorkspace(function (r) { rawEcho = r; });
 check("revealWorkspace script", h4.calls[0],
     "$.global.PardDefenderHost.revealWorkspace();");
 
+h4.calls.length = 0;
+h4.adapter.consolidateProjectItemsFromFileJson("C:/temp/consolidate.json", function (r) { rawEcho = r; });
+check("consolidateProjectItemsFromFileJson script", h4.calls[0],
+    "$.global.PardDefenderHost.consolidateProjectItemsFromFileJson('C:/temp/consolidate.json');");
+
 /* ---------------------------------------------------------- экранирование */
 
 group("Экранирование кавычек, backslash и переводов строк");
@@ -330,6 +335,22 @@ h5.adapter.writeSettingsFromFile("D:\\Projects\\O'Reilly\\settings.json", functi
 check("экранирование writeSettingsFromFile",
     h5.calls[0],
     "$.global.PardDefenderHost.writeSettingsFromFile('D:\\\\Projects\\\\O\\'Reilly\\\\settings.json');"
+);
+
+/* Вызов consolidateProjectItemsJson через временный файл */
+h5.calls.length = 0;
+h5.adapter.consolidateProjectItemsJson({ canonicalId: 1, duplicateIds: [2, 3] }, function () {});
+check("вызов consolidateProjectItemsJson через файл",
+    h5.calls[0].indexOf("$.global.PardDefenderHost.consolidateProjectItemsFromFileJson(") === 0,
+    true
+);
+
+/* Экранирование и вызов consolidateProjectItemsFromFileJson */
+h5.calls.length = 0;
+h5.adapter.consolidateProjectItemsFromFileJson("C:\\Projects\\Artist's\\plan.json", function () {});
+check("экранирование consolidateProjectItemsFromFileJson",
+    h5.calls[0],
+    "$.global.PardDefenderHost.consolidateProjectItemsFromFileJson('C:\\\\Projects\\\\Artist\\'s\\\\plan.json');"
 );
 
 /* ---------------------------------------------------- чистота main.js */

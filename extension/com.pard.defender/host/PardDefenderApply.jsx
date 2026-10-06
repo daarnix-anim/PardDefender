@@ -159,21 +159,20 @@
         var fBase = fName.replace(/\.[^.]+$/, "");
 
         /*
-         * After Effects names PSD/AI layer items as "LayerName/filename.psd".
-         * Extract the layer part before the slash when this pattern is present.
-         * Note that fileName may have duplicate suffix e.g. "01 (11).psd", while
-         * the original item is named "LayerName/01.psd".
+         * After Effects names PSD/AI layer items as "LayerName/filename.psd" or
+         * "Group/LayerName/filename.psd".
+         * Strip the trailing filename/extension after the last slash.
          */
-        var slashIdx = s.indexOf("/");
-        if (slashIdx === -1) slashIdx = s.indexOf("\\");
-        if (slashIdx > 0) {
-            var afterSlash = s.substring(slashIdx + 1);
-            var cleanAfter = afterSlash.replace(/\s*\(\d+\)/g, "");
-            var cleanBase = fBase.replace(/\s*\(\d+\)/g, "");
+        var lastSlash = s.lastIndexOf("/");
+        if (lastSlash === -1) lastSlash = s.lastIndexOf("\\");
+        if (lastSlash > 0) {
+            var afterSlash = s.substring(lastSlash + 1);
+            var cleanAfter = afterSlash.replace(/\s*\(\d+\)/g, "").replace(/\s+\d+$/g, "");
+            var cleanBase = fBase.replace(/\s*\(\d+\)/g, "").replace(/\s+\d+$/g, "");
             if (/\.(psd|psb|ai|eps|pdf)$/i.test(afterSlash) ||
                 afterSlash === fName || afterSlash === fBase ||
                 cleanAfter === cleanBase || (fBase && afterSlash.indexOf(fBase) !== -1)) {
-                s = host.trimText(s.substring(0, slashIdx));
+                s = host.trimText(s.substring(0, lastSlash));
             }
         }
 
@@ -187,12 +186,41 @@
         return host.trimText(s.replace(/\s+/g, " "));
     }
 
+    function extractLeafLayerName(fullName, fileName) {
+        var s = host.trimText(str(fullName)).toLowerCase();
+        if (!s) return "";
+        var fName = host.trimText(str(fileName || "")).toLowerCase();
+        var fBase = fName.replace(/\.[^.]+$/, "");
+
+        var lastSlash = s.lastIndexOf("/");
+        if (lastSlash === -1) lastSlash = s.lastIndexOf("\\");
+        if (lastSlash > 0) {
+            var afterSlash = s.substring(lastSlash + 1);
+            var cleanAfter = afterSlash.replace(/\s*\(\d+\)/g, "").replace(/\s+\d+$/g, "");
+            var cleanBase = fBase.replace(/\s*\(\d+\)/g, "").replace(/\s+\d+$/g, "");
+            if (/\.(psd|psb|ai|eps|pdf)$/i.test(afterSlash) ||
+                afterSlash === fName || afterSlash === fBase ||
+                cleanAfter === cleanBase || (fBase && afterSlash.indexOf(fBase) !== -1)) {
+                s = host.trimText(s.substring(0, lastSlash));
+            }
+        }
+
+        var leafSlash = s.lastIndexOf("/");
+        if (leafSlash === -1) leafSlash = s.lastIndexOf("\\");
+        if (leafSlash !== -1) {
+            s = s.substring(leafSlash + 1);
+        }
+        s = s.replace(/[\/\\\[\]\(\)\-_]/g, " ");
+        return host.trimText(s.replace(/\s+/g, " "));
+    }
+
     function matchLayerCandidate(item, candidates, fileName) {
         var cleanOld = host.trimText(str(item.name)).toLowerCase();
         var coreOld = extractCoreLayerName(item.name, fileName);
+        var leafOld = extractLeafLayerName(item.name, fileName);
         var itemW = item.width || 0;
         var itemH = item.height || 0;
-        var i, c, cleanCand, candSource, coreCand, coreSource;
+        var i, c, cleanCand, candSource, coreCand, coreSource, leafCand, leafSource;
 
         var sourceNameOld = "";
         try { sourceNameOld = host.trimText(str(item.mainSource.name || "")).toLowerCase(); }
@@ -203,17 +231,26 @@
             candSource = host.trimText(str(cand.sourceName || "")).toLowerCase();
             coreCand = extractCoreLayerName(cand.name, fileName);
             coreSource = extractCoreLayerName(cand.sourceName, fileName);
+            leafCand = extractLeafLayerName(cand.name, fileName);
+            leafSource = extractLeafLayerName(cand.sourceName, fileName);
 
             return (cleanOld === cleanCand || cleanOld === candSource ||
                 (sourceNameOld && (sourceNameOld === cleanCand || sourceNameOld === candSource ||
-                    sourceNameOld === coreCand || sourceNameOld === coreSource)) ||
-                (coreOld && (coreOld === coreCand || coreOld === coreSource || coreOld === cleanCand)) ||
+                    sourceNameOld === coreCand || sourceNameOld === coreSource ||
+                    sourceNameOld === leafCand || sourceNameOld === leafSource)) ||
+                (coreOld && (coreOld === coreCand || coreOld === coreSource || coreOld === cleanCand || coreOld === candSource)) ||
+                (leafOld && (leafOld === leafCand || leafOld === leafSource || leafOld === cleanCand || leafOld === coreCand ||
+                    leafOld.replace(/\s+\d+$/, "") === leafCand.replace(/\s+\d+$/, "") ||
+                    leafOld.replace(/\s+\d+$/, "") === leafSource.replace(/\s+\d+$/, ""))) ||
                 cleanOld.indexOf(cleanCand + "/") === 0 || cleanOld.indexOf(cleanCand + "\\") === 0 ||
                 candSource.indexOf(coreOld + "/") === 0 || candSource.indexOf(coreOld + "\\") === 0 ||
-                cleanOld.indexOf("/" + cleanCand) !== -1 || cleanOld.indexOf("\\" + cleanCand) !== -1);
+                candSource.indexOf(leafOld + "/") === 0 || candSource.indexOf(leafOld + "\\") === 0 ||
+                cleanOld.indexOf("/" + cleanCand) !== -1 || cleanOld.indexOf("\\" + cleanCand) !== -1 ||
+                cleanCand.indexOf("/" + leafOld) !== -1 || cleanCand.indexOf("\\" + leafOld) !== -1 ||
+                candSource.indexOf("/" + leafOld) !== -1 || candSource.indexOf("\\" + leafOld) !== -1);
         }
 
-        /* Pass 1: UNUSED candidate with exact name (or core name) AND dimensions match */
+        /* Pass 1: UNUSED candidate with exact name (or core/leaf name) AND dimensions match */
         for (i = 0; i < candidates.length; i++) {
             c = candidates[i];
             if (c.used) continue;
@@ -235,7 +272,7 @@
             }
         }
 
-        /* Pass 2: UNUSED candidate with exact core name, full name, or source name match */
+        /* Pass 2: UNUSED candidate with exact core name, full name, leaf name, or source name match */
         for (i = 0; i < candidates.length; i++) {
             c = candidates[i];
             if (c.used) continue;
@@ -280,8 +317,10 @@
             if (c.used) continue;
             cleanCand = host.trimText(str(c.name)).toLowerCase();
             coreCand = extractCoreLayerName(c.name, fileName);
+            leafCand = extractLeafLayerName(c.name, fileName);
             if ((cleanCand.length > 2 && (cleanOld.indexOf(cleanCand) !== -1 || cleanCand.indexOf(cleanOld) !== -1)) ||
-                (coreOld && coreCand && coreCand.length > 2 && (coreOld.indexOf(coreCand) !== -1 || coreCand.indexOf(coreOld) !== -1))) {
+                (coreOld && coreCand && coreCand.length > 2 && (coreOld.indexOf(coreCand) !== -1 || coreCand.indexOf(coreOld) !== -1)) ||
+                (leafOld && leafCand && leafCand.length > 2 && (leafOld.indexOf(leafCand) !== -1 || leafCand.indexOf(leafOld) !== -1))) {
                 return c;
             }
         }
@@ -308,6 +347,11 @@
 
     function relinkLayeredGroup(destination, groupEntries, result) {
         var io, tempComp = null, tempFolder = null;
+        var itemsBefore = {};
+        for (var eb = 1; eb <= app.project.numItems; eb++) {
+            try { itemsBefore[app.project.item(eb).id] = true; } catch (eBf) {}
+        }
+
         try {
             io = new ImportOptions(destination);
             io.file = destination;
@@ -326,31 +370,86 @@
             tempComp = null;
         }
 
-        if (!tempComp || typeof tempComp.numLayers !== "number" || tempComp.numLayers < 1) {
-            try { if (tempComp) tempComp.remove(); } catch (eRem) {}
-            return false;
+        var newlyCreatedItems = [];
+        for (var ea = 1; ea <= app.project.numItems; ea++) {
+            try {
+                var itm = app.project.item(ea);
+                if (itm && !itemsBefore[itm.id]) {
+                    newlyCreatedItems.push(itm);
+                    if (!tempFolder && host.isFolderItem(itm)) {
+                        tempFolder = itm;
+                    }
+                }
+            } catch (eItm) {}
         }
 
-        var newLayers = [], k, l;
-        try {
-            for (k = 1; k <= tempComp.numLayers; k++) {
-                l = tempComp.layer(k);
-                if (l && l.source) {
+        var newLayers = [];
+        var visitedComps = {};
+        function collectFromComp(comp) {
+            if (!comp || !host.isCompItem(comp)) return;
+            try {
+                if (visitedComps[comp.id]) return;
+                visitedComps[comp.id] = true;
+            } catch (eVis) {}
+            var numL = 0;
+            try { numL = comp.numLayers || 0; } catch (eNL) { numL = 0; }
+            for (var k = 1; k <= numL; k++) {
+                try {
+                    var l = comp.layer(k);
+                    if (!l || !l.source) continue;
+                    if (host.isCompItem(l.source)) {
+                        collectFromComp(l.source);
+                    } else if (host.isFootageItem(l.source)) {
+                        newLayers.push({
+                            name: str(l.name),
+                            sourceName: str(l.source.name),
+                            source: l.source,
+                            width: l.source.width || 0,
+                            height: l.source.height || 0,
+                            used: false
+                        });
+                        if (!tempFolder && l.source.parentFolder && l.source.parentFolder !== app.project.rootFolder) {
+                            tempFolder = l.source.parentFolder;
+                        }
+                    }
+                } catch (eLk) {}
+            }
+        }
+        if (tempComp) {
+            collectFromComp(tempComp);
+        }
+
+        for (var ni = 0; ni < newlyCreatedItems.length; ni++) {
+            var nItm = newlyCreatedItems[ni];
+            if (host.isFootageItem(nItm)) {
+                var alreadyPresent = false;
+                for (var al = 0; al < newLayers.length; al++) {
+                    if (newLayers[al].source === nItm) {
+                        alreadyPresent = true;
+                        break;
+                    }
+                }
+                if (!alreadyPresent) {
                     newLayers.push({
-                        name: str(l.name),
-                        sourceName: str(l.source.name),
-                        source: l.source,
-                        width: l.source.width || 0,
-                        height: l.source.height || 0,
+                        name: str(nItm.name),
+                        sourceName: str(nItm.name),
+                        source: nItm,
+                        width: nItm.width || 0,
+                        height: nItm.height || 0,
                         used: false
                     });
-                    if (!tempFolder && l.source.parentFolder && l.source.parentFolder !== app.project.rootFolder) {
-                        tempFolder = l.source.parentFolder;
+                    if (!tempFolder && nItm.parentFolder && nItm.parentFolder !== app.project.rootFolder) {
+                        tempFolder = nItm.parentFolder;
                     }
                 }
             }
-        } catch (eLayers) {
-            try { tempComp.remove(); } catch (eRemComp) {}
+        }
+
+        if (newLayers.length < 1) {
+            for (var ci0 = 0; ci0 < newlyCreatedItems.length; ci0++) {
+                try { newlyCreatedItems[ci0].remove(); } catch (eC0) {}
+            }
+            try { if (tempComp) tempComp.remove(); } catch (eTC0) {}
             return false;
         }
 
@@ -432,7 +531,7 @@
              * placement in the composition. */
             for (var p = 1; p <= app.project.numItems; p++) {
                 var pItem = app.project.item(p);
-                if (host.isCompItem(pItem) && pItem !== tempComp) {
+                if (host.isCompItem(pItem) && pItem !== tempComp && !visitedComps[pItem.id]) {
                     for (var cl = 1; cl <= pItem.numLayers; cl++) {
                         try {
                             var cLayer = pItem.layer(cl);
@@ -481,11 +580,33 @@
             result.relinked++;
         }
 
-        try { tempComp.remove(); } catch (eTC) {}
+        for (var ci = 0; ci < newlyCreatedItems.length; ci++) {
+            var cItm = newlyCreatedItems[ci];
+            if (host.isCompItem(cItm)) {
+                try { cItm.remove(); } catch (eRemSubComp) {}
+            }
+        }
+        try { if (tempComp) tempComp.remove(); } catch (eTC) {}
 
         for (var u = 0; u < newLayers.length; u++) {
             if (!newLayers[u].used && newLayers[u].source) {
                 try { newLayers[u].source.remove(); } catch (eRem) {}
+            }
+        }
+
+        for (var foi = 0; foi < newlyCreatedItems.length; foi++) {
+            var foItm = newlyCreatedItems[foi];
+            if (host.isFolderItem(foItm)) {
+                var isFoEmpty = true;
+                for (var fi2 = 1; fi2 <= app.project.numItems; fi2++) {
+                    if (app.project.item(fi2).parentFolder === foItm) {
+                        isFoEmpty = false;
+                        break;
+                    }
+                }
+                if (isFoEmpty) {
+                    try { foItm.remove(); } catch (eTF2) {}
+                }
             }
         }
 
@@ -984,8 +1105,142 @@
         return result;
     };
 
-    host.removeItemsFromFileJson = function (planPath) {
-        return host.jsonEncode(host.removeItemsFromFile(planPath));
+    /*
+     * Consolidates duplicate project items in After Effects: replaces usages
+     * of duplicate items in all compositions with the canonical item, then
+     * removes the redundant duplicate items from the Project panel.
+     */
+    host.consolidateProjectItems = function (plan) {
+        var result = {
+            ok: true,
+            relinkedLayers: 0,
+            removedItems: 0,
+            skippedItems: 0,
+            error: "",
+            relinkFailures: [],
+            removeFailures: []
+        };
+
+        if (!app.project) {
+            result.ok = false;
+            result.error = "No project is open.";
+            return result;
+        }
+
+        if (!plan || !plan.canonicalId || !host.isArrayLike(plan.duplicateIds)) {
+            result.ok = false;
+            result.error = "Invalid project items consolidation plan.";
+            return result;
+        }
+
+        var canonicalItem = host.findItemById(plan.canonicalId);
+        if (!canonicalItem || !host.isFootageItem(canonicalItem)) {
+            result.ok = false;
+            result.error = "Canonical project item not found (ID: " + str(plan.canonicalId) + ").";
+            return result;
+        }
+
+        var dupIdMap = {};
+        for (var d = 0; d < plan.duplicateIds.length; d++) {
+            var dId = str(plan.duplicateIds[d]);
+            if (dId && dId !== str(plan.canonicalId)) {
+                dupIdMap[dId] = true;
+            }
+        }
+
+        var undoStarted = false;
+        try {
+            app.beginUndoGroup("PardDefender: Consolidate duplicate project items");
+            undoStarted = true;
+
+            /* Step 1: Replace sources across all comps */
+            var compList = [];
+            for (var i = 1; i <= app.project.numItems; i++) {
+                var pItem = app.project.item(i);
+                if (host.isCompItem(pItem)) compList.push(pItem);
+            }
+
+            for (var c = 0; c < compList.length; c++) {
+                var comp = compList[c];
+                var numL = 0;
+                try { numL = comp.numLayers; } catch (eNum) { numL = 0; }
+                for (var l = 1; l <= numL; l++) {
+                    var layer = null;
+                    try { layer = comp.layer(l); } catch (eLay) { layer = null; }
+                    if (!layer) continue;
+                    var src = null;
+                    try { src = layer.source; } catch (eSrc) { src = null; }
+                    if (!src) continue;
+                    var srcId = str(src.id);
+                    if (dupIdMap[srcId]) {
+                        var wasLocked = false;
+                        try { wasLocked = layer.locked; } catch (eLock) { wasLocked = false; }
+                        if (wasLocked) {
+                            try { layer.locked = false; } catch (eUnl) {}
+                        }
+                        try {
+                            layer.replaceSource(canonicalItem, false);
+                            result.relinkedLayers++;
+                        } catch (eRep) {
+                            result.relinkFailures.push("Layer " + l + " in comp '" + comp.name + "': " + eRep.toString());
+                        }
+                        if (wasLocked) {
+                            try { layer.locked = true; } catch (eRel) {}
+                        }
+                    }
+                }
+            }
+
+            /* Step 2: Remove unreferenced duplicate items */
+            for (var dupKey in dupIdMap) {
+                if (!dupIdMap.hasOwnProperty(dupKey)) continue;
+                var dupItem = host.findItemById(dupKey);
+                if (!dupItem) {
+                    result.skippedItems++;
+                    continue;
+                }
+                var remainingUses = 0;
+                try {
+                    remainingUses = (dupItem.usedIn && dupItem.usedIn.length) || 0;
+                } catch (eRem) { remainingUses = 0; }
+
+                if (remainingUses === 0) {
+                    try {
+                        dupItem.remove();
+                        result.removedItems++;
+                    } catch (eRemItem) {
+                        result.skippedItems++;
+                        result.removeFailures.push("Item ID " + dupKey + ": " + eRemItem.toString());
+                    }
+                } else {
+                    result.skippedItems++;
+                }
+            }
+        } catch (error) {
+            result.ok = false;
+            result.error = str(error) + " (line " + str(error.line) + ")";
+        }
+
+        if (undoStarted) { try { app.endUndoGroup(); } catch (eEnd) {} }
+        return result;
+    };
+
+    host.consolidateProjectItemsFromFile = function (planPath) {
+        var raw = host.readTextFile(planPath);
+        if (!raw) {
+            return { ok: false, error: "The consolidation plan could not be read." };
+        }
+        var plan = host.jsonDecode(raw);
+        return host.consolidateProjectItems(plan);
+    };
+
+    host.consolidateProjectItemsJson = function (planJson) {
+        var plan = typeof planJson === "string" ? host.jsonDecode(planJson) : planJson;
+        return host.jsonEncode(host.consolidateProjectItems(plan));
+    };
+
+    host.consolidateProjectItemsFromFileJson = function (planPath) {
+        return host.jsonEncode(host.consolidateProjectItemsFromFile(planPath));
     };
 
     $.global.PardDefenderHost = host;
