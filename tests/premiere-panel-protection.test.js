@@ -101,6 +101,35 @@ async function finish(panel) {
     check(p.calls.reveals[0] === p.report.items[0]._projectItem, "Row opens the original ProjectItem, not its ClipProjectItem wrapper");
     await p.elements["items-list"].children[0].click({ tagName: "SELECT" });
     check(p.calls.reveals.length === 1, "Audio role dropdown does not open Source Monitor");
+    p = launch({ quiet: true, items: [{ id: "v", name: "External.mp4", path: "e:/Raw/External.mp4",
+        classification: "clip", usedOnTimeline: true, _projectItem: {}, _nativeItem: {} }, {
+        id: "a", name: "Music.wav", path: "e:/Raw/Music.wav", binPath: "Music",
+        classification: "clip", usedOnTimeline: true, _projectItem: {}, _nativeItem: {}
+    }, { id: "s", name: "Timeline", classification: "sequence", usedOnTimeline: true }] });
+    function view(name, value) { p.elements[name].value = value; p.elements[name].events.change(); }
+    function visibleCards() { return p.elements["items-list"].children.filter(el => el.className.includes("media-item-card")); }
+    const originalOrder = p.report.items.map(it => it.id).join(",");
+    const snapshotsBeforeFilter = p.calls.snapshots.length;
+    check(visibleCards()[0].className.includes("media-video") && visibleCards()[1].className.includes("media-audio"), "Media gets subtle type-specific styling");
+    view("items-filter", "sequence");
+    check(visibleCards().length === 1 && p.elements["items-visible"].textContent === "1 / 3", "Sequence filter and visible/total counter");
+    view("items-filter", "image");
+    check(visibleCards().length === 0 && p.elements["items-list"].children[0].textContent.includes("Все типы"), "Empty filter explains how to restore the list");
+    check(p.calls.snapshots.length === snapshotsBeforeFilter, "View controls do not write cross-host metadata");
+    await p.elements["btn-protect"].click(); await finish(p);
+    check(p.calls.tasks.length === 2 && p.calls.relinks.length === 2, "Protection still handles BOTH hidden external video and audio");
+    check(p.calls.snapshots.some(s => s.items.some(it => it.itemId === "v" || it.id === "v")), "Hidden media remains in the cross-host snapshot");
+    view("items-filter", "all"); view("items-group", "format");
+    const headers = p.elements["items-list"].children.filter(el => el.className === "media-group-heading").map(el => el.textContent);
+    check(headers.includes("MP4") && headers.includes("WAV") && headers.includes("Секвенции"), "Format groups distinguish actual extensions and sequences without paths");
+    view("items-group", "type");
+    check(visibleCards().length === 3, "Grouping retains all project items");
+    check(p.report.items.map(it => it.id).join(",") === originalOrder, "View ordering never mutates the audit report");
+    view("items-group", "none");
+    check(visibleCards()[0].children[0].children[0].textContent === "External.mp4", "Reset restores project order");
+    p.report.projectSaved = false;
+    p.api.triggerAudit(); view("items-filter", "audio");
+    check(visibleCards().length === 0, "Changing filter cannot reveal stale items of an unsaved project");
     p = launch({ switched: true }); p.api.protectExternalMedia(); await finish(p);
     check(p.calls.relinks.length === 0, "Switching project blocks stale relink");
     // Full button -> real files -> official-style asynchronous relink -> save.

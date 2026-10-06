@@ -38,6 +38,9 @@
         bannerUnsaved: document.getElementById("banner-unsaved"),
         itemsCount: document.getElementById("items-count"),
         itemsList: document.getElementById("items-list"),
+        itemsFilter: document.getElementById("items-filter"),
+        itemsGroup: document.getElementById("items-group"),
+        itemsVisible: document.getElementById("items-visible"),
 
         tabs: document.getElementById("tabs"),
         badgeDuplicates: document.getElementById("badge-duplicates"),
@@ -60,6 +63,8 @@
         protecting: false,
         userPaused: false,
         lastReport: null,
+        itemsFilter: "all",
+        itemsGroup: "none",
         lastDiagnosticsKey: "",
         activeTab: "protect",
         duplicatesResult: null,
@@ -335,20 +340,68 @@
         if (el.itemsCount) el.itemsCount.textContent = String(typeof s.totalItems === "number" ? s.totalItems : (parseInt(s.totalItems, 10) || 0));
     }
 
+    var MEDIA_LABELS = { video: "Видео", image: "Изображения", audio: "Аудио",
+        sequence: "Секвенции", other: "Другие" };
+
+    function mediaFormat(item) {
+        if (item.classification === "sequence") return "";
+        var match = /\.([^./\\]+)$/.exec(item.path || item.name || "");
+        return match ? match[1].toLowerCase() : "";
+    }
+
+    function mediaType(item) {
+        if (item.classification === "sequence") return "sequence";
+        if (PardPremiereCopyEngine.isAudio(item)) return "audio";
+        var ext = mediaFormat(item);
+        if (/^(mp4|mov|avi|mxf|mkv|webm|m4v|mpg|mpeg|mpe|mts|m2ts|r3d|braw|wmv|dv|m2v|qt|ari|arri)$/.test(ext)) return "video";
+        if (/^(png|jpe?g|tiff?|exr|dpx|gif|bmp|webp|psd|psb|ai|svg|eps|tga|cin|hdr|heic|heif|avif)$/.test(ext)) return "image";
+        return "other";
+    }
+
+    function mediaGroup(item) {
+        if (state.itemsGroup === "type") return MEDIA_LABELS[mediaType(item)];
+        if (state.itemsGroup === "format") return mediaFormat(item).toUpperCase() || MEDIA_LABELS[mediaType(item)];
+        if (state.itemsGroup === "bin") return item.binPath || "Корень проекта";
+        return "";
+    }
+
     function renderItems(items) {
+        var all = items || [];
+        // Never sort or filter report.items: protection and snapshots need ALL media.
+        items = all.filter(function (item) { return state.itemsFilter === "all" || mediaType(item) === state.itemsFilter; });
+        el.itemsVisible.textContent = items.length + " / " + all.length;
+        if (state.itemsGroup !== "none") {
+            items = items.map(function (item, index) { return { item: item, index: index }; });
+            items.sort(function (a, b) {
+                var left = state.itemsGroup === "name" ? a.item.name : mediaGroup(a.item);
+                var right = state.itemsGroup === "name" ? b.item.name : mediaGroup(b.item);
+                return String(left || "").localeCompare(String(right || "")) || a.index - b.index;
+            });
+            items = items.map(function (entry) { return entry.item; });
+        }
+        var scroll = el.itemsList.scrollTop || 0;
         el.itemsList.innerHTML = "";
         if (!items || items.length === 0) {
             var empty = document.createElement("div");
             empty.className = "empty-state";
-            empty.textContent = "В проекте не найдено подходящих элементов медиа.";
+            empty.textContent = all.length ? "Нет элементов этого типа. Выберите «Все типы»." : "В проекте не найдено подходящих элементов медиа.";
             el.itemsList.appendChild(empty);
             return;
         }
 
+        var previousGroup = null;
         for (var i = 0; i < items.length; i++) {
             var item = items[i];
+            var group = mediaGroup(item);
+            if (group && group !== previousGroup) {
+                var groupTitle = document.createElement("div");
+                groupTitle.className = "media-group-heading";
+                groupTitle.textContent = group;
+                el.itemsList.appendChild(groupTitle);
+            }
+            previousGroup = group;
             var card = document.createElement("div");
-            card.className = "media-item-card";
+            card.className = "media-item-card media-" + mediaType(item) + (item.binPath ? " in-bin" : "");
             card.title = "Открыть в мониторе «Источник»" + (item.binPath ? " — " + item.binPath : "");
 
             (function (it) {
@@ -388,6 +441,10 @@
             classBadge.className = "class-badge " + (item.classification || "clip");
             classBadge.textContent = (item.classification || "clip").toUpperCase();
             top.appendChild(classBadge);
+            var typeBadge = document.createElement("span");
+            typeBadge.className = "media-type-label";
+            typeBadge.textContent = MEDIA_LABELS[mediaType(item)];
+            top.appendChild(typeBadge);
 
             if (item.crossHost) {
                 if (item.crossHost.canRelink && item.crossHost.isAeProtected) {
@@ -485,6 +542,7 @@
             card.appendChild(meta);
             el.itemsList.appendChild(card);
         }
+        el.itemsList.scrollTop = scroll;
     }
 
     function setScanButtonsState(disabled) {
@@ -1460,6 +1518,18 @@
     }
 
     function init() {
+        el.itemsFilter.value = state.itemsFilter;
+        el.itemsGroup.value = state.itemsGroup;
+        el.itemsFilter.addEventListener("change", function () {
+            state.itemsFilter = el.itemsFilter.value;
+            el.itemsList.scrollTop = 0;
+            renderItems(state.lastReport && state.lastReport.ok && state.lastReport.projectSaved ? state.lastReport.items : []);
+        });
+        el.itemsGroup.addEventListener("change", function () {
+            state.itemsGroup = el.itemsGroup.value;
+            el.itemsList.scrollTop = 0;
+            renderItems(state.lastReport && state.lastReport.ok && state.lastReport.projectSaved ? state.lastReport.items : []);
+        });
         if (el.tabs) {
             el.tabs.onclick = function (e) {
                 var target = e.target;

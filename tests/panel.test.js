@@ -1737,6 +1737,63 @@ group("Неиспользуемые файлы: кнопка сортировк�
     check("исходный файл удалён из старого места", fs.existsSync(native(existingUnused)), false);
 })();
 
+group("Фильтры и группировка забытых слоёв — только представление");
+(function () {
+    var findings = [
+        { kind: "comp", key: "C1", compId: "1", compName: "Main", status: "open" },
+        { kind: "layer", key: "L1", compId: "1", compName: "Main", layerIndex: 2,
+            layerName: "Nested", mediaType: "comp", status: "open" },
+        { kind: "layer", key: "L2", compId: "1", compName: "Main", layerIndex: 3,
+            layerName: "Movie", path: "E:/raw/movie.mp4", threeD: true, status: "open" },
+        { kind: "layer", key: "L3", compId: "2", compName: "Other", layerIndex: 1,
+            layerName: "Photo", mediaType: "design", path: "E:/raw/photo.psd", status: "open" },
+        { kind: "layer", key: "L4", compId: "2", compName: "Other", layerIndex: 2,
+            layerName: "Sound", mediaType: "audio", status: "open" }
+    ];
+    var p = launch({ layers: layersReport(findings) });
+    function rows() { return p.id("layers").children.filter(function (n) { return n.hasClass("layer-row"); }); }
+    p.id("tabs").children.filter(function (n) { return n.textContent.indexOf("ВЫКЛЮЧЕНО") === 0; })[0].onclick();
+    check("AE включает адаптивный режим только на вкладке слоёв", p.id("panel").hasClass("layers-active"), true);
+    check("корневая композиция имеет свой тон", rows()[0].hasClass("media-comp"), true);
+    check("pre-comp отличим от корневой композиции", rows()[1].hasClass("nested-comp"), true);
+    check("футаж внутри композиции имеет дополнительную границу", rows()[2].hasClass("in-comp"), true);
+    check("старый host без mediaType распознаётся по пути", rows()[2].hasClass("media-video"), true);
+    check("PSD относится к изображениям", rows()[3].hasClass("media-image"), true);
+    p.change("layers-filter", function (el) { el.value = "comp"; });
+    check("фильтр композиций включает root и pre-comp", rows().length, 2);
+    check("счётчик показывает видимое и полное число", p.id("layers-visible").textContent, "2 / 5");
+    p.change("layers-filter", function (el) { el.value = "threeD"; });
+    check("3D-фильтр использует свойство слоя", rows().length, 1);
+    check("3D-фильтр оставляет именно Movie", rows()[0].textContent.indexOf("Movie") >= 0, true);
+    p.change("layers-filter", function (el) { el.value = "model"; });
+    check("пустой фильтр не скрывает вкладку", p.id("pane-layers").hidden, false);
+    check("пустой фильтр объясняет отсутствие строк", p.id("layers").textContent.indexOf("Все типы") >= 0, true);
+    p.change("layers-filter", function (el) { el.value = "all"; });
+    p.change("layers-group", function (el) { el.value = "type"; });
+    check("группы имеют отдельные заголовки", p.id("layers").children.filter(function (n) { return n.hasClass("media-group-heading"); }).length, 4);
+    check("группировка не потеряла записи", rows().length, 5);
+    var writes = dom.htmlWrites();
+    p.tick(null, layersReport(findings));
+    check("повторный отчёт не перестраивает сгруппированный список", dom.htmlWrites(), writes);
+    check("визуальная фильтрация не записывает настройки проекта", p.calls.settings.length, 0);
+    p.change("layers-group", function (el) { el.value = "none"; });
+    check("сброс группировки восстанавливает исходный порядок", rows()[0].textContent.indexOf("Main") >= 0, true);
+    findings[2].layerName = "Movie renamed";
+    p.tick(null, layersReport(findings));
+    check("переименование обновляет строку без смены ключа", rows()[2].textContent.indexOf("Movie renamed") >= 0, true);
+    var many = [];
+    for (var i = 0; i < 35; i++) many.push({ kind: "layer", key: "V" + i, compName: "Main",
+        layerName: "Video " + i, path: "E:/v" + i + ".mp4", status: "open" });
+    p.tick(null, layersReport(many));
+    check("список не теряет находки после прежнего лимита 30", rows().length, 35);
+    var css = fs.readFileSync(path.join(__dirname, "../extension/com.pard.defender/client/styles.css"), "utf8");
+    var listStyle = css.match(/\.layers\s*\{([^}]+)\}/)[1];
+    var rowStyle = css.match(/\.layer-row\s*\{([^}]+)\}/)[1];
+    check("список больше не ограничен высотой 260px", /max-height\s*:/.test(listStyle), false);
+    check("список растёт и сжимается вместе с dock", /flex:\s*1 1 320px/.test(listStyle) && /overflow-y:\s*auto/.test(listStyle), true);
+    check("строки не сжимаются в нечитаемые линии", /flex-shrink:\s*0/.test(rowStyle), true);
+})();
+
 /* ------------------------------------------------------------------ итог */
 
 try { fs.rmSync(native(root), { recursive: true, force: true }); } catch (e) {}

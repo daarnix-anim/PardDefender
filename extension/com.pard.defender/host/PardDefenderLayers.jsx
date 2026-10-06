@@ -320,6 +320,8 @@
                     if (!exception) {
                         report.findings.push({
                             kind: "comp",
+                            mediaType: "comp",
+                            threeD: false,
                             key: key,
                             compId: str(comp.id),
                             compName: str(comp.name),
@@ -377,9 +379,21 @@
                     var file = host.isFootageItem(source) ? host.footageFile(source) : null;
                     var size = 0;
                     try { size = file ? (Number(file.length) || 0) : 0; } catch (eSize) { size = 0; }
+                    var sourcePath = file ? host.slashes(file.fsName) : "";
+                    /* ES3 literal regexes reject an unescaped slash even in a
+                     * character class. String operations also ignore dots in
+                     * directory names when the file itself has no extension. */
+                    var sourceName = sourcePath.substring(sourcePath.lastIndexOf("/") + 1);
+                    var extensionDot = sourceName.lastIndexOf(".");
+                    var mediaType = host.isCompItem(source) ? "comp" :
+                        host.categoryForExtension(extensionDot >= 0 ? sourceName.substring(extensionDot + 1) : "");
+                    var threeD = false;
+                    try { threeD = !!layer.threeDLayer; } catch (eThreeD) {}
 
                     report.findings.push({
                         kind: "layer",
+                        mediaType: mediaType,
+                        threeD: threeD,
                         key: key,
                         compId: str(comp.id),
                         compName: str(comp.name),
@@ -387,7 +401,7 @@
                         layerName: str(layer.name),
                         itemId: str(source.id),
                         itemName: str(source.name),
-                        path: file ? host.slashes(file.fsName) : "",
+                        path: sourcePath,
                         size: size,
                         status: listHas(settings.disabledLayerForgotten, key)
                             ? "forgotten" : "open"

@@ -77,6 +77,24 @@
 
             <section class="items-section">
                 <div class="section-title">Элементы проекта (<span id="items-count">0</span>)</div>
+                <div class="media-view-controls">
+                    <select id="items-filter" title="Тип медиа — только отображение" aria-label="Тип медиа">
+                        <option value="all">Все типы</option>
+                        <option value="video">Видео</option>
+                        <option value="image">Изображения</option>
+                        <option value="audio">Аудио</option>
+                        <option value="sequence">Секвенции</option>
+                        <option value="other">Другие</option>
+                    </select>
+                    <select id="items-group" aria-label="Группировка медиа">
+                        <option value="none">Без группировки</option>
+                        <option value="type">По типу</option>
+                        <option value="format">По формату</option>
+                        <option value="bin">По папке проекта</option>
+                        <option value="name">По имени А–Я</option>
+                    </select>
+                    <span class="media-view-count" id="items-visible"></span>
+                </div>
                 <div class="items-list" id="items-list">
                     <div class="empty-state" id="empty-state">Нет данных аудита. Нажмите «СКАНИРОВАТЬ ПРОЕКТ».</div>
                 </div>

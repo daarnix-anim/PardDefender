@@ -51,6 +51,8 @@
         lastLayerScanAt: 0,
         layersBusy: false,
         layerScanSeq: 0,
+        layersFilter: "all",
+        layersGroup: "none",
         // Состояние сессии
         version: "2.3.2",
         confirmCleanupUntil: 0,
@@ -1658,6 +1660,30 @@
         }
     }
 
+    var LAYER_TYPE_LABELS = { comp: "Композиции", video: "Видео", image: "Изображения",
+        audio: "Аудио", model: "3D-модели", other: "Другие" };
+
+    function layerMediaType(finding) {
+        if (finding.kind === "comp" || finding.mediaType === "comp") return "comp";
+        var type = finding.mediaType || "";
+        if (type === "design" || type === "vector") return "image";
+        if (LAYER_TYPE_LABELS[type]) return type;
+        /* Compatible with a report returned by an older host. */
+        var match = /\.([^./]+)$/.exec(finding.path || finding.itemName || "");
+        var ext = match ? match[1].toLowerCase() : "";
+        if (/^(mp4|mov|avi|mxf|mkv|webm|m4v|mpg|mpeg|mts|m2ts|r3d|braw)$/.test(ext)) return "video";
+        if (/^(png|jpe?g|tiff?|exr|dpx|gif|bmp|webp|psd|psb|ai|svg|eps)$/.test(ext)) return "image";
+        if (/^(wav|mp3|aiff?|m4a|aac|ogg|flac|wma|opus)$/.test(ext)) return "audio";
+        if (/^(obj|c4d|fbx|abc|glb|gltf|usd|usdz|e3d)$/.test(ext)) return "model";
+        return "other";
+    }
+
+    function layerGroupKey(finding) {
+        if (state.layersGroup === "type") return LAYER_TYPE_LABELS[layerMediaType(finding)];
+        if (state.layersGroup === "comp") return finding.compName || "Без композиции";
+        return "";
+    }
+
     function renderLayers() {
         var list = layerFindings();
         el.layersSection.hidden = list.length === 0;
@@ -1667,16 +1693,48 @@
         }
         if (!list.length) { state.commentFor = ""; return; }
 
-        var parts = [], i;
-        for (i = 0; i < list.length && i < 30; i++) {
-            parts.push(list[i].key + ":" + list[i].status);
+        var parts = [], visible = [], i;
+        for (i = 0; i < list.length; i++) {
+            var finding = list[i], type = layerMediaType(finding);
+            if (state.layersFilter === "all" || state.layersFilter === type ||
+                (state.layersFilter === "threeD" && finding.threeD)) visible.push(finding);
+            parts.push([finding.key, finding.status, type, !!finding.threeD,
+                finding.kind, finding.compId, finding.compName, finding.layerName,
+                finding.itemName, finding.path, finding.layerIndex, finding.size]);
         }
-        var signature = parts.join(",") + "|" + (state.commentFor || "");
+        el.layersVisible.textContent = visible.length + " / " + list.length;
+        if (state.layersGroup !== "none") {
+            visible = visible.map(function (finding, index) { return { finding: finding, index: index }; });
+            visible.sort(function (a, b) {
+                var left = state.layersGroup === "name" ? (a.finding.layerName || a.finding.compName) : layerGroupKey(a.finding);
+                var right = state.layersGroup === "name" ? (b.finding.layerName || b.finding.compName) : layerGroupKey(b.finding);
+                return String(left).localeCompare(String(right)) || a.index - b.index;
+            });
+            visible = visible.map(function (entry) { return entry.finding; });
+        }
+        var signature = JSON.stringify(parts) + "|" + (state.commentFor || "") + "|" +
+            state.layersFilter + "|" + state.layersGroup + "|" + !!state.layers.truncated;
         if (!changed("layers", signature)) return;
 
+        var scroll = el.layers.scrollTop || 0;
         el.layers.innerHTML = "";
-        for (i = 0; i < list.length && i < 30; i++) {
-            el.layers.appendChild(layerRow(list[i]));
+        var previousGroup = null;
+        for (i = 0; i < visible.length; i++) {
+            var group = layerGroupKey(visible[i]);
+            if (group && group !== previousGroup) {
+                var header = document.createElement("div");
+                header.className = "media-group-heading";
+                header.textContent = group;
+                el.layers.appendChild(header);
+            }
+            previousGroup = group;
+            el.layers.appendChild(layerRow(visible[i]));
+        }
+        if (!visible.length) {
+            var empty = document.createElement("div");
+            empty.className = "layer-more";
+            empty.textContent = "Нет элементов этого типа. Выберите «Все типы».";
+            el.layers.appendChild(empty);
         }
         if (state.layers && state.layers.truncated) {
             var more = document.createElement("div");
@@ -1684,11 +1742,16 @@
             more.textContent = "Показаны первые находки — их слишком много для одного прохода.";
             el.layers.appendChild(more);
         }
+        el.layers.scrollTop = scroll;
     }
 
     function layerRow(finding) {
         var row = document.createElement("div");
-        row.className = "layer-row" + (finding.status === "forgotten" ? " forgotten" : "");
+        var type = layerMediaType(finding);
+        row.className = "layer-row media-" + type +
+            (finding.kind === "layer" ? " in-comp" : "") +
+            (type === "comp" && finding.kind === "layer" ? " nested-comp" : "") +
+            (finding.status === "forgotten" ? " forgotten" : "");
 
         var head = document.createElement("div");
         head.className = "layer-head";
@@ -1708,6 +1771,8 @@
         where.textContent = finding.kind === "comp"
             ? "композиция"
             : finding.compName + " · слой " + finding.layerIndex;
+        where.title = where.textContent;
+        name.title = name.textContent;
 
         head.appendChild(dot);
         head.appendChild(name);
@@ -1716,19 +1781,21 @@
         var text = document.createElement("div");
         text.className = "layer-text";
         if (finding.kind === "comp") {
-            text.textContent = "Никуда не входит и не помечена — похоже, это будущая " +
-                "рендерная композиция. Пометьте её цветом или исключите.";
+            text.textContent = "Композиция не используется и не помечена";
+            text.title = "Никуда не входит и не помечена — возможно, будущая рендерная композиция. Пометьте её цветом или исключите.";
         } else {
             text.textContent = finding.status === "forgotten"
                 ? "Помечен забытым."
-                : "Слой выключен. Он не корректирующий, не маска, не родитель и " +
-                  "ни на что не влияет — похоже, про него просто забыли.";
+                : (type === "comp" ? "Вложенная композиция" : LAYER_TYPE_LABELS[type]) +
+                  (finding.threeD ? " · 3D-слой" : "") + " · выключен";
+            text.title = "Слой выключен, не корректирующий, не маска, не родитель и ни на что не влияет.";
         }
 
         var foot = document.createElement("div");
         foot.className = "layer-foot";
 
         if (state.commentFor === finding.key) {
+            row.className += " editing";
             foot.appendChild(commentEditor(finding));
         } else {
             var actions = document.createElement("span");
@@ -2736,6 +2803,7 @@
             if (available[i].name === state.tab) { stillThere = true; break; }
         }
         if (!stillThere) state.tab = "main";
+        el.panel.className = "panel" + (state.tab === "layers" ? " layers-active" : "");
 
         for (i = 0; i < TABS.length; i++) {
             el.panes[TABS[i].name].hidden = TABS[i].name !== state.tab;
@@ -3770,6 +3838,8 @@
             layersTitle: "layers-title",
             layersRefresh: "layers-refresh",
             layers: "layers",
+            panel: "panel", layersFilter: "layers-filter", layersGroup: "layers-group",
+            layersVisible: "layers-visible",
             resume: "resume", update: "update", updateVersion: "update-version",
             updateSummary: "update-summary", updateOpen: "update-open",
             updateDismiss: "update-dismiss", updateLater: "update-later",
@@ -3887,6 +3957,19 @@
 
         el.layersRefresh.onclick = function () {
             scanLayers(true);
+        };
+        el.layersFilter.value = state.layersFilter;
+        el.layersGroup.value = state.layersGroup;
+        el.layersFilter.onchange = function () {
+            state.layersFilter = el.layersFilter.value;
+            state.commentFor = "";
+            el.layers.scrollTop = 0;
+            renderLayers();
+        };
+        el.layersGroup.onchange = function () {
+            state.layersGroup = el.layersGroup.value;
+            el.layers.scrollTop = 0;
+            renderLayers();
         };
 
         el.openFolder.onclick = function () {

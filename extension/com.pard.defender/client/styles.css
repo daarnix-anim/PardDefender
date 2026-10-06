@@ -1102,6 +1102,22 @@ html, body {
 
 /* ------------------------------------------------------- forgotten layers */
 
+/* Fill the dock, not a fixed 260px window. Other tabs keep their own layout. */
+.panel.layers-active { height: 100vh; min-height: 420px; }
+.panel.layers-active > * { flex-shrink: 0; }
+/* Scanning/pause remain in the compact header; copy/dedup actions in Main. */
+.panel.layers-active #scan-project,
+.panel.layers-active #pause-project,
+.panel.layers-active #run-now,
+.panel.layers-active #duplicates-scan { display: none; }
+.panel.layers-active #pane-layers { flex: 1 1 auto; min-height: 100px; }
+.layers-section { display: flex; flex-direction: column; gap: 6px; min-height: 0; flex: 1 1 auto; }
+.layers-section > * { flex-shrink: 0; }
+.media-view-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.media-view-controls select { flex: 1 1 125px; min-width: 0; background: #272727; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 4px; font: inherit; font-size: 11px; }
+.media-view-count { color: var(--text-dim); font-size: 11px; }
+.media-group-heading { flex-shrink: 0; padding: 5px 8px; background: #1e1e1e; color: #aaa; font-size: 11px; border-bottom: 1px solid var(--line); }
+
 .layers-head {
     display: flex;
     align-items: center;
@@ -1115,14 +1131,16 @@ html, body {
     border: 1px solid var(--line);
     border-radius: 3px;
     background: var(--surface);
-    max-height: 260px;
+    flex: 1 1 320px;
+    min-height: 90px;
     overflow-y: auto;
 }
 
 .layer-row {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 2px 6px;
+    flex-shrink: 0;
     padding: 6px 8px;
     border-bottom: 1px solid var(--line);
     min-width: 0;
@@ -1130,8 +1148,17 @@ html, body {
 
 .layer-row:last-child { border-bottom: none; }
 .layer-row.forgotten { opacity: 0.6; }
+.layer-row.media-comp { background: #303030; }
+.layer-row.media-video { background: #272727; }
+.layer-row.media-image { background: #2b2b2b; }
+.layer-row.media-audio { background: #242424; }
+.layer-row.media-model { background: #2e2e2e; }
+.layer-row.media-other { background: #262626; }
+.layer-row.in-comp { box-shadow: inset 2px 0 #464646; }
+.layer-row.nested-comp { box-shadow: inset 4px 0 #555; }
+.layer-row:hover { outline: 1px solid #555; outline-offset: -1px; }
 
-.layer-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.layer-head { display: flex; align-items: center; gap: 7px; min-width: 0; grid-column: 1 / -1; }
 
 .layer-name {
     flex: 1 1 auto;
@@ -1158,6 +1185,11 @@ html, body {
     color: var(--text-dim);
     line-height: 1.4;
     padding-left: 13px;
+    align-self: center;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .layer-foot {
@@ -1169,6 +1201,12 @@ html, body {
 }
 
 .layer-size { color: var(--grey); font-size: 11px; }
+.layer-row.editing .layer-foot { grid-column: 1 / -1; }
+@media (max-width: 300px) {
+    .layer-head { flex-wrap: wrap; }
+    .layer-where { max-width: 100%; margin-left: 13px; }
+    .layer-foot { grid-column: 1 / -1; }
+}
 
 .layer-more {
     padding: 6px 8px;

@@ -14,6 +14,7 @@
 var fs = require("fs");
 var path = require("path");
 var mock = require("./mock-ae");
+var unsafeRegexSlashes = require("./extendscript-syntax");
 
 var passed = 0, failed = 0;
 
@@ -30,6 +31,14 @@ function group(name) { console.log("\n" + name); }
 
 group("Исходники ExtendScript безопасны для $.evalFile");
 (function () {
+    check("guard ловит именно синтаксис строки 383, который принимает Node",
+        unsafeRegexSlashes("var match = /\\.([^./]+)$/.exec(path);").length, 1);
+    check("экранированный slash совместим с ES3",
+        unsafeRegexSlashes("var match = /\\.([^.\\/]+)$/.exec(path);").length, 0);
+    check("slash в строке или комментарии не считается regex",
+        unsafeRegexSlashes('var s = "/[a/b]/"; /* /[a/b]/ */ // /[a/b]/\nvar n = 8 / 2;').length, 0);
+    check("кавычки внутри regex не превращают его в строку",
+        unsafeRegexSlashes('var r = /["a/b]/;').length, 1);
     var hostDir = path.join(__dirname, "..", "extension", "com.pard.defender", "host");
     var names = fs.readdirSync(hostDir).filter(function (name) { return /\.jsx$/i.test(name); });
     names.forEach(function (name) {
@@ -39,6 +48,8 @@ group("Исходники ExtendScript безопасны для $.evalFile");
             if (bytes[i] > 127) { ascii = false; break; }
         }
         check(name + " содержит только ASCII", ascii, true);
+        check(name + " не содержит неэкранированный slash в regex-классе ES3",
+            unsafeRegexSlashes(bytes.toString("ascii")), []);
     });
 })();
 
@@ -593,6 +604,10 @@ group("Забытые выключенные слои");
     }
 
     var forgotten = put("forgotten.mp4", "E:/d/forgotten.mp4", s.intro, { enabled: false });
+    forgotten.threeDLayer = true;
+    put("UPPER.MOV", "E:/folder.with.dots/UPPER.MOV", s.intro, { enabled: false });
+    put("photo.psd", "E:/folder.with.dots/photo.psd", s.intro, { enabled: false });
+    put("no-extension", "E:/folder.mp4/no-extension", s.intro, { enabled: false });
     put("visible.mp4", "E:/d/visible.mp4", s.intro, { enabled: true });
     put("adjust.mp4", "E:/d/adjust.mp4", s.intro, { enabled: false, adjustmentLayer: true });
     put("matte.mp4", "E:/d/matte.mp4", s.intro, { enabled: false, isTrackMatte: true });
@@ -668,6 +683,14 @@ group("Забытые выключенные слои");
     check("и номер слоя", found["forgotten.mp4"].layerIndex, forgotten.index);
     check("и путь к файлу", found["forgotten.mp4"].path, "E:/d/forgotten.mp4");
     check("статус по умолчанию — не разобран", found["forgotten.mp4"].status, "open");
+    check("тип видео передан панели", found["forgotten.mp4"].mediaType, "video");
+    check("3D — свойство слоя, а не расширение файла", found["forgotten.mp4"].threeD, true);
+    check("обычный видео-слой не становится 3D", found["muted_video.mp4"].threeD, false);
+    check("звук имеет отдельный тип", found["muted_music.mp3"].mediaType, "audio");
+    check("pre-comp классифицирован как композиция", found["Precomp_T"].mediaType, "comp");
+    check("расширение в верхнем регистре разобрано без regex", found["UPPER.MOV"].mediaType, "video");
+    check("PSD классифицирован из имени, не папки", found["photo.psd"].mediaType, "design");
+    check("точка в имени папки не создаёт расширение файла", found["no-extension"].mediaType, "other");
 })();
 
 group("Композиция, которая никуда не входит");

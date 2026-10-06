@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **66** · связей: **154** · собрано: 2026-10-06 02:04
+Файлов: **68** · связей: **155** · собрано: 2026-10-06 04:04
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -39,7 +39,7 @@
 
 ### `PardDefenderLayers.jsx`
 
-`extension/com.pard.defender/host/PardDefenderLayers.jsx` · 470 строк · работает
+`extension/com.pard.defender/host/PardDefenderLayers.jsx` · 484 строк · работает
 
 Ищет выключенные и забытые слои в композициях и композиции, которые никуда не входят и не помечены. Отсекает всё, что выключено по делу.
 
@@ -101,7 +101,7 @@ _Описание не задано._
 
 ### `main.js`
 
-`premiere/com.pard.defender.uxp/main.js` · 1553 строк · работает
+`premiere/com.pard.defender.uxp/main.js` · 1623 строк · работает
 
 UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИТА», «ДУБЛИКАТЫ» и «ЖУРНАЛ», копирование внешних медиа в workspace с перелинковкой, поиск дубликатов, двухкликовое объединение файлов и журнал операций.
 
@@ -185,7 +185,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 4168 строк · работает
+`extension/com.pard.defender/client/main.js` · 4251 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
@@ -241,7 +241,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `index.html`
 
-`extension/com.pard.defender/client/index.html` · 249 строк · работает
+`extension/com.pard.defender/client/index.html` · 268 строк · работает
 
 Разметка панели: шапка, вкладки и панели внутри них — главное, неиспользуемые, старый проект, журнал, настройки. Порядок script-тегов задаёт загрузку модулей.  @map status: ready  @map layer: ui -->
 
@@ -249,7 +249,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `index.html`
 
-`premiere/com.pard.defender.uxp/index.html` · 122 строк · работает
+`premiere/com.pard.defender.uxp/index.html` · 140 строк · работает
 
 Разметка UXP-панели для Premiere Pro: вкладки Защита, Дубликаты и Журнал.
 
@@ -257,13 +257,13 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `styles.css`
 
-`extension/com.pard.defender/client/styles.css` · 1492 строк · работает
+`extension/com.pard.defender/client/styles.css` · 1530 строк · работает
 
 Оформление панели под тёмный интерфейс After Effects.  @map status: ready  @map layer: ui */
 
 ### `styles.css`
 
-`premiere/com.pard.defender.uxp/styles.css` · 821 строк · работает
+`premiere/com.pard.defender.uxp/styles.css` · 833 строк · работает
 
 Стили темы UXP-панели для Premiere Pro в едином тёмном визуальном стиле PardDefender (идентично After Effects).
 
@@ -325,6 +325,14 @@ _Описание не задано._
 
 Используется в: `run-all.js`
 
+### `extendscript-syntax.js`
+
+`tests/extendscript-syntax.js` · 66 строк · работает
+
+Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
+
+Используется в: `host.test.js`
+
 ### `host-adapter.test.js`
 
 `tests/host-adapter.test.js` · 385 строк · работает
@@ -337,11 +345,11 @@ _Описание не задано._
 
 ### `host.test.js`
 
-`tests/host.test.js` · 1665 строк · работает
+`tests/host.test.js` · 1688 строк · работает
 
 186 проверок хоста: рабочая папка, ветки, маршруты, многослойные PSD/AI, секвенции, границы раскладки.
 
-Использует: `mock-ae.js`
+Использует: `mock-ae.js`, `extendscript-syntax.js`
 
 Используется в: `run-all.js`
 
@@ -373,7 +381,7 @@ _Описание не задано._
 
 ### `panel.test.js`
 
-`tests/panel.test.js` · 1749 строк · работает
+`tests/panel.test.js` · 1806 строк · работает
 
 Проверки самой панели: вкладки, кнопки, места блоков и дисциплина перерисовки. Первый набор, который запускает main.js.
 
@@ -393,7 +401,7 @@ _Описание не задано._
 
 ### `premiere-panel-protection.test.js`
 
-`tests/premiere-panel-protection.test.js` · 153 строк · работает
+`tests/premiere-panel-protection.test.js` · 182 строк · работает
 
 Исполнение панели Premiere: аудиомаршруты, AE-метки, relink и сбои.
 
@@ -464,6 +472,12 @@ _Описание не задано._
 `tools/build-map.js` · 510 строк · работает
 
 Строит карту проекта из самого кода — граф связей выводится из исходников, а не ведётся руками
+
+### `check-media-layout.js`
+
+`tools/check-media-layout.js` · 114 строк · работает
+
+Необязательная браузерная проверка адаптивной вёрстки списка AE без запуска Adobe.
 
 ### `deploy-local.js`
 
@@ -549,7 +563,7 @@ _Описание не задано._
 
 ### `PROJECT_MAP.md`
 
-`PROJECT_MAP.md` · 562 строк · работает
+`PROJECT_MAP.md` · 576 строк · работает
 
 _Описание не задано._
 

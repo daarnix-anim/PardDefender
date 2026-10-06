@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="panel">
+    <div class="panel" id="panel">
 
         <header class="head">
             <span class="brand">PardDefender</span>
@@ -118,6 +118,25 @@
                     <button class="icon" id="layers-refresh" title="Обновить список" aria-label="Обновить список">↻</button>
                 </div>
                 <div class="layers-note">Слои выключены и, похоже, о них забыли.</div>
+                <div class="media-view-controls">
+                    <select id="layers-filter" aria-label="Тип элементов" title="Фильтр меняет только список, не обработку файлов">
+                        <option value="all">Все типы</option>
+                        <option value="comp">Композиции</option>
+                        <option value="video">Видео</option>
+                        <option value="image">Изображения</option>
+                        <option value="audio">Аудио</option>
+                        <option value="model">3D-модели</option>
+                        <option value="threeD">3D-слои</option>
+                        <option value="other">Другие</option>
+                    </select>
+                    <select id="layers-group" aria-label="Группировка элементов">
+                        <option value="none">Без группировки</option>
+                        <option value="type">По типу</option>
+                        <option value="comp">По композиции</option>
+                        <option value="name">По имени А–Я</option>
+                    </select>
+                    <span id="layers-visible" class="media-view-count"></span>
+                </div>
                 <div class="layers" id="layers"></div>
             </section>
         </div>

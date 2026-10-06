@@ -556,6 +556,18 @@ button:disabled, .btn:disabled {
     gap: 6px;
 }
 
+.media-view-controls { display: flex; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+.media-view-controls select { flex: 1 1 130px; min-width: 0; margin: 0 5px 4px 0; background-color: #272727; color: #ccc; border: 1px solid #444; border-radius: 3px; padding: 4px; font-size: 11px; }
+.media-view-count { color: #999; font-size: 11px; }
+.media-group-heading { flex-shrink: 0; padding: 6px 8px; background-color: #1e1e1e; color: #aaa; font-size: 11px; }
+.media-type-label { font-size: 10px; color: #aaa; }
+.media-item-card.media-video { background-color: #272727; }
+.media-item-card.media-image { background-color: #2b2b2b; }
+.media-item-card.media-audio { background-color: #242424; }
+.media-item-card.media-sequence { background-color: #303030; }
+.media-item-card.media-other { background-color: #262626; }
+.media-item-card.in-bin { border-left: 2px solid #4b4b4b; }
+
 .item-name {
     font-weight: 600;
     color: var(--text);
