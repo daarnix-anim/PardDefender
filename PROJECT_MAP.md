@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **68** · связей: **155** · собрано: 2026-10-06 04:04
+Файлов: **69** · связей: **158** · собрано: 2026-10-07 02:58
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -15,7 +15,7 @@
 
 ### `PardDefenderApply.jsx`
 
-`extension/com.pard.defender/host/PardDefenderApply.jsx` · 1248 строк · работает
+`extension/com.pard.defender/host/PardDefenderApply.jsx` · 1039 строк · работает
 
 Две мутирующие операции: перелинковка на проверенную копию с сохранением интерпретации и раскладка панели проекта.
 
@@ -57,7 +57,7 @@
 
 ### `adapter.js`
 
-`premiere/com.pard.defender.uxp/adapter.js` · 2076 строк · работает
+`premiere/com.pard.defender.uxp/adapter.js` · 2138 строк · работает
 
 Официальный UXP-адаптер для Premiere Pro 25.6+: инспекция проектов, рекурсивный аудит media items, классификация клипов/секвенций/proxy/generated, подключение к реестру проектов и нормализованный отчёт аудита.
 
@@ -75,11 +75,11 @@
 
 ### `duplicates.js`
 
-`premiere/com.pard.defender.uxp/duplicates.js` · 327 строк · работает
+`premiere/com.pard.defender.uxp/duplicates.js` · 297 строк · работает
 
-Обнаружение точных дубликатов и транзакционная консолидация для Premiere Pro: побайтовое SHA-256 хеширование, выбор каноникала, копирование внешнего каноникала в assets.tsv, перелинковка через changeMediaFilePath, двухкликовое подтверждение и строгое отсутствие удалений файлов.
+Обнаружение точных дубликатов и транзакционная консолидация для Premiere Pro: вся библиотека проекта и точное использование на таймлайнах, SHA-256, приоритет защищённого AE, повторная проверка и асинхронная перелинковка, двухкликовое подтверждение и строгое отсутствие удалений файлов.
 
-Используется в: `index.html`, `main.js`, `e2e-hardening.test.js`, `premiere-protection.test.js`
+Используется в: `index.html`, `main.js`, `e2e-hardening.test.js`, `premiere-panel-protection.test.js`, `premiere-protection.test.js`
 
 ### `icon-23.png`
 
@@ -101,9 +101,9 @@ _Описание не задано._
 
 ### `main.js`
 
-`premiere/com.pard.defender.uxp/main.js` · 1623 строк · работает
+`premiere/com.pard.defender.uxp/main.js` · 1709 строк · работает
 
-UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИТА», «ДУБЛИКАТЫ» и «ЖУРНАЛ», копирование внешних медиа в workspace с перелинковкой, поиск дубликатов, двухкликовое объединение файлов и журнал операций.
+UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИТА», «ДУБЛИКАТЫ» и «ЖУРНАЛ», копирование внешних медиа в workspace с перелинковкой, поиск дубликатов, поиск по всей библиотеке, объединение с приоритетом AE и журнал операций.
 
 Использует: `copy-engine.js`, `adapter.js`, `sync-coordinator.js`, `duplicates.js`
 
@@ -175,7 +175,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `issues.js`
 
-`extension/com.pard.defender/client/issues.js` · 303 строк · работает
+`extension/com.pard.defender/client/issues.js` · 306 строк · работает
 
 Хранилище проблем: четыре класса ошибок, расписание повторов, предохранитель. Одна строка на элемент, а не на попытку.
 
@@ -297,7 +297,7 @@ _Описание не задано._
 
 ### `copy-queue.test.js`
 
-`tests/copy-queue.test.js` · 363 строк · работает
+`tests/copy-queue.test.js` · 385 строк · работает
 
 50 проверок копирования на настоящих файлах во временной папке.
 
@@ -345,7 +345,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `host.test.js`
 
-`tests/host.test.js` · 1688 строк · работает
+`tests/host.test.js` · 1881 строк · работает
 
 186 проверок хоста: рабочая папка, ветки, маршруты, многослойные PSD/AI, секвенции, границы раскладки.
 
@@ -377,7 +377,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 Мок официального UXP DOM Premiere Pro 25.6+ для автономных тестов без Premiere.
 
-Используется в: `e2e-hardening.test.js`, `premiere-adapter.test.js`, `premiere-protection.test.js`
+Используется в: `e2e-hardening.test.js`, `premiere-adapter.test.js`, `premiere-duplicates.test.js`, `premiere-protection.test.js`
 
 ### `panel.test.js`
 
@@ -399,13 +399,23 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 Используется в: `run-all.js`
 
+### `premiere-duplicates.test.js`
+
+`tests/premiere-duplicates.test.js` · 156 строк · работает
+
+Проверяет поиск по всей библиотеке Premiere, приоритет AE, точные ссылки таймлайна и безопасную асинхронную консолидацию.
+
+Использует: `mock-premiere.js`
+
+Используется в: `run-all.js`
+
 ### `premiere-panel-protection.test.js`
 
-`tests/premiere-panel-protection.test.js` · 182 строк · работает
+`tests/premiere-panel-protection.test.js` · 217 строк · работает
 
 Исполнение панели Premiere: аудиомаршруты, AE-метки, relink и сбои.
 
-Использует: `adapter.js`, `copy-engine.js`, `sync-coordinator.js`
+Использует: `adapter.js`, `copy-engine.js`, `duplicates.js`, `sync-coordinator.js`
 
 Используется в: `run-all.js`
 
@@ -433,11 +443,11 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 Прогоняет все наборы и выдаёт один вердикт.
 
-Использует: `host.test.js`, `copy-queue.test.js`, `runtime.test.js`, `host-adapter.test.js`, `workspace-store.test.js`, `duplicate-index.test.js`, `consolidation.test.js`, `premiere-adapter.test.js`, `premiere-protection.test.js`, `premiere-uxp-io.test.js`, `sync-coordinator.test.js`, `panel.test.js`, `premiere-panel-protection.test.js`, `e2e-hardening.test.js`
+Использует: `host.test.js`, `copy-queue.test.js`, `runtime.test.js`, `host-adapter.test.js`, `workspace-store.test.js`, `duplicate-index.test.js`, `consolidation.test.js`, `premiere-adapter.test.js`, `premiere-protection.test.js`, `premiere-duplicates.test.js`, `premiere-uxp-io.test.js`, `sync-coordinator.test.js`, `panel.test.js`, `premiere-panel-protection.test.js`, `e2e-hardening.test.js`
 
 ### `runtime.test.js`
 
-`tests/runtime.test.js` · 566 строк · работает
+`tests/runtime.test.js` · 570 строк · работает
 
 112 проверок клиентских модулей: ошибки, метрики, сверка, обновления.
 
@@ -563,7 +573,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `PROJECT_MAP.md`
 
-`PROJECT_MAP.md` · 576 строк · работает
+`PROJECT_MAP.md` · 586 строк · работает
 
 _Описание не задано._
 

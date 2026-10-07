@@ -54,7 +54,7 @@
         layersFilter: "all",
         layersGroup: "none",
         // Состояние сессии
-        version: "2.3.2",
+        version: "2.3.3",
         confirmCleanupUntil: 0,
         confirmAdoptUntil: 0,
         confirmRedistUntil: 0,

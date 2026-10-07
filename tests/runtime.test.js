@@ -72,6 +72,10 @@ check("нет доступа — требует владельца", Issues.desc
 check("прокси — постоянная", Issues.describe("RELINK_PROXY").klass, "permanent");
 check("нет места — системная", Issues.describe("DISK_FULL").klass, "system");
 check("неизвестный код не роняет", Issues.describe("WAT").klass, "transient");
+check("ошибка импорта слоёв имеет понятное описание", Issues.describe("LAYERED_RELINK_FAILED").text,
+    "не удалось импортировать слои PSD/AI");
+check("неоднозначный слой требует внимания", Issues.describe("LAYER_MATCH_FAILED").klass, "owner");
+check("отказ замены слоя требует внимания", Issues.describe("LAYER_RELINK_REJECTED").klass, "owner");
 check("isSystem", [Issues.isSystem("DISK_FULL"), Issues.isSystem("SOURCE_BUSY")],
     [true, false]);
 

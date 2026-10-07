@@ -29,7 +29,7 @@ if "%IS_ADMIN%"=="0" (
 )
 
 rem Extract version from manifest.json
-set "VERSION=2.3.2"
+set "VERSION=2.3.3"
 for /f "tokens=2 delims=:, " %%A in ('findstr /C:"\"version\"" "%UXP_SOURCE%\manifest.json"') do (
     set "VERSION=%%~A"
 )

@@ -58,6 +58,9 @@ var PardIssues = (function () {
         RELINK_PROXY:          ["permanent", "включён прокси — перелинковка пропущена"],
         RELINK_MISSING_COPY:   ["transient", "проверенная копия не найдена на месте"],
         RELINK_REJECTED:       ["owner",     "After Effects отказал в перелинковке"],
+        LAYERED_RELINK_FAILED: ["owner",     "не удалось импортировать слои PSD/AI"],
+        LAYER_MATCH_FAILED:    ["owner",     "не удалось однозначно определить слой PSD/AI"],
+        LAYER_RELINK_REJECTED: ["owner",     "After Effects отказал в замене слоя PSD/AI"],
 
         PROTECTED_GONE:        ["owner",     "защищённый файл исчез из папки проекта"],
         PROTECTED_CHANGED:     ["owner",     "защищённый файл изменился на диске"],

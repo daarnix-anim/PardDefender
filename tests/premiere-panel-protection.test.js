@@ -34,13 +34,17 @@ function launch(options) {
     }];
     const report = { ok: true, projectSaved: true, workspace: o.workspace || "d:/Project", projectId: "pr-1",
         projectPath: "d:/Project/04_edit/test.prproj", items, stats: {}, diagnostics: o.diagnostics || [] };
-    const calls = { tasks: [], relinks: [], snapshots: [], saves: 0, reveals: [] };
+    report.aeProtectedItems = o.aeProtectedItems || [];
+    const calls = { tasks: [], relinks: [], snapshots: [], saves: 0, reveals: [], audits: [] };
     const project = { guid: "pr-1", save: async () => { calls.saves++; return true; } };
     const adapter = {
         normalizePath: engine.normalizePath, resolveActiveProjectSync: () => project,
         resolveActiveProject: async () => project,
         identifyProject: () => ({ projectId: o.switched ? "pr-2" : "pr-1", projectPath: report.projectPath }),
-        auditMedia: (p, opts, cb) => cb(null, report),
+        auditMedia: (p, opts, cb) => {
+            calls.audits.push(opts);
+            cb(null, o.splitAudit && opts.timelineOnly ? Object.assign({}, report, { items: items.filter(it => it.usedOnTimeline) }) : report);
+        },
         revealItem: async item => { calls.reveals.push(item); return { ok: true }; }
     };
     const copy = o.realCopy ? engine : Object.assign({}, engine, {
@@ -66,6 +70,7 @@ function launch(options) {
         document, console: o.quiet ? { log() {} } : console, setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {},
         localStorage: { getItem: () => null, setItem() {} },
         PardPremiereAdapter: adapter, PardPremiereCopyEngine: copy,
+        PardPremiereDuplicates: require("../premiere/com.pard.defender.uxp/duplicates.js"),
         PardSyncCoordinator: { publishSnapshot: (ws, snap) => calls.snapshots.push(snap), loadSnapshot: () => null },
         require(name) { if (name === "fs") return {}; if (name === "path") return path; throw Error(name); },
         window: { addEventListener() {} }
@@ -165,6 +170,36 @@ async function finish(panel) {
         check(fs.readFileSync(original).equals(fs.readFileSync(linked)), "External MP4 retained and protected copy matches");
     }
     check(!p.elements["banner-protect-status"].hidden && p.elements["banner-protect-status"].textContent.includes("перелинковано 2"), "Full two-video result stays visible");
+    const aeCanonical = path.join(workspace, "01_assets", "AE-original.mp4");
+    fs.writeFileSync(aeCanonical, "IDENTICAL-DUPLICATES");
+    const duplicateItems = ["Timeline.mp4", "Bin-only.mp4"].map((name, i) => {
+        const source = path.join(temp, name);
+        fs.writeFileSync(source, "IDENTICAL-DUPLICATES");
+        let current = source;
+        return { id: "dup-" + i, name, path: source, binPath: "Imported/Nested",
+            classification: "clip", usedOnTimeline: i === 0, _nativeItem: {
+                getMediaFilePath: async () => current, canChangeMediaPath: async () => true,
+                changeMediaFilePath: async (next, override) => { assert.strictEqual(override, false); current = next; return true; }
+            } };
+    });
+    p = launch({ quiet: true, realCopy: true, workspace, splitAudit: true, items: duplicateItems,
+        aeProtectedItems: [{ canonicalPath: aeCanonical, isAeProtected: true }] });
+    check(p.api.state.lastReport.items.length === 1, "Protection audit starts with timeline media only");
+    p.api.state.lastReport = null;
+    await p.elements["btn-scan-duplicates"].click();
+    check(p.calls.audits[p.calls.audits.length - 1].timelineOnly === false, "Duplicates button always requests a fresh full library audit without requiring protection scan");
+    const duplicateGroup = p.api.state.duplicatesResult.duplicateGroups[0];
+    check(duplicateGroup.projectItemCount === 2 && duplicateGroup.timelineItemCount === 1, "Full library duplicates include unused nested-bin sources");
+    check(JSON.stringify(p.elements["duplicates-list"].children).includes("ОРИГИНАЛ AE"), "Verified AE canonical is labelled as the original");
+    check(!p.elements["duplicates-summary"].textContent.includes("Освободится"), "UI does not promise disk space after a relink");
+    await p.api.executeConsolidation(duplicateGroup, aeCanonical);
+    check(p.calls.audits.filter(opts => opts.timelineOnly === false).length >= 3, "Consolidation reaudits the full project before changes and refreshes duplicates afterward");
+    check(p.calls.saves === 1, "Consolidation saves the matching Premiere project");
+    check(duplicateItems.every(it => engine.normalizePath(it.path) === engine.normalizePath(aeCanonical)), "Both timeline and bin-only sources relink to the existing AE canonical");
+    check(p.calls.snapshots.some(s => s.items.some(it => it.id === "dup-1" && it.oldPath && it.contentId)), "Bin-only consolidation links and content identity are published for cross-host reuse");
+    check(p.api.state.duplicatesResult.duplicateGroups[0].kind === "project-items" &&
+        !JSON.stringify(p.elements["duplicates-list"].children).includes("ОБЪЕДИНИТЬ В ОДИН ФАЙЛ"), "Shared-path project items remain visible without another consolidation action");
+    check(!p.api.state.consolidating && !p.api.state.duplicateScanning, "Duplicate busy flags clear after save and refresh");
     p = launch({ quiet: true, diagnostics: ["Одна и та же диагностика клипа"] });
     for (let i = 0; i < 340; i++) p.api.triggerAudit();
     const logLines = p.elements["log-box"].children;

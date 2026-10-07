@@ -344,6 +344,28 @@ steps.push(function (next) {
     );
 });
 
+steps.push(function (next) {
+    group("Слои PSD используют одну полную побайтовую копию исходника");
+    var content = Buffer.alloc(8192);
+    for (var i = 0; i < content.length; i++) content[i] = i % 251;
+    var source = writeSource("complete.psd", content);
+    var folder = root + "/workspace/01_assets/_SHARED/DESIGN";
+    var target = folder + "/complete.psd";
+    run([1, 2, 3].map(function (id) {
+        return { key: "i" + id, id: String(id), sourcePath: source, destPath: target,
+            size: content.length, allowReuse: id > 1 };
+    }), null, function (results) {
+        check("все ссылки на слои получили копию", results.every(function (r) { return r.ok; }), true);
+        check("один файл, без послойных файлов и суффиксов", listDir(folder), ["complete.psd"]);
+        check("весь PSD скопирован без потери внутренних данных", fs.readFileSync(native(target)).equals(content), true);
+        check("исходный PSD остался неизменным", fs.readFileSync(native(source)).equals(content), true);
+        check("последующие слои переиспользуют копию", results.slice(1).every(function (r) {
+            return r.records.length === 1 && r.records[0].created === false;
+        }), true);
+        next();
+    });
+});
+
 /* ------------------------------------------------------------------- run */
 
 function step(index) {

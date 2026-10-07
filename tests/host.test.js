@@ -857,9 +857,9 @@ group("Многослойные PSD/AI: аудит и перелинковка �
 (function () {
     var s = buildProject();
     var psdSrc = "E:/design/character.psd";
-    var head = addFootage(s, "Head/character.psd", psdSrc, [s.intro]);
-    var body = addFootage(s, "Body/character.psd", psdSrc, [s.intro]);
-    var arm = addFootage(s, "Arm/character.psd", psdSrc, [s.intro]);
+    var head = addFootage(s, "Head/character.psd", psdSrc, [s.intro], { width: 200, height: 200 });
+    var body = addFootage(s, "Body/character.psd", psdSrc, [s.intro], { width: 200, height: 200 });
+    var arm = addFootage(s, "Arm/character.psd", psdSrc, [s.intro], { width: 200, height: 200 });
 
     var report = auditOf(s);
     var headRep = itemNamed(report, "Head/character.psd");
@@ -1202,7 +1202,7 @@ group("PSD: повторный импорт / дубликаты слоёв пе
     check("нет отказов LAYER_MATCH_FAILED при дубликатах", result.failures.length, 0);
 })();
 
-group("PSD: повторный импорт при нескольких одинаково названных слоях (Pass 5) и плоские PSD-футажи");
+group("PSD: неопределимые одинаковые слои сохраняются, плоский футаж перелинковывается");
 (function () {
     var s = buildProject();
     var psdSrc = "E:/design/multi_leaf.psd";
@@ -1224,11 +1224,11 @@ group("PSD: повторный импорт при нескольких один
         return origImport(options);
     };
 
-    /* Project has 4 footage items named "Leaf" (more items than layers in PSD) without exact dimensions */
-    var leaf1 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 0, height: 0 });
-    var leaf2 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 0, height: 0 });
-    var leaf3 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 0, height: 0 });
-    var leaf4 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 0, height: 0 });
+    /* No candidate has the original dimensions; guessing changes the image. */
+    var leaf1 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 1920, height: 1080 });
+    var leaf2 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 1920, height: 1080 });
+    var leaf3 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 1920, height: 1080 });
+    var leaf4 = addFootage(s, "Leaf/multi_leaf.psd", psdSrc, [s.intro], { width: 1920, height: 1080 });
 
     /* Flat PSD footage item without layer prefix */
     var flatPsd = addFootage(s, "multi_leaf.psd", psdSrc, [s.intro], { width: 500, height: 500 });
@@ -1260,8 +1260,11 @@ group("PSD: повторный импорт при нескольких один
     }));
 
     var result = s.host.commitFromFile(plan);
-    check("все 5 элементов (слои и плоский футаж) успешно перелинкованы", result.relinked, 5);
-    check("нет отказов LAYER_MATCH_FAILED при переполнении слоев и плоском PSD", result.failures.length, 0);
+    check("перелинкован только плоский футаж", result.relinked, 1);
+    check("4 несовпадающих слоя требуют точного сопоставления", result.failures.length, 4);
+    check("исходные слои не удалены и не подменены", [leaf1, leaf2, leaf3, leaf4].every(function (item) {
+        return s.project.items.indexOf(item) >= 0 && s.host.slashes(item.mainSource.file.fsName) === psdSrc;
+    }), true);
 })();
 
 group("PSD: вложенные группы слоев (subLayers / pre-comps) перелинковываются без LAYER_MATCH_FAILED");
@@ -1367,6 +1370,196 @@ group("PSD: вложенные группы слоев (subLayers / pre-comps) �
         }
     }
     check("временные композиции групп удалены", tempCompsRemaining, 0);
+})();
+
+group("PSD/AI: точная идентичность, режим импорта и откат ошибок");
+(function () {
+    function fixture(fileName, definitions, behavior) {
+        var s = buildProject();
+        var sourcePath = "E:/design/" + fileName;
+        var destination = "D:/Project/01_assets/SHARED/DESIGN/" + fileName;
+        var imports = [], created = [], originals = [];
+        var importFile = s.project.importFile.bind(s.project);
+        mock.registerFile(destination, 12345);
+        s.project.importFile = function (options) {
+            imports.push(options.importAs);
+            if (behavior) behavior(options);
+            options._mockLayers = options._mockLayers || definitions;
+            var result = importFile(options);
+            s.project.items.forEach(function (item) {
+                if (item instanceof mock.FootageItem && s.host.slashes(item.mainSource.file.fsName) === destination &&
+                    created.indexOf(item) < 0) created.push(item);
+            });
+            return result;
+        };
+        s.env.sandbox.app.beginSuppressDialogs = function () { s.dialogDepth = (s.dialogDepth || 0) + 1; };
+        s.env.sandbox.app.endSuppressDialogs = function () { s.dialogDepth--; };
+        function add(name, width, height, comps) {
+            var item = addFootage(s, name, sourcePath, comps || [s.intro], { width: width, height: height });
+            originals.push(item);
+            return item;
+        }
+        function commit(items) {
+            var plan = s.host.tempFolder() + "/precise-layer-relink.json";
+            s.host.writeTextFile(plan, s.host.jsonEncode({ items: (items || originals).map(function (item) {
+                return { key: "i" + item.id, id: String(item.id), expectPath: sourcePath, destPath: destination };
+            }) }));
+            return s.host.commitFromFile(plan);
+        }
+        return { s: s, add: add, commit: commit, imports: imports, created: created,
+            sourcePath: sourcePath, destination: destination };
+    }
+
+    var f = fixture("02_90%.ai", [
+        { name: "Layer 4", width: 300, height: 300 },
+        { name: "Layer 3", width: 300, height: 300 },
+        { name: "Layer 2", width: 300, height: 300 }
+    ], function (options) {
+        if (options.importAs === mock.ImportAsType.COMP_CROPPED_LAYERS) throw new Error("AI cropped import unavailable");
+    });
+    var ai2 = f.add("Layer 2/02_90%.ai", 300, 300, [f.s.intro, f.s.case1]);
+    var ai3 = f.add("Layer 3/02_90%.ai", 300, 300, [f.s.intro]);
+    var ai4 = f.add("Layer 4/02_90%.ai", 300, 300, [f.s.case1]);
+    var renamedLayer = f.s.intro.layer(f.s.intro.numLayers - 1);
+    renamedLayer.name = "Layer 4"; // a custom label coinciding with another internal source
+    var result = f.commit([ai3, ai4, ai2]); // deliberately different plan/import order
+    check("AI: COMP succeeds after cropped import throws", result.relinked, 3);
+    check("AI: no failure", result.failures.length, 0);
+    check("AI: Layer 2 exact source across two compositions", f.s.intro.layer(f.s.intro.numLayers - 1).source ===
+        f.s.case1.layer(f.s.case1.numLayers - 1).source, true);
+    check("AI: distinct numbered layers remain distinct", new Set([
+        renamedLayer.source, f.s.intro.layer(f.s.intro.numLayers).source,
+        f.s.case1.layer(f.s.case1.numLayers).source
+    ]).size, 3);
+    check("AI: user layer name retained without changing internal identity", renamedLayer.name, "Layer 4");
+    check("AI: exact internal layer chosen, not numeric suffix stripping",
+        renamedLayer.source.name, "Layer 2/02_90%.ai");
+    check("AI: same complete copy for all internal layers", f.created.filter(function (item) {
+        return f.s.project.items.indexOf(item) >= 0;
+    }).every(function (item) { return f.s.host.slashes(item.mainSource.file.fsName) === f.destination; }), true);
+    check("AI: dialog suppression balanced even after import error", f.s.dialogDepth, 0);
+
+    f = fixture("sized.psd", [{ name: "Hand", width: 200, height: 150 }], function (options) {
+        if (options.importAs === mock.ImportAsType.COMP) {
+            options._mockLayers = [{ name: "Hand", width: 1920, height: 1080 }];
+        }
+    });
+    var cropped = f.add("Hand/sized.psd", 200, 150);
+    var fullSize = f.add("Hand/sized.psd", 1920, 1080, [f.s.case1]);
+    fullSize.name = "renamed item"; // original layer name in a composition is still available
+    var animated = f.s.case1.layer(f.s.case1.numLayers);
+    animated.locked = true;
+    animated.transform.position._keyframes = [{ time: 0, value: [10, 20] }, { time: 1, value: [50, 60] }];
+    animated.transform.position.expression = "wiggle(2,20)";
+    var writes = 0;
+    [animated.transform.position, animated.transform.anchorPoint, animated.transform.scale].forEach(function (property) {
+        property.setValue = function () { writes++; throw new Error("Animated properties cannot use setValue"); };
+    });
+    result = f.commit();
+    check("PSD: mixed cropped/document modes preserved", result.relinked, 2);
+    check("PSD: cropped dimensions unchanged", [f.s.intro.layer(f.s.intro.numLayers).source.width,
+        f.s.intro.layer(f.s.intro.numLayers).source.height], [200, 150]);
+    check("PSD: document dimensions unchanged", [animated.source.width, animated.source.height], [1920, 1080]);
+    check("PSD: no transform writes", writes, 0);
+    check("PSD: animation keys retained", animated.transform.position._keyframes.length, 2);
+    check("PSD: expression retained", animated.transform.position.expression, "wiggle(2,20)");
+    check("PSD: locked layer relocked", animated.locked, true);
+    check("PSD: renamed layer item retained by name", animated.source.name, "renamed item");
+
+    f = fixture("groups.psd", [
+        { name: "Left", subLayers: [{ name: "Leaf", width: 200, height: 200 }] },
+        { name: "Right", subLayers: [{ name: "Leaf", width: 200, height: 200 }] },
+        { name: "Leaf", width: 200, height: 200 }
+    ]);
+    var right = f.add("Right/Leaf/groups.psd", 200, 200);
+    var left = f.add("Left/Leaf/groups.psd", 200, 200);
+    var unknown = f.add("Leaf/groups.psd", 200, 200);
+    result = f.commit();
+    check("PSD: full group paths resolve equal-size/equal-name layers", result.relinked, 2);
+    check("PSD: generic Leaf remains ambiguous even with a root Leaf", result.failures.length, 1);
+    check("PSD: ambiguity reported by code", result.failures[0].code, "LAYER_MATCH_FAILED");
+    check("PSD: ambiguous original not removed", f.s.project.items.indexOf(unknown) >= 0, true);
+    check("PSD: ambiguous usage unchanged", f.s.intro.layer(f.s.intro.numLayers).source === unknown, true);
+    check("PSD: right/left internal sources not exchanged", f.s.intro.layer(f.s.intro.numLayers - 2).source !==
+        f.s.intro.layer(f.s.intro.numLayers - 1).source, true);
+
+    f = fixture("strict.ai", [
+        { name: "Layer 3", width: 200, height: 200 },
+        { name: "Hand-extra", width: 300, height: 300 },
+        { name: "Something", width: 400, height: 400 }
+    ]);
+    var numeric = f.add("Layer 2/strict.ai", 200, 200);
+    var substring = f.add("Hand/strict.ai", 300, 300);
+    var dimensionOnly = f.add("Other/strict.ai", 400, 400);
+    var renamed = f.add("renamed individual layer", 500, 500);
+    var flattenCalls = 0;
+    renamed.replace = function () { flattenCalls++; };
+    result = f.commit();
+    check("AI: numeric, substring, dimensions and rename never guess a layer", result.relinked, 0);
+    check("AI: all unmatched items explicitly reported", result.failures.length, 4);
+    check("AI: renamed layer never flattened", flattenCalls, 0);
+    check("AI: all original sources retained", [numeric, substring, dimensionOnly, renamed].every(function (item) {
+        return f.s.project.items.indexOf(item) >= 0;
+    }), true);
+
+    f = fixture("transaction.psd", [{ name: "Hand", width: 200, height: 200 }]);
+    var hand = f.add("Hand/transaction.psd", 200, 200, [f.s.intro, f.s.case1]);
+    var first = f.s.intro.layer(f.s.intro.numLayers);
+    var second = f.s.case1.layer(f.s.case1.numLayers);
+    first.locked = second.locked = true;
+    second.replaceSource = function () { throw new Error("Injected host replacement error"); };
+    result = f.commit();
+    check("PSD: failed replacement not counted as relinked", result.relinked, 0);
+    check("PSD: replacement error code", result.failures[0].code, "LAYER_RELINK_REJECTED");
+    check("PSD: already replaced usage rolled back", first.source === hand && second.source === hand, true);
+    check("PSD: both locks restored on error", first.locked && second.locked, true);
+    check("PSD: original item retained after error", f.s.project.items.indexOf(hand) >= 0, true);
+    check("PSD: temporary items removed after rollback", f.created.every(function (item) {
+        return f.s.project.items.indexOf(item) < 0;
+    }), true);
+
+    f = fixture("rollback.psd", [{ name: "Hand", width: 200, height: 200 }]);
+    hand = f.add("Hand/rollback.psd", 200, 200, [f.s.intro, f.s.case1]);
+    first = f.s.intro.layer(f.s.intro.numLayers);
+    second = f.s.case1.layer(f.s.case1.numLayers);
+    first.replaceSource = function (source) {
+        if (source === hand) throw new Error("Injected rollback error");
+        this.source = source;
+    };
+    second.replaceSource = function () { throw new Error("Injected replacement error"); };
+    result = f.commit();
+    check("PSD: rollback failure explicitly included", result.failures[0].reason.indexOf("rollback") >= 0, true);
+    check("PSD: source still used after failed rollback kept", f.s.project.items.indexOf(first.source) >= 0, true);
+    check("PSD: original retained after failed rollback", f.s.project.items.indexOf(hand) >= 0, true);
+
+    f = fixture("unsupported.ai", [], function () { throw new Error("Importer rejected file"); });
+    var flat = f.add("unsupported.ai", 1920, 1080);
+    result = f.commit();
+    check("AI: merged footage safely relinked without layered import", result.relinked, 1);
+    check("AI: no unnecessary layered imports for merged item", f.imports.length, 0);
+    check("AI: merged item uses copied file", f.s.host.slashes(flat.mainSource.file.fsName), f.destination);
+    var layered = f.add("Layer 2/unsupported.ai", 200, 200);
+    result = f.commit([layered]);
+    check("AI: importer failures reported rather than flattening", result.failures[0].code, "LAYERED_RELINK_FAILED");
+    check("AI: underlying importer error included", result.failures[0].reason.indexOf("Importer rejected file") >= 0, true);
+    check("AI: unsupported internal layer retained", f.s.project.items.indexOf(layered) >= 0, true);
+    check("AI: dialogs restored after both imports fail", f.s.dialogDepth, 0);
+
+    f = fixture("unused.psb", [{ name: "Spare", width: 200, height: 200 }]);
+    var spare = f.add("Spare/unused.psb", 200, 200, []);
+    result = f.commit();
+    check("PSB: unused project layer relinked", result.relinked, 1);
+    check("PSB: new unused source retained in project", f.created.filter(function (item) {
+        return f.s.project.items.indexOf(item) >= 0;
+    }).length, 1);
+    check("PSB: replaced unused original removed only after success", f.s.project.items.indexOf(spare), -1);
+
+    f = fixture("stale.psd", [{ name: "Hand", width: 200, height: 200 }]);
+    hand = f.add("Hand/stale.psd", 200, 200);
+    hand.replace(new f.s.env.sandbox.File("E:/changed.psd"));
+    result = f.commit();
+    check("PSD: changed source rejected before import", result.failures[0].code, "RELINK_SOURCE_CHANGED");
+    check("PSD: no imports for stale plan", f.imports.length, 0);
 })();
 
 group("Старый проект: оставить как есть");

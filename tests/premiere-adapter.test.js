@@ -48,7 +48,7 @@ group("Метаданные хоста и флаги возможностей");
     check("адаптер - uxp", desc.adapter, "uxp");
     check("минимальная версия - 25.6", desc.minHostVersion, "25.6");
     check("манифест - версия 5", desc.manifestVersion, 5);
-    check("pluginVersion плагина равен 2.3.2", PardPremiereAdapter.pluginVersion, "2.3.2");
+    check("pluginVersion плагина равен 2.3.3", PardPremiereAdapter.pluginVersion, "2.3.3");
     check("флаг qeDom строго false", desc.capabilities.qeDom, false);
     check("флаг extendScript строго false", desc.capabilities.extendScript, false);
     check("поддержка proxyTracking true", desc.capabilities.proxyTracking, true);

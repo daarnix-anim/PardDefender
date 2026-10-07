@@ -135,494 +135,299 @@
         return /\.(psd|psb|ai)$/i.test(path || "");
     }
 
-    function canImportCroppedLayers(destinationFile) {
-        try {
-            if (typeof ImportOptions === "undefined") {
-                return false;
-            }
-            var io = new ImportOptions();
-            io.file = destinationFile;
-            if (typeof io.canImportAs === "function" && typeof ImportAsType !== "undefined") {
-                if (io.canImportAs(ImportAsType.COMP_CROPPED_LAYERS) === true) return true;
-                if (io.canImportAs(ImportAsType.COMP) === true) return true;
-            }
-            return false;
-        } catch (e) {
-            return false;
+    function layerNameWithoutFile(name) {
+        var text = str(name).replace(/\\/g, "/");
+        var slash = text.lastIndexOf("/");
+        if (slash >= 0 && /\.(psd|psb|ai)$/i.test(text.substring(slash + 1))) {
+            return text.substring(0, slash);
         }
+        return text;
     }
 
-    function extractCoreLayerName(fullName, fileName) {
-        var s = host.trimText(str(fullName)).toLowerCase();
-        if (!s) return "";
-        var fName = host.trimText(str(fileName || "")).toLowerCase();
-        var fBase = fName.replace(/\.[^.]+$/, "");
-
-        /*
-         * After Effects names PSD/AI layer items as "LayerName/filename.psd" or
-         * "Group/LayerName/filename.psd".
-         * Strip the trailing filename/extension after the last slash.
-         */
-        var lastSlash = s.lastIndexOf("/");
-        if (lastSlash === -1) lastSlash = s.lastIndexOf("\\");
-        if (lastSlash > 0) {
-            var afterSlash = s.substring(lastSlash + 1);
-            var cleanAfter = afterSlash.replace(/\s*\(\d+\)/g, "").replace(/\s+\d+$/g, "");
-            var cleanBase = fBase.replace(/\s*\(\d+\)/g, "").replace(/\s+\d+$/g, "");
-            if (/\.(psd|psb|ai|eps|pdf)$/i.test(afterSlash) ||
-                afterSlash === fName || afterSlash === fBase ||
-                cleanAfter === cleanBase || (fBase && afterSlash.indexOf(fBase) !== -1)) {
-                s = host.trimText(s.substring(0, lastSlash));
-            }
-        }
-
-        if (fName && s.indexOf(fName) !== -1) {
-            s = s.split(fName).join(" ");
-        }
-        if (fBase && fBase.length > 1 && s.indexOf(fBase) !== -1) {
-            s = s.split(fBase).join(" ");
-        }
-        s = s.replace(/[\/\\\[\]\(\)\-_]/g, " ");
-        return host.trimText(s.replace(/\s+/g, " "));
+    function fileBaseName(path) {
+        var text = host.slashes(str(path));
+        text = text.substring(text.lastIndexOf("/") + 1);
+        try { text = decodeURI(text); } catch (eDecode) {}
+        return text;
     }
 
-    function extractLeafLayerName(fullName, fileName) {
-        var s = host.trimText(str(fullName)).toLowerCase();
-        if (!s) return "";
-        var fName = host.trimText(str(fileName || "")).toLowerCase();
-        var fBase = fName.replace(/\.[^.]+$/, "");
-
-        var lastSlash = s.lastIndexOf("/");
-        if (lastSlash === -1) lastSlash = s.lastIndexOf("\\");
-        if (lastSlash > 0) {
-            var afterSlash = s.substring(lastSlash + 1);
-            var cleanAfter = afterSlash.replace(/\s*\(\d+\)/g, "").replace(/\s+\d+$/g, "");
-            var cleanBase = fBase.replace(/\s*\(\d+\)/g, "").replace(/\s+\d+$/g, "");
-            if (/\.(psd|psb|ai|eps|pdf)$/i.test(afterSlash) ||
-                afterSlash === fName || afterSlash === fBase ||
-                cleanAfter === cleanBase || (fBase && afterSlash.indexOf(fBase) !== -1)) {
-                s = host.trimText(s.substring(0, lastSlash));
-            }
-        }
-
-        var leafSlash = s.lastIndexOf("/");
-        if (leafSlash === -1) leafSlash = s.lastIndexOf("\\");
-        if (leafSlash !== -1) {
-            s = s.substring(leafSlash + 1);
-        }
-        s = s.replace(/[\/\\\[\]\(\)\-_]/g, " ");
-        return host.trimText(s.replace(/\s+/g, " "));
+    function isMergedLayeredItem(item, currentPath) {
+        /* Absence of a slash is NOT evidence of merged footage: the owner can
+         * rename a layer. Only an unchanged file name identifies this case. */
+        return str(item.name) === fileBaseName(currentPath);
     }
 
-    function matchLayerCandidate(item, candidates, fileName) {
-        var cleanOld = host.trimText(str(item.name)).toLowerCase();
-        var coreOld = extractCoreLayerName(item.name, fileName);
-        var leafOld = extractLeafLayerName(item.name, fileName);
-        var itemW = item.width || 0;
-        var itemH = item.height || 0;
-        var i, c, cleanCand, candSource, coreCand, coreSource, leafCand, leafSource;
-
-        var sourceNameOld = "";
-        try { sourceNameOld = host.trimText(str(item.mainSource.name || "")).toLowerCase(); }
-        catch (eSrc) { sourceNameOld = ""; }
-
-        function checkNameMatch(cand) {
-            cleanCand = host.trimText(str(cand.name)).toLowerCase();
-            candSource = host.trimText(str(cand.sourceName || "")).toLowerCase();
-            coreCand = extractCoreLayerName(cand.name, fileName);
-            coreSource = extractCoreLayerName(cand.sourceName, fileName);
-            leafCand = extractLeafLayerName(cand.name, fileName);
-            leafSource = extractLeafLayerName(cand.sourceName, fileName);
-
-            return (cleanOld === cleanCand || cleanOld === candSource ||
-                (sourceNameOld && (sourceNameOld === cleanCand || sourceNameOld === candSource ||
-                    sourceNameOld === coreCand || sourceNameOld === coreSource ||
-                    sourceNameOld === leafCand || sourceNameOld === leafSource)) ||
-                (coreOld && (coreOld === coreCand || coreOld === coreSource || coreOld === cleanCand || coreOld === candSource)) ||
-                (leafOld && (leafOld === leafCand || leafOld === leafSource || leafOld === cleanCand || leafOld === coreCand ||
-                    leafOld.replace(/\s+\d+$/, "") === leafCand.replace(/\s+\d+$/, "") ||
-                    leafOld.replace(/\s+\d+$/, "") === leafSource.replace(/\s+\d+$/, ""))) ||
-                cleanOld.indexOf(cleanCand + "/") === 0 || cleanOld.indexOf(cleanCand + "\\") === 0 ||
-                candSource.indexOf(coreOld + "/") === 0 || candSource.indexOf(coreOld + "\\") === 0 ||
-                candSource.indexOf(leafOld + "/") === 0 || candSource.indexOf(leafOld + "\\") === 0 ||
-                cleanOld.indexOf("/" + cleanCand) !== -1 || cleanOld.indexOf("\\" + cleanCand) !== -1 ||
-                cleanCand.indexOf("/" + leafOld) !== -1 || cleanCand.indexOf("\\" + leafOld) !== -1 ||
-                candSource.indexOf("/" + leafOld) !== -1 || candSource.indexOf("\\" + leafOld) !== -1);
+    function layerAliases(item, usages) {
+        var aliases = [], i;
+        function add(name) {
+            var value = layerNameWithoutFile(name);
+            if (!value) return;
+            for (var a = 0; a < aliases.length; a++) {
+                if (aliases[a] === value) return;
+            }
+            aliases.push(value);
         }
+        try { add(item.mainSource.name); } catch (eName) {}
+        add(item.name);
+        /* A custom timeline label may happen to equal ANOTHER internal layer.
+         * Only AE's file-qualified source labels provide fallback evidence. */
+        for (i = 0; i < usages.length; i++) {
+            if (layerNameWithoutFile(usages[i].layer.name) !== str(usages[i].layer.name).replace(/\\/g, "/")) {
+                add(usages[i].layer.name);
+            }
+        }
+        return aliases;
+    }
 
-        /* Pass 1: UNUSED candidate with exact name (or core/leaf name) AND dimensions match */
+    function matchLayerCandidate(item, candidates, usages) {
+        var aliases = layerAliases(item, usages);
+        var best = null, bestRank = 0, ambiguous = false;
+        var i, a, c, rank, alias;
         for (i = 0; i < candidates.length; i++) {
             c = candidates[i];
-            if (c.used) continue;
-            if (checkNameMatch(c) && itemW > 0 && itemH > 0 && c.width === itemW && c.height === itemH) {
-                return c;
-            }
-        }
-
-        /* Pass 1B: ALREADY-USED candidate with exact name AND dimensions match.
-         * When a project contains duplicate footage items referencing the same layer of the PSD
-         * (e.g. from multiple imports or across different comps), all candidates of that layer
-         * may already be marked used. Reusing the matching source is 100% safe because the
-         * name and pixel dimensions are identical. */
-        for (i = 0; i < candidates.length; i++) {
-            c = candidates[i];
-            if (!c.used) continue;
-            if (checkNameMatch(c) && itemW > 0 && itemH > 0 && c.width === itemW && c.height === itemH) {
-                return c;
-            }
-        }
-
-        /* Pass 2: UNUSED candidate with exact core name, full name, leaf name, or source name match */
-        for (i = 0; i < candidates.length; i++) {
-            c = candidates[i];
-            if (c.used) continue;
-            if (checkNameMatch(c)) {
-                return c;
-            }
-        }
-
-        /* Pass 2B: ALREADY-USED candidate where name uniquely identifies the layer in the PSD.
-         * If there is only ONE candidate in the entire PSD with this name (e.g. "Hands"),
-         * any additional project items referencing this layer can safely reuse it. */
-        var uniqueNameCand = null, uniqueNameCount = 0;
-        for (i = 0; i < candidates.length; i++) {
-            if (checkNameMatch(candidates[i])) {
-                uniqueNameCount++;
-                uniqueNameCand = candidates[i];
-            }
-        }
-        if (uniqueNameCount === 1 && uniqueNameCand) {
-            return uniqueNameCand;
-        }
-
-        /* Pass 3: UNUSED candidate with unique exact dimensions match */
-        if (itemW > 0 && itemH > 0) {
-            var dimCand = null, dimCount = 0;
-            for (i = 0; i < candidates.length; i++) {
-                c = candidates[i];
-                if (c.used) continue;
-                if (c.width === itemW && c.height === itemH) {
-                    dimCount++;
-                    dimCand = c;
+            /* Keep the original import mode, including document-size layers.
+             * Dimensions alone never establish the identity of a PSD/AI layer. */
+            if (c.width !== item.width || c.height !== item.height) continue;
+            rank = 0;
+            for (a = 0; a < aliases.length; a++) {
+                alias = aliases[a];
+                if (alias === c.path) rank = Math.max(rank, alias.indexOf("/") >= 0 ? 3 : 1);
+                else if (alias.indexOf("/") >= 0 &&
+                    c.path.substring(c.path.length - alias.length - 1) === "/" + alias) {
+                    rank = Math.max(rank, 2);
+                } else if (alias.indexOf("/") < 0 &&
+                    (alias === c.name || alias === layerNameWithoutFile(c.sourceName))) {
+                    rank = Math.max(rank, 1);
                 }
             }
-            if (dimCount === 1 && dimCand) {
-                return dimCand;
+            if (rank > bestRank) {
+                best = c;
+                bestRank = rank;
+                ambiguous = false;
+            } else if (rank > 0 && rank === bestRank && best && c.identity !== best.identity) {
+                ambiguous = true;
             }
         }
+        return ambiguous ? null : best;
+    }
 
-        /* Pass 4: substring name match (unused candidates only) */
-        for (i = 0; i < candidates.length; i++) {
-            c = candidates[i];
-            if (c.used) continue;
-            cleanCand = host.trimText(str(c.name)).toLowerCase();
-            coreCand = extractCoreLayerName(c.name, fileName);
-            leafCand = extractLeafLayerName(c.name, fileName);
-            if ((cleanCand.length > 2 && (cleanOld.indexOf(cleanCand) !== -1 || cleanCand.indexOf(cleanOld) !== -1)) ||
-                (coreOld && coreCand && coreCand.length > 2 && (coreOld.indexOf(coreCand) !== -1 || coreCand.indexOf(coreOld) !== -1)) ||
-                (leafOld && leafCand && leafCand.length > 2 && (leafOld.indexOf(leafCand) !== -1 || leafCand.indexOf(leafOld) !== -1))) {
-                return c;
+    function layeredUsages(item, importedItems) {
+        var usages = [], p, cl, comp, layer;
+        for (p = 1; p <= app.project.numItems; p++) {
+            comp = app.project.item(p);
+            if (!host.isCompItem(comp) || importedItems[comp.id]) continue;
+            for (cl = 1; cl <= comp.numLayers; cl++) {
+                layer = comp.layer(cl);
+                if (layer && layer.source === item) usages.push({ layer: layer });
             }
         }
+        return usages;
+    }
 
-        /* Pass 5: ALREADY-USED candidate matching name when multiple same-named layers exist.
-         * If all candidates of this name are already marked used and dimensions did not
-         * disambiguate, reuse the first matching candidate rather than failing with LAYER_MATCH_FAILED. */
-        for (i = 0; i < candidates.length; i++) {
-            c = candidates[i];
-            if (checkNameMatch(c)) {
-                return c;
-            }
+    function replaceLayerSource(layer, source) {
+        var locked = layer.locked === true;
+        /* Equal source dimensions keep the layer coordinate system unchanged.
+         * Do not set transform values: setValue can erase animation/expressions. */
+        try {
+            if (locked) layer.locked = false;
+            layer.replaceSource(source, false);
+            if (layer.source !== source) throw new Error("Layer source did not change.");
+        } finally {
+            if (locked) layer.locked = true;
         }
-
-        /*
-         * No fallback pass. If no match was found by name or dimensions,
-         * return null rather than grabbing an arbitrary unused candidate.
-         * A wrong match is far worse than no match: it replaces the layer
-         * source with the wrong PSD layer, causing merged/swapped visuals.
-         */
-
-        return null;
     }
 
     function relinkLayeredGroup(destination, groupEntries, result) {
-        var io, tempComp = null, tempFolder = null;
-        var itemsBefore = {};
-        for (var eb = 1; eb <= app.project.numItems; eb++) {
-            try { itemsBefore[app.project.item(eb).id] = true; } catch (eBf) {}
+        var itemsBefore = {}, importedItems = {}, newlyCreatedItems = [], candidates = [];
+        var importErrors = [], prepared = [], i, entry, item, file, currentPath;
+        for (i = 1; i <= app.project.numItems; i++) itemsBefore[app.project.item(i).id] = true;
+
+        function rememberImportedItems() {
+            for (var p = 1; p <= app.project.numItems; p++) {
+                var imported = app.project.item(p);
+                if (!itemsBefore[imported.id] && !importedItems[imported.id]) {
+                    importedItems[imported.id] = true;
+                    newlyCreatedItems.push(imported);
+                }
+            }
+        }
+
+        function collectFromComp(comp, parentPath, parentIndex, visited) {
+            if (!comp || !host.isCompItem(comp) || visited[comp.id]) return;
+            visited[comp.id] = true;
+            for (var k = 1; k <= comp.numLayers; k++) {
+                var layer = comp.layer(k);
+                if (!layer || !layer.source) continue;
+                var name = layerNameWithoutFile(layer.name);
+                var path = parentPath ? parentPath + "/" + name : name;
+                var indexPath = parentIndex + "/" + k;
+                if (host.isCompItem(layer.source)) {
+                    collectFromComp(layer.source, path, indexPath, visited);
+                } else if (host.isFootageItem(layer.source)) {
+                    var sourceFile = host.footageFile(layer.source);
+                    if (!sourceFile || host.slashes(sourceFile.fsName).toLowerCase() !==
+                        host.slashes(destination.fsName).toLowerCase()) continue;
+                    candidates.push({
+                        name: name, path: path, identity: indexPath,
+                        sourceName: str(layer.source.name), source: layer.source,
+                        width: layer.source.width, height: layer.source.height
+                    });
+                }
+            }
+        }
+
+        function importMode(mode) {
+            var suppressing = false, candidateCount = candidates.length;
+            try {
+                if (typeof ImportOptions === "undefined" || mode === undefined) return;
+                var io = new ImportOptions(destination);
+                io.file = destination;
+                io.sequence = false;
+                if (typeof io.canImportAs === "function" && !io.canImportAs(mode)) return;
+                io.importAs = mode;
+                if (typeof app.beginSuppressDialogs === "function") {
+                    app.beginSuppressDialogs();
+                    suppressing = true;
+                }
+                var comp = app.project.importFile(io);
+                if (!host.isCompItem(comp)) throw new Error("Import returned no layered composition.");
+                collectFromComp(comp, "", "", {});
+            } catch (eImport) {
+                candidates.length = candidateCount;
+                importErrors.push(str(eImport));
+            } finally {
+                if (suppressing) {
+                    try { app.endSuppressDialogs(false); } catch (eDialogs) {}
+                }
+                rememberImportedItems();
+            }
+        }
+
+        function failure(ent, code, reason) {
+            result.skipped++;
+            result.failures.push({ key: str(ent.key), id: str(ent.id), code: code, reason: reason });
+        }
+
+        /* Validate BEFORE importing. Prepare the whole mapping before renaming
+         * imported sources or changing any composition references. */
+        for (i = 0; i < groupEntries.length; i++) {
+            entry = groupEntries[i];
+            item = host.findItemById(entry.id);
+            if (!item || !host.isFootageItem(item)) {
+                failure(entry, "RELINK_ITEM_GONE", "The item is no longer in the project.");
+                continue;
+            }
+            file = host.footageFile(item);
+            currentPath = file ? host.slashes(file.fsName) : "";
+            if (entry.expectPath && currentPath.toLowerCase() !== host.slashes(entry.expectPath).toLowerCase()) {
+                failure(entry, "RELINK_SOURCE_CHANGED", "The source changed after the audit; left untouched.");
+                continue;
+            }
+            prepared.push({ entry: entry, item: item,
+                merged: isMergedLayeredItem(item, currentPath) });
+        }
+
+        var needsLayers = false;
+        for (i = 0; i < prepared.length; i++) {
+            if (!prepared[i].merged) needsLayers = true;
+        }
+        if (needsLayers && typeof ImportAsType !== "undefined") {
+            /* Try both modes independently. Illustrator/host builds may accept
+             * COMP but reject cropped import even when canImportAs says yes. */
+            importMode(ImportAsType.COMP_CROPPED_LAYERS);
+            importMode(ImportAsType.COMP);
         }
 
         try {
-            io = new ImportOptions(destination);
-            io.file = destination;
-            io.sequence = false;
-            if (typeof ImportAsType !== "undefined" && typeof io.canImportAs === "function") {
-                if (io.canImportAs(ImportAsType.COMP_CROPPED_LAYERS)) {
-                    io.importAs = ImportAsType.COMP_CROPPED_LAYERS;
-                } else if (io.canImportAs(ImportAsType.COMP)) {
-                    io.importAs = ImportAsType.COMP;
-                }
-            } else if (typeof ImportAsType !== "undefined") {
-                io.importAs = ImportAsType.COMP_CROPPED_LAYERS;
+            for (i = 0; i < prepared.length; i++) {
+                var state = prepared[i];
+                if (state.merged) continue;
+                state.usages = layeredUsages(state.item, importedItems);
+                state.candidate = matchLayerCandidate(state.item, candidates, state.usages);
             }
-            tempComp = app.project.importFile(io);
-        } catch (eImport) {
-            tempComp = null;
-        }
-
-        var newlyCreatedItems = [];
-        for (var ea = 1; ea <= app.project.numItems; ea++) {
-            try {
-                var itm = app.project.item(ea);
-                if (itm && !itemsBefore[itm.id]) {
-                    newlyCreatedItems.push(itm);
-                    if (!tempFolder && host.isFolderItem(itm)) {
-                        tempFolder = itm;
+            for (i = 0; i < prepared.length; i++) {
+                var pending = prepared[i];
+                item = pending.item;
+                entry = pending.entry;
+                var saved = captureInterpretation(item), savedProxy = captureProxy(item);
+                if (pending.merged) {
+                    try {
+                        item.replace(destination);
+                        restoreInterpretation(item, saved);
+                        restoreProxy(item, savedProxy);
+                        result.relinked++;
+                    } catch (eMerged) {
+                        failure(entry, "LAYER_RELINK_REJECTED", str(eMerged));
                     }
+                    continue;
                 }
-            } catch (eItm) {}
-        }
-
-        var newLayers = [];
-        var visitedComps = {};
-        function collectFromComp(comp) {
-            if (!comp || !host.isCompItem(comp)) return;
-            try {
-                if (visitedComps[comp.id]) return;
-                visitedComps[comp.id] = true;
-            } catch (eVis) {}
-            var numL = 0;
-            try { numL = comp.numLayers || 0; } catch (eNL) { numL = 0; }
-            for (var k = 1; k <= numL; k++) {
+                var candidate = pending.candidate;
+                if (!candidate) {
+                    failure(entry, candidates.length ? "LAYER_MATCH_FAILED" : "LAYERED_RELINK_FAILED",
+                        candidates.length ? "No unique layer with the original name/path and dimensions for " + str(item.name) + "; left untouched." :
+                        "Layered import failed: " + (importErrors.join("; ") || "No supported composition import mode.") + "; left untouched.");
+                    continue;
+                }
+                var source = candidate.source, usages = pending.usages, changed = [], replaceError = "";
                 try {
-                    var l = comp.layer(k);
-                    if (!l || !l.source) continue;
-                    if (host.isCompItem(l.source)) {
-                        collectFromComp(l.source);
-                    } else if (host.isFootageItem(l.source)) {
-                        newLayers.push({
-                            name: str(l.name),
-                            sourceName: str(l.source.name),
-                            source: l.source,
-                            width: l.source.width || 0,
-                            height: l.source.height || 0,
-                            used: false
-                        });
-                        if (!tempFolder && l.source.parentFolder && l.source.parentFolder !== app.project.rootFolder) {
-                            tempFolder = l.source.parentFolder;
+                    source.parentFolder = item.parentFolder;
+                    restoreInterpretation(source, saved);
+                    restoreProxy(source, savedProxy);
+                    for (var u = 0; u < usages.length; u++) {
+                        /* Track BEFORE the call: a host error may occur after it
+                         * changes the source (including when restoring lock). */
+                        changed.push(usages[u].layer);
+                        replaceLayerSource(usages[u].layer, source);
+                    }
+                } catch (eReplace) {
+                    replaceError = str(eReplace);
+                }
+                if (replaceError) {
+                    for (var r = changed.length - 1; r >= 0; r--) {
+                        try {
+                            if (changed[r].source === source) replaceLayerSource(changed[r], item);
+                        } catch (eRollback) {
+                            replaceError += "; rollback: " + str(eRollback);
                         }
                     }
-                } catch (eLk) {}
-            }
-        }
-        if (tempComp) {
-            collectFromComp(tempComp);
-        }
-
-        for (var ni = 0; ni < newlyCreatedItems.length; ni++) {
-            var nItm = newlyCreatedItems[ni];
-            if (host.isFootageItem(nItm)) {
-                var alreadyPresent = false;
-                for (var al = 0; al < newLayers.length; al++) {
-                    if (newLayers[al].source === nItm) {
-                        alreadyPresent = true;
-                        break;
-                    }
+                    failure(entry, "LAYER_RELINK_REJECTED", replaceError + "; original project item retained.");
+                    continue;
                 }
-                if (!alreadyPresent) {
-                    newLayers.push({
-                        name: str(nItm.name),
-                        sourceName: str(nItm.name),
-                        source: nItm,
-                        width: nItm.width || 0,
-                        height: nItm.height || 0,
-                        used: false
-                    });
-                    if (!tempFolder && nItm.parentFolder && nItm.parentFolder !== app.project.rootFolder) {
-                        tempFolder = nItm.parentFolder;
-                    }
+                /* Never delete an original that still has a composition use. */
+                if (layeredUsages(item, importedItems).length > 0) {
+                    failure(entry, "LAYER_RELINK_REJECTED", "Original layer still has references; item retained.");
+                    continue;
+                }
+                candidate.keep = true; // also retain imported footage unused in comps
+                try { item.remove(); } catch (eRemove) {}
+                result.relinked++;
+            }
+        } finally {
+            /* Only temporary items are cleaned up, never original project comps.
+             * Keep any imported source still referenced after a failed rollback. */
+            for (var c = newlyCreatedItems.length - 1; c >= 0; c--) {
+                if (host.isCompItem(newlyCreatedItems[c])) {
+                    try { newlyCreatedItems[c].remove(); } catch (eComp) {}
                 }
             }
-        }
-
-        if (newLayers.length < 1) {
-            for (var ci0 = 0; ci0 < newlyCreatedItems.length; ci0++) {
-                try { newlyCreatedItems[ci0].remove(); } catch (eC0) {}
-            }
-            try { if (tempComp) tempComp.remove(); } catch (eTC0) {}
-            return false;
-        }
-
-        var g, entry, item, file, currentPath;
-        var fileName = destination ? destination.name : "";
-        for (g = 0; g < groupEntries.length; g++) {
-            entry = groupEntries[g];
-            item = host.findItemById(entry.id);
-
-            if (!item || !host.isFootageItem(item)) {
-                result.skipped++;
-                result.failures.push({
-                    key: str(entry.key),
-                    id: str(entry.id),
-                    code: "RELINK_ITEM_GONE",
-                    reason: "The item is no longer in the project."
-                });
-                continue;
-            }
-
-            file = host.footageFile(item);
-            currentPath = file ? host.slashes(file.fsName) : "";
-            if (entry.expectPath &&
-                currentPath.toLowerCase() !== host.slashes(entry.expectPath).toLowerCase()) {
-                result.skipped++;
-                result.failures.push({
-                    key: str(entry.key),
-                    id: str(entry.id),
-                    code: "RELINK_SOURCE_CHANGED",
-                    reason: "The source changed after the audit; left untouched."
-                });
-                continue;
-            }
-
-            var cand = matchLayerCandidate(item, newLayers, fileName);
-            if (!cand || !cand.source) {
-                var hasLayerSlash = item.name.indexOf("/") !== -1 || item.name.indexOf("\\") !== -1;
-                var coreName = extractCoreLayerName(item.name, fileName);
-                /* If the item is a flat (merged) footage item of the PSD itself
-                 * (e.g. "01.psd" rather than "Layer/01.psd"), it does not correspond
-                 * to an individual cropped layer in tempComp. For flat footage items,
-                 * item.replace() is the correct, safe relinking path that preserves
-                 * the item's footage source without flattening any layer hierarchy. */
-                if (!hasLayerSlash || !coreName) {
-                    try {
-                        var savedInterp = captureInterpretation(item);
-                        var savedPrx = captureProxy(item);
-                        item.replace(destination);
-                        restoreInterpretation(item, savedInterp);
-                        restoreProxy(item, savedPrx);
-                        result.relinked++;
-                        continue;
-                    } catch (eFlatReplace) {}
+            for (var f = newlyCreatedItems.length - 1; f >= 0; f--) {
+                var temp = newlyCreatedItems[f], keep = false;
+                if (!host.isFootageItem(temp)) continue;
+                for (var n = 0; n < candidates.length; n++) {
+                    if (candidates[n].source === temp && candidates[n].keep) keep = true;
                 }
-
-                result.skipped++;
-                result.failures.push({
-                    key: str(entry.key),
-                    id: str(entry.id),
-                    code: "LAYER_MATCH_FAILED",
-                    reason: "Could not find matching layer in imported file for " + str(item.name) + "; left untouched."
-                });
-                continue;
+                try { if (temp.usedIn.length > 0) keep = true; } catch (eUsed) { keep = true; }
+                if (!keep) { try { temp.remove(); } catch (eFootage) {} }
             }
-
-            cand.used = true;
-            var newSource = cand.source;
-            var saved = captureInterpretation(item);
-            var savedProxy = captureProxy(item);
-            var oldParent = item.parentFolder;
-            var oldName = item.name;
-            var oldLabel = item.label;
-            var oldComment = item.comment;
-
-            /* Repoint layers across ALL comps in the project, handling locked layers safely.
-             * Capture and restore transform properties (position, anchorPoint, scale)
-             * because replaceSource on a cropped-layer item can reset the layer's
-             * internal position offset, causing layers to jump from their correct
-             * placement in the composition. */
-            for (var p = 1; p <= app.project.numItems; p++) {
-                var pItem = app.project.item(p);
-                if (host.isCompItem(pItem) && pItem !== tempComp && !visitedComps[pItem.id]) {
-                    for (var cl = 1; cl <= pItem.numLayers; cl++) {
-                        try {
-                            var cLayer = pItem.layer(cl);
-                            if (cLayer && cLayer.source === item) {
-                                var wasLocked = false;
-                                try { wasLocked = cLayer.locked; if (wasLocked) cLayer.locked = false; } catch (eLock) {}
-
-                                /* Capture transform before replaceSource */
-                                var savedPos = null, savedAnchor = null, savedScale = null;
-                                try {
-                                    var xform = cLayer.property("ADBE Transform Group");
-                                    if (xform) {
-                                        try { savedPos = xform.property("ADBE Position").value; } catch (ePos) {}
-                                        try { savedAnchor = xform.property("ADBE Anchor Point").value; } catch (eAnc) {}
-                                        try { savedScale = xform.property("ADBE Scale").value; } catch (eSc) {}
-                                    }
-                                } catch (eXform) {}
-
-                                cLayer.replaceSource(newSource, false);
-
-                                /* Restore transform after replaceSource */
-                                try {
-                                    var xform2 = cLayer.property("ADBE Transform Group");
-                                    if (xform2) {
-                                        if (savedPos) try { xform2.property("ADBE Position").setValue(savedPos); } catch (eRP) {}
-                                        if (savedAnchor) try { xform2.property("ADBE Anchor Point").setValue(savedAnchor); } catch (eRA) {}
-                                        if (savedScale) try { xform2.property("ADBE Scale").setValue(savedScale); } catch (eRS) {}
-                                    }
-                                } catch (eXform2) {}
-
-                                try { if (wasLocked) cLayer.locked = true; } catch (eRelock) {}
-                            }
-                        } catch (eRep) {}
-                    }
+            for (var d = newlyCreatedItems.length - 1; d >= 0; d--) {
+                var folder = newlyCreatedItems[d], empty = true;
+                if (!host.isFolderItem(folder)) continue;
+                for (var p = 1; p <= app.project.numItems; p++) {
+                    if (app.project.item(p).parentFolder === folder) empty = false;
                 }
-            }
-
-            try { newSource.parentFolder = oldParent; } catch (eP) {}
-            try { newSource.name = oldName; } catch (eN) {}
-            try { newSource.label = oldLabel; } catch (eL) {}
-            try { newSource.comment = oldComment; } catch (eC) {}
-            restoreInterpretation(newSource, saved);
-            restoreProxy(newSource, savedProxy);
-
-            try { item.remove(); } catch (eR) {}
-            result.relinked++;
-        }
-
-        for (var ci = 0; ci < newlyCreatedItems.length; ci++) {
-            var cItm = newlyCreatedItems[ci];
-            if (host.isCompItem(cItm)) {
-                try { cItm.remove(); } catch (eRemSubComp) {}
+                if (empty) { try { folder.remove(); } catch (eFolder) {} }
             }
         }
-        try { if (tempComp) tempComp.remove(); } catch (eTC) {}
-
-        for (var u = 0; u < newLayers.length; u++) {
-            if (!newLayers[u].used && newLayers[u].source) {
-                try { newLayers[u].source.remove(); } catch (eRem) {}
-            }
-        }
-
-        for (var foi = 0; foi < newlyCreatedItems.length; foi++) {
-            var foItm = newlyCreatedItems[foi];
-            if (host.isFolderItem(foItm)) {
-                var isFoEmpty = true;
-                for (var fi2 = 1; fi2 <= app.project.numItems; fi2++) {
-                    if (app.project.item(fi2).parentFolder === foItm) {
-                        isFoEmpty = false;
-                        break;
-                    }
-                }
-                if (isFoEmpty) {
-                    try { foItm.remove(); } catch (eTF2) {}
-                }
-            }
-        }
-
-        if (tempFolder) {
-            var isEmpty = true;
-            for (var f = 1; f <= app.project.numItems; f++) {
-                if (app.project.item(f).parentFolder === tempFolder) {
-                    isEmpty = false;
-                    break;
-                }
-            }
-            if (isEmpty) {
-                try { tempFolder.remove(); } catch (eTF) {}
-            }
-        }
-
         return true;
     }
 
@@ -679,8 +484,8 @@
                  * Layered files (.psd, .psb, .ai): item.replace() resets the footage
                  * to "Merged Layers" (flattened composite), destroying individual layer
                  * selections and alpha transparency. When ImportOptions supports
-                 * COMP_CROPPED_LAYERS, import once and repoint comp layers to the
-                 * corresponding cropped layer sources.
+                 * composition imports, resolve the original name/path AND dimensions
+                 * before repointing every usage to the corresponding internal layer.
                  */
                 if (!isSeq && !isPrx && (isLayeredCandidate(destPathNorm) || isLayeredCandidate(entry.expectPath))) {
                     var destFileCandidate = new File(destPathNorm);
@@ -707,21 +512,7 @@
                         }
                     }
 
-                    if (relinkLayeredGroup(destFileCandidate, groupEntries, result)) {
-                        continue;
-                    }
-
-                    /* If layered import failed, DO NOT fall back to item.replace()!
-                     * item.replace flattens all layers into a single merged composite, ruining alpha and positions. */
-                    for (gIdx = 0; gIdx < groupEntries.length; gIdx++) {
-                        result.skipped++;
-                        result.failures.push({
-                            key: str(groupEntries[gIdx].key),
-                            id: str(groupEntries[gIdx].id),
-                            code: "LAYERED_RELINK_FAILED",
-                            reason: "Layered import failed for " + str(destPathNorm) + "; layers left untouched to prevent merging."
-                        });
-                    }
+                    relinkLayeredGroup(destFileCandidate, groupEntries, result);
                     continue;
                 }
 

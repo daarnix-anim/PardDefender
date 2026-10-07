@@ -154,7 +154,7 @@ var PardPremiereAdapter = (function () {
     }
 
     api.normalizePath = normalizePath;
-    api.pluginVersion = "2.3.2";
+    api.pluginVersion = "2.3.3";
 
     function stripSuffixes(stem) {
         if (!stem) return "";
@@ -704,6 +704,7 @@ var PardPremiereAdapter = (function () {
                     var usedProjectItemNames = {};
                     var usedProjectItemStems = {};
                     var usedMediaPaths = {};
+                    var timelineReferences = [];
                     var metadataPathByName = {};
 
                     function registerSequence(seq) {
@@ -814,7 +815,11 @@ var PardPremiereAdapter = (function () {
                                                 var normMP = normalizePath(mPath);
                                                 if (normMP) usedMediaPaths[normMP.toLowerCase()] = true;
                                             }
-                                            return doneItem();
+                                            var exactId = typeof pi.getId === "function" ? pi.getId() : (pi.nodeId || pi.id || pi.guid || "");
+                                            return maybeAwait(exactId, function (resolvedExactId) {
+                                                timelineReferences.push({ item: pi, id: resolvedExactId ? String(resolvedExactId) : "" });
+                                                return doneItem();
+                                            });
                                         });
                                     });
                                 });
@@ -915,8 +920,8 @@ var PardPremiereAdapter = (function () {
 
                     function inspectLegacyTracksOfSequence(s, doneLegacy) {
                         var colls = [];
-                        if (s.audioTracks) colls.push(s.audioTracks);
-                        if (s.videoTracks) colls.push(s.videoTracks);
+                        if (s.audioTracks && !(typeof s.getAudioTrackCount === "function" && typeof s.getAudioTrack === "function")) colls.push(s.audioTracks);
+                        if (s.videoTracks && !(typeof s.getVideoTrackCount === "function" && typeof s.getVideoTrack === "function")) colls.push(s.videoTracks);
                         if (s.tracks && s.tracks !== s.videoTracks && s.tracks !== s.audioTracks) colls.push(s.tracks);
 
                         var cIdx = 0;
@@ -1281,7 +1286,7 @@ var PardPremiereAdapter = (function () {
                                                 var snItems = snapObj.items || [];
                                                 for (var sj = 0; sj < snItems.length; sj++) {
                                                     var snIt = snItems[sj];
-                                                    if (snIt && snIt.path) {
+                                                    if (snIt && snIt.path && snIt.protected !== false) {
                                                         var snNorm = normalizePath(snIt.path);
                                                         if (snNorm.indexOf("/") !== 0 && !/^[a-zA-Z]:\//.test(snNorm)) {
                                                             snNorm = normWs + "/" + snNorm;
@@ -1294,6 +1299,8 @@ var PardPremiereAdapter = (function () {
                                                             contentId: snIt.contentId || "",
                                                             size: snIt.size || 0,
                                                             classification: snIt.classification || "clip",
+                                                            hasProxy: snIt.hasProxy,
+                                                            isSequence: snIt.isSequence,
                                                             isAeProtected: true
                                                         };
                                                         indexAeItem(aeEntry);
@@ -1338,13 +1345,17 @@ var PardPremiereAdapter = (function () {
                             // 2. Detect sequence
                             var isSeq = false;
                             if (typeof resolvedNode.isSequence === "function") {
-                                try { isSeq = !!resolvedNode.isSequence(); } catch (eSeq1) {}
+                                try { isSeq = resolvedNode.isSequence(); } catch (eSeq1) {}
                             }
                             if (!isSeq && typeof resolvedNode.isSequence === "boolean") {
                                 isSeq = resolvedNode.isSequence;
                             }
                             if (!isSeq && typeof resolvedNode.getSequence === "function") {
-                                try { isSeq = !!resolvedNode.getSequence(); } catch (eSeq2) {}
+                                try {
+                                    var sequenceResult = resolvedNode.getSequence();
+                                    isSeq = sequenceResult && typeof sequenceResult.then === "function" ?
+                                        sequenceResult.then(function (seq) { return !!seq; }, function () { return false; }) : !!sequenceResult;
+                                } catch (eSeq2) {}
                             }
                             if (!isSeq && typeof resolvedNode.sequence === "object" && resolvedNode.sequence !== null) {
                                 isSeq = true;
@@ -1355,17 +1366,18 @@ var PardPremiereAdapter = (function () {
                             if (!isSeq && (ppro && ppro.Sequence && resolvedNode instanceof ppro.Sequence)) {
                                 isSeq = true;
                             }
-                            if (!isSeq && resolvedNode.name && (knownSequenceNames[resolvedNode.name] || (resolvedNode.nodeId && knownSequenceIds[String(resolvedNode.nodeId)]))) {
+                            if (resolvedNode.name && (knownSequenceNames[resolvedNode.name] || (resolvedNode.nodeId && knownSequenceIds[String(resolvedNode.nodeId)]))) {
                                 isSeq = true;
                             }
-                            if (!isSeq && knownSequenceItems.indexOf(resolvedNode) !== -1) {
+                            if (knownSequenceItems.indexOf(resolvedNode) !== -1) {
                                 isSeq = true;
                             }
 
                             var rawSeq = isSeq;
 
                             return maybeAwait(rawSeq, function (seqMatched) {
-                                var resolvedId = (typeof resolvedNode.getId === "function") ? (function () { try { return resolvedNode.getId(); } catch (e) { return null; } })() : null;
+                                var rawId = (typeof resolvedNode.getId === "function") ? (function () { try { return resolvedNode.getId(); } catch (e) { return null; } })() : null;
+                                return maybeAwait(rawId, function (resolvedId) {
                                 var nodeId = String(resolvedId || resolvedNode.nodeId || (resolvedNode.guid ? (typeof resolvedNode.guid.toString === "function" ? resolvedNode.guid.toString() : String(resolvedNode.guid)) : null) || resolvedNode.id || resolvedNode.treePath || (collectedItems.length + 1));
 
                                 if (seqMatched) {
@@ -1885,6 +1897,10 @@ var PardPremiereAdapter = (function () {
                                                             return done();
                                                         }
 
+                                                        var exactUsage = timelineReferences.filter(function (ref) {
+                                                            return ref.item === resolvedNode || ref.item === clipItem ||
+                                                                (ref.id && (ref.id === String(nodeId) || ref.id === String(resolvedId)));
+                                                        }).length;
                                                         collectedItems.push({
                                                             id: nodeId,
                                                             key: "p" + nodeId,
@@ -1900,6 +1916,8 @@ var PardPremiereAdapter = (function () {
                                                             size: fSize,
                                                             duration: dur,
                                                             usedOnTimeline: isUsedOnTimeline,
+                                                            usedOnTimelineExact: exactUsage > 0,
+                                                            timelineOccurrences: exactUsage,
                                                             crossHost: crossHost,
                                                             hostDetails: {
                                                                 nodeId: resolvedId || resolvedNode.nodeId || (clipItem && clipItem.nodeId) || null,
@@ -1917,6 +1935,7 @@ var PardPremiereAdapter = (function () {
                                         });
                                     });
                                 });
+                            });
                             });
                         });
                     }
@@ -1966,8 +1985,49 @@ var PardPremiereAdapter = (function () {
                         onDoneTsv();
                     }
 
+                    function loadAeSnapshots(onDoneSnapshots) {
+                        // The synchronous path above is retained for compatible hosts and Node tests.
+                        if (!normWs || !fs || typeof fs.readdirSync === "function" || typeof fs.readdir !== "function") {
+                            return onDoneSnapshots();
+                        }
+                        var dir = normWs + "/.parddefender/projects";
+                        fs.readdir(dir, function (err, names) {
+                            if (err) return onDoneSnapshots();
+                            var files = (names || []).filter(function (name) { return /\.media\.json$/.test(name); });
+                            var idx = 0;
+                            function nextSnapshot() {
+                                if (idx >= files.length) return onDoneSnapshots();
+                                var p = dir + "/" + files[idx++];
+                                function consume(raw) {
+                                    try {
+                                        var snap = JSON.parse(raw);
+                                        if (/^(ae|aftereffects|after-effects)$/.test(snap.host || "")) {
+                                            (snap.items || []).forEach(function (it) {
+                                                if (!it.path || it.protected === false) return;
+                                                var canonical = normalizePath(it.path);
+                                                if (!/^(\/|[a-z]:\/)/i.test(canonical)) canonical = normWs + "/" + canonical;
+                                                indexAeItem({ canonicalPath: canonical, name: it.name || "", oldPath: normalizePath(it.oldPath || ""),
+                                                    contentId: it.contentId || "", size: it.size || 0, classification: it.classification || "clip",
+                                                    hasProxy: it.hasProxy, isSequence: it.isSequence, isAeProtected: true, host: "aftereffects" });
+                                            });
+                                        }
+                                    } catch (eSnap) { diagnostics.push("Не удалось прочитать снимок AE: " + p); }
+                                    nextSnapshot();
+                                }
+                                if (typeof fs.readFileSync === "function") {
+                                    try { consume(fs.readFileSync(p, { encoding: "utf-8" })); }
+                                    catch (eRead) { nextSnapshot(); }
+                                } else if (typeof fs.readFile === "function") {
+                                    fs.readFile(p, { encoding: "utf-8" }, function (errRead, raw) { if (errRead) nextSnapshot(); else consume(raw); });
+                                } else nextSnapshot();
+                            }
+                            nextSnapshot();
+                        });
+                    }
+
                     // Pass 1: Discover all sequences across project bins and inspect their tracks
                     return loadTsvAsync(function () {
+                        return loadAeSnapshots(function () {
                         return collectAllSequences(rootItem, function (allSeqs) {
                         if (!Array.isArray(allSeqs)) allSeqs = [];
                         var sIdx = 0;
@@ -1989,6 +2049,7 @@ var PardPremiereAdapter = (function () {
                                                 projectPath: idInfo.projectPath,
                                                 workspace: idInfo.workspace,
                                                 items: collectedItems,
+                                                aeProtectedItems: Object.keys(aeProtectedByPath).map(function (key) { return aeProtectedByPath[key]; }),
                                                 stats: stats,
                                                 diagnostics: diagnostics,
                                                 hostDetails: {
@@ -2010,8 +2071,9 @@ var PardPremiereAdapter = (function () {
                             inspectSequence(seqToInspect, inspectNextSeq);
                         }
                         inspectNextSeq();
+                        });
+                        });
                     });
-                });
             });
         });
         } catch (err) {

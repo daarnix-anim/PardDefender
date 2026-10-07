@@ -3,7 +3,7 @@
  *
  * @map role: UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИТА», «ДУБЛИКАТЫ» и «ЖУРНАЛ»,
  *           копирование внешних медиа в workspace с перелинковкой, поиск дубликатов,
- *           двухкликовое объединение файлов и журнал операций.
+ *           поиск по всей библиотеке, объединение с приоритетом AE и журнал операций.
  * @map status: ready
  *
  * Strictly enforces zero deletions of original files and no removal of project items.
@@ -68,6 +68,9 @@
         lastDiagnosticsKey: "",
         activeTab: "protect",
         duplicatesResult: null,
+        duplicateReport: null,
+        duplicateScanning: false,
+        consolidating: false,
         canonicalOverrides: {},
         protectionLinks: {},
         consolidationArmedGroup: null,
@@ -556,7 +559,7 @@
             if (onComplete) onComplete(null, state.lastReport);
             return;
         }
-        if (state.scanning || state.protecting) return;
+        if (state.scanning || state.protecting || state.consolidating || state.duplicateScanning) return;
         state.scanning = true;
         if (!isSilent) {
             setScanButtonsState(true);
@@ -605,6 +608,10 @@
     /* ------------------------------------------------ Protection (Copy & Relink) */
 
     function protectExternalMedia() {
+        if (state.duplicateScanning || state.consolidating) {
+            log("Дождитесь завершения проверки или объединения дубликатов.", "warn");
+            return;
+        }
         if (state.protecting) {
             log("Защита уже выполняется в фоновом режиме.", "warn");
             return;
@@ -870,7 +877,7 @@
     }
 
     function sortUnusedClips() {
-        if (state.protecting) {
+        if (state.protecting || state.consolidating || state.duplicateScanning) {
             log("Защита или сортировка уже выполняется.", "warn");
             return;
         }
@@ -1110,6 +1117,7 @@
     }
 
     function relinkSingleItemToAe(item) {
+        if (state.duplicateScanning || state.consolidating) return;
         if (!item || !item.crossHost || !item.crossHost.canonicalPath) return;
         var proj = typeof PardPremiereAdapter !== "undefined" ? PardPremiereAdapter.resolveActiveProjectSync() : (typeof premierepro !== "undefined" ? (premierepro.Project.activeProject || (premierepro.Project.projects && premierepro.Project.projects[0])) : null);
         var pMap = buildProjectMap(proj);
@@ -1152,6 +1160,7 @@
     }
 
     function relinkAllAeMedia() {
+        if (state.duplicateScanning || state.consolidating) return;
         var rep = state.lastReport;
         if (!rep || !rep.items) return;
         var items = rep.items;
@@ -1276,39 +1285,69 @@
 
     /* ------------------------------------------------ Duplicates */
 
-    function scanDuplicates() {
-        var rep = state.lastReport;
-        if (!rep || !rep.ok || !rep.projectSaved) {
-            log("Поиск дубликатов невозможен: сохраните проект.", "bad");
-            return;
-        }
+    function auditDuplicateProject() {
+        return new Promise(function (resolve, reject) {
+            PardPremiereAdapter.auditMedia(null, { timelineOnly: false }, function (err, report) {
+                if (err) reject(err);
+                else if (!report || !report.ok || !report.projectSaved || !report.workspace) reject(new Error("Сохраните проект перед поиском дубликатов."));
+                else resolve(report);
+            });
+        });
+    }
 
+    async function duplicateProjectIsActive(report) {
+        var project = await PardPremiereAdapter.resolveActiveProject();
+        if (!project) return false;
+        var info = PardPremiereAdapter.identifyProject(project);
+        return info.projectId === report.projectId && info.projectPath === report.projectPath;
+    }
+
+    function scanDuplicateReport(report) {
+        return new Promise(function (resolve) {
+            PardPremiereDuplicates.scanDuplicates(report.workspace, report.items, PardPremiereCopyEngine, {
+                aeProtectedItems: report.aeProtectedItems || [],
+                onProgress: function (p) {
+                    el.duplicatesProgressFill.style.width = (p.percent || 0) + "%";
+                    el.duplicatesProgressStats.textContent = "Проверено " + p.scannedFiles + " из " + p.totalFiles + " файлов (" + p.percent + "%)";
+                },
+                onDone: resolve
+            });
+        });
+    }
+
+    async function scanDuplicates() {
+        if (state.duplicateScanning || state.consolidating || state.protecting || state.scanning) return;
+        state.duplicateScanning = true;
+        state.consolidationArmedGroup = null;
         el.btnScanDuplicates.disabled = true;
         el.duplicatesProgressBox.hidden = false;
         el.duplicatesProgressFill.style.width = "0%";
-        el.duplicatesProgressStats.textContent = "Сканирование файлов…";
-        log("Поиск точных дубликатов…", "work");
-
-        PardPremiereDuplicates.scanDuplicates(rep.workspace, rep.items, PardPremiereCopyEngine, {
-            onProgress: function (p) {
-                el.duplicatesProgressFill.style.width = (p.percent || 0) + "%";
-                el.duplicatesProgressStats.textContent = "Проверено " + p.scannedFiles + " из " + p.totalFiles + " файлов (" + p.percent + "%)";
-            },
-            onDone: function (res) {
-                el.btnScanDuplicates.disabled = false;
-                el.duplicatesProgressBox.hidden = true;
-                state.duplicatesResult = res;
-
-                var groups = res.duplicateGroups || [];
-                if (el.badgeDuplicates) {
-                    el.badgeDuplicates.textContent = groups.length;
-                    el.badgeDuplicates.hidden = (groups.length === 0);
-                }
-
-                log("Поиск завершён: найдено " + groups.length + " групп дубликатов.", groups.length > 0 ? "work" : "good");
-                renderDuplicates(res);
+        el.duplicatesProgressStats.textContent = "Проверка всей библиотеки проекта и таймлайнов…";
+        log("Поиск точных дубликатов во всём проекте…", "work");
+        try {
+            var rep = await auditDuplicateProject();
+            var res = await scanDuplicateReport(rep);
+            if (!await duplicateProjectIsActive(rep)) throw new Error("Активный проект изменился. Повторите поиск дубликатов.");
+            state.duplicateReport = rep;
+            state.duplicatesResult = res;
+            var groups = res.duplicateGroups || [];
+            log("Поиск завершён: найдено " + groups.length + " групп дубликатов.", groups.length > 0 ? "work" : "good");
+            (res.errors || []).forEach(function (err) { log("Не проверен файл: " + (err.path || "") + " · " + err.message, "warn"); });
+        } catch (err) {
+            state.duplicateReport = null;
+            state.duplicatesResult = { ok: false, duplicateGroups: [], errors: [{ message: err.message }] };
+            log("Ошибка поиска дубликатов: " + err.message, "bad");
+        } finally {
+            state.duplicateScanning = false;
+            el.btnScanDuplicates.disabled = false;
+            el.duplicatesProgressBox.hidden = true;
+            if (el.badgeDuplicates) {
+                var count = (state.duplicatesResult.duplicateGroups || []).length;
+                el.badgeDuplicates.textContent = count;
+                el.badgeDuplicates.hidden = count === 0;
             }
-        });
+            renderDuplicates(state.duplicatesResult);
+        }
     }
 
     function renderDuplicates(res) {
@@ -1318,12 +1357,14 @@
         var groups = (res && res.duplicateGroups) || [];
         if (groups.length === 0) {
             el.duplicatesSummary.hidden = false;
-            el.duplicatesSummary.textContent = "Точных дубликатов в проекте не обнаружено.";
+            el.duplicatesSummary.textContent = res && res.errors && res.errors.length ?
+                "Проверка неполная: " + res.errors[0].message : "Точных дубликатов в проекте не обнаружено.";
             return;
         }
 
         el.duplicatesSummary.hidden = false;
-        el.duplicatesSummary.textContent = "Найдено групп дубликатов: " + groups.length + " · Освободится: " + formatBytes(res.reclaimableBytes);
+        el.duplicatesSummary.textContent = "Групп: " + groups.length + " · Вся библиотека проекта; использование проверено по таймлайнам." +
+            (res.errors && res.errors.length ? " · Не проверено файлов: " + res.errors.length : "");
 
         for (var i = 0; i < groups.length; i++) {
             el.duplicatesList.appendChild(renderDuplicateGroupCard(groups[i]));
@@ -1339,12 +1380,12 @@
 
         var title = document.createElement("span");
         title.className = "duplicate-group-title";
-        title.textContent = "Копия · " + formatBytes(group.size);
+        title.textContent = (group.kind === "project-items" ? "Общий источник" : "Точные копии") + " · " + formatBytes(group.size);
         head.appendChild(title);
 
         var reclaim = document.createElement("span");
         reclaim.className = "duplicate-group-reclaim";
-        reclaim.textContent = "+" + formatBytes(group.reclaimableBytes);
+        reclaim.textContent = "Элементов: " + group.projectItemCount + " · На таймлайнах: " + group.timelineItemCount;
         head.appendChild(reclaim);
 
         card.appendChild(head);
@@ -1354,7 +1395,9 @@
         rec.textContent = "Рекомендация: " + (group.reasons || []).join("; ");
         card.appendChild(rec);
 
-        var effectiveCanonical = state.canonicalOverrides[group.contentId] || group.recommendedCanonical;
+        var effectiveCanonical = group.canonicalLocked ? group.recommendedCanonical :
+            state.canonicalOverrides[group.contentId] || group.recommendedCanonical;
+        if (!group.files.some(function (file) { return file.path === effectiveCanonical; })) effectiveCanonical = group.recommendedCanonical;
 
         for (var f = 0; f < group.files.length; f++) {
             var file = group.files[f];
@@ -1370,6 +1413,7 @@
             radio.type = "radio";
             radio.name = "canonical-" + group.groupId;
             radio.checked = isCan;
+            radio.disabled = group.canonicalLocked || !group.canConsolidate || state.consolidating || state.duplicateScanning;
             (function (cId, fPath) {
                 radio.onchange = function () {
                     state.canonicalOverrides[cId] = fPath;
@@ -1381,7 +1425,7 @@
             if (isCan) {
                 var canBadge = document.createElement("span");
                 canBadge.className = "canonical-badge";
-                canBadge.textContent = "КАНОНИКАЛ";
+                canBadge.textContent = file.isAeProtected ? "ОРИГИНАЛ AE" : "ОСНОВНОЙ";
                 top.appendChild(canBadge);
             }
 
@@ -1392,23 +1436,31 @@
             top.appendChild(pSpan);
 
             row.appendChild(top);
+            (file.items || []).forEach(function (item) {
+                var usage = document.createElement("div");
+                usage.className = "duplicate-group-rec";
+                usage.textContent = (item.binPath ? item.binPath + "/" : "") + item.name +
+                    (item.usedOnTimeline ? " · На таймлайне" : " · Только в библиотеке проекта");
+                row.appendChild(usage);
+            });
             card.appendChild(row);
         }
 
         // Consolidation Action Button (Two-click confirmation)
-        if (group.files.length > 1) {
+        if (group.canConsolidate) {
             var actBox = document.createElement("div");
             actBox.className = "duplicate-group-actions";
 
             var btnCons = document.createElement("button");
             btnCons.className = "btn";
+            btnCons.disabled = state.consolidating || state.duplicateScanning || state.protecting;
 
             var isArm = (state.consolidationArmedGroup === group.groupId && Date.now() < state.consolidationArmedUntil);
             if (isArm) {
                 btnCons.className = "btn btn-warn";
                 btnCons.textContent = "ПОДТВЕРДИТЬ ОБЪЕДИНЕНИЕ (оригиналы не удаляются)";
                 btnCons.onclick = function () {
-                    executeConsolidation(group, effectiveCanonical);
+                    return executeConsolidation(group, effectiveCanonical);
                 };
             } else {
                 btnCons.textContent = "ОБЪЕДИНИТЬ В ОДИН ФАЙЛ";
@@ -1429,34 +1481,66 @@
             actBox.appendChild(btnCons);
             card.appendChild(actBox);
         }
+        var note = document.createElement("div");
+        note.className = "duplicate-group-rec";
+        note.textContent = group.canConsolidate ? "Перелинковка существующих элементов сохраняет нарезку, позиции, эффекты и ключи. Файлы и элементы библиотеки сохраняются." :
+            "Эти элементы уже используют один файл. Автоматическое сведение элементов библиотеки в один недоступно; нарезка и ключи сохраняются.";
+        card.appendChild(note);
 
         return card;
     }
 
-    function executeConsolidation(group, canonicalPath) {
-        var rep = state.lastReport;
-        if (!rep || !rep.ok || !rep.workspace) return;
-
+    async function executeConsolidation(group, canonicalPath) {
+        var originalReport = state.duplicateReport;
+        if (!originalReport || state.consolidating || state.duplicateScanning || state.protecting) return;
+        state.consolidating = true;
         state.consolidationArmedGroup = null;
         state.consolidationArmedUntil = 0;
-        log("Объединение дубликатов в каноникал " + canonicalPath + "…", "work");
-
-        var proj = typeof PardPremiereAdapter !== "undefined" ? PardPremiereAdapter.resolveActiveProjectSync() : (typeof premierepro !== "undefined" ? (premierepro.Project.activeProject || (premierepro.Project.projects && premierepro.Project.projects[0])) : null);
-        var pMap = buildProjectMap(proj);
-
-        PardPremiereDuplicates.consolidateGroup(rep.workspace, group, canonicalPath, pMap, PardPremiereCopyEngine, {
-            onDone: function (res) {
-                if (res.ok) {
-                    log("Дубликаты успешно объединены: перелинковано " + res.relinked + " ссылок. Оригиналы сохранены.", "good");
-                } else if (res.partial) {
-                    log("Частичное объединение: перелинковано " + res.relinked + ", пропущено " + res.skipped + ", ошибок " + res.failures.length, "bad");
-                } else {
-                    log("Ошибка объединения: " + (res.message || "Сбой перелинковки"), "bad");
+        renderDuplicates(state.duplicatesResult);
+        try {
+            if (!await duplicateProjectIsActive(originalReport)) throw new Error("Активный проект изменился. Повторите поиск дубликатов.");
+            var rep = await auditDuplicateProject();
+            if (rep.projectId !== originalReport.projectId || rep.projectPath !== originalReport.projectPath) throw new Error("Активный проект изменился.");
+            var fresh = await scanDuplicateReport(rep);
+            var currentGroup = (fresh.duplicateGroups || []).filter(function (g) { return g.contentId === group.contentId; })[0];
+            if (!currentGroup || !currentGroup.canConsolidate) throw new Error("Группа изменилась или уже использует общий файл. Повторите поиск.");
+            var pMap = {}, auditById = {};
+            rep.items.forEach(function (it) { pMap[it.id] = it._nativeItem || it._projectItem; auditById[it.id] = it; });
+            group.files.forEach(function (file) {
+                file.references.forEach(function (id) {
+                    if (!auditById[id] || PardPremiereDuplicates.normalizePath(auditById[id].path) !== PardPremiereDuplicates.normalizePath(file.path))
+                        throw new Error("Источник элемента изменился: " + id + ". Повторите поиск.");
+                    if (!currentGroup.files.some(function (currentFile) { return currentFile.references.indexOf(id) !== -1; }))
+                        throw new Error("Содержимое исходника изменилось. Повторите поиск.");
+                });
+            });
+            if (currentGroup.canonicalLocked) canonicalPath = currentGroup.recommendedCanonical;
+            log("Объединение дубликатов на основной файл " + canonicalPath + "…", "work");
+            var res = await new Promise(function (resolve) {
+                PardPremiereDuplicates.consolidateGroup(rep.workspace, currentGroup, canonicalPath, pMap, PardPremiereCopyEngine, {
+                    auditItems: rep.items, checkProject: function () { return duplicateProjectIsActive(rep); }, onDone: resolve
+                });
+            });
+            (res.links || []).forEach(function (link) {
+                state.protectionLinks[rep.projectId + ":" + link.id] = link;
+                if (auditById[link.id]) auditById[link.id].path = link.path;
+            });
+            if (res.links && res.links.length) {
+                await publishMediaSnapshot(rep);
+                if (await duplicateProjectIsActive(rep)) {
+                    var project = await PardPremiereAdapter.resolveActiveProject();
+                    if (!project || !project.save || await project.save() === false) throw new Error("Ссылки изменены, но Premiere не сохранил проект. Сохраните его вручную.");
                 }
-                scanDuplicates();
-                triggerAudit();
             }
-        });
+            if (res.ok) log("Объединено: перелинковано " + (res.relinked - res.unchanged) + ", уже на основном файле " + res.unchanged + ". Нарезка и исходники сохранены.", "good");
+            else log("Объединение выполнено не полностью: " + (res.message || "ошибок " + res.failures.length) + ". Изменено ссылок: " + (res.links || []).length, "bad");
+            (res.failures || []).forEach(function (failure) { log("Элемент " + failure.id + ": " + failure.reason, "bad"); });
+        } catch (err) { log("Ошибка объединения: " + err.message, "bad"); }
+        finally {
+            state.consolidating = false;
+            await scanDuplicates();
+            triggerAudit();
+        }
     }
 
     function formatBytes(bytes) {
@@ -1570,7 +1654,7 @@
         }
 
         if (el.btnScanDuplicates) {
-            el.btnScanDuplicates.onclick = function () { scanDuplicates(); };
+            el.btnScanDuplicates.onclick = function () { return scanDuplicates(); };
         }
         if (el.btnClearLog) {
             el.btnClearLog.addEventListener("click", function () {
@@ -1606,6 +1690,8 @@
             state: state,
             sortUnusedClips: sortUnusedClips,
             protectExternalMedia: protectExternalMedia,
+            scanDuplicates: scanDuplicates,
+            executeConsolidation: executeConsolidation,
             triggerAudit: triggerAudit
         };
 
