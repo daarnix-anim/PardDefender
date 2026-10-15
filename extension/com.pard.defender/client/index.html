@@ -14,7 +14,7 @@
             <div class="head-actions">
                 <button class="icon head-pause-btn" id="head-pause-btn" title="Приостановить процессы и сканирование" aria-label="Пауза / Возобновить">⏸</button>
                 <button class="icon head-scan-btn" id="head-scan-btn" title="Сканировать проект вручную" aria-label="Сканировать проект">↺</button>
-                <span class="version" id="version">v2.3.3</span>
+                <span class="version" id="version">v2.3.4</span>
             </div>
         </header>
 
@@ -108,6 +108,35 @@
                 <div class="queue" id="queue"></div>
             </section>
 
+        </div>
+
+        <!-- -------------------------------------------------------- ШРИФТЫ -->
+        <div class="pane" id="pane-fonts" hidden>
+            <section class="fonts-section" id="fonts-section">
+                <div class="fonts-head">
+                    <span class="section-title" id="fonts-title">ШРИФТЫ ПРОЕКТА</span>
+                    <button class="icon" id="fonts-refresh" title="Обновить список шрифтов" aria-label="Обновить список шрифтов">↻</button>
+                </div>
+                <div class="fonts-note" id="fonts-note">
+                    Сохраните шрифты текстовых слоёв в папку Fonts. Автоматический сбор можно включить ниже.
+                </div>
+                <div class="fonts-summary" id="fonts-summary"></div>
+                <div class="fonts-actions">
+                    <button class="primary btn-save-fonts" id="fonts-save">📁 СОХРАНИТЬ ШРИФТЫ В FONTS</button>
+                    <button class="link btn-reveal-fonts" id="fonts-reveal" title="Открыть папку Fonts в проводнике">📂 Открыть папку Fonts</button>
+                </div>
+                <div class="fonts-options">
+                    <label class="check">
+                        <input type="checkbox" id="fonts-auto-sync">
+                        <span>Автоматически сохранять шрифты при сканировании</span>
+                    </label>
+                    <label class="check">
+                        <input type="checkbox" id="fonts-clean-unused">
+                        <span>Удалять только созданные плагином копии, не нужные сохранённым наборам проектов</span>
+                    </label>
+                </div>
+                <div class="fonts-list" id="fonts-list"></div>
+            </section>
         </div>
 
         <!-- ------------------------------------------------ ВЫКЛЮЧЕНО И ЗАБЫТО -->
@@ -262,6 +291,7 @@
     <script src="duplicate-index.js"></script>
     <script src="consolidation.js"></script>
     <script src="sync-coordinator.js"></script>
+    <script src="font-engine.js"></script>
     <script src="main.js"></script>
 </body>
 </html>

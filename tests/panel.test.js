@@ -47,6 +47,7 @@ var workspace = root + "/Yandex.Disk/Soul";
 var meta = workspace + "/.parddefender";
 var reportPath = root + "/audit.json";
 var layersPath = root + "/layers.json";
+var fontsPath = root + "/fonts.json";
 
 /* The client writes its settings plan here; the stub host reads it back. */
 var clientTemp = String(os.tmpdir()).replace(/\\/g, "/") + "/parddefender-client";
@@ -116,6 +117,7 @@ function baseReport(options) {
         branches: ["Интро", "00_UNUSED", "_SHARED"],
         items: o.items || [],
         comps: o.comps || [],
+        fonts: o.fonts || [],
         counts: o.counts || {
             total: 0, protected_: 0, pending: 0, missing: 0, trusted: 0,
             unassigned: 0, panelMoves: 0, misplaced: 0, adopted: 0, proxies: 0
@@ -182,6 +184,7 @@ function launch(options) {
         if (has("PardDefenderHost.version")) { callback("OK|1.3.0"); return; }
         if (has("auditToFile")) { callback("OK|" + reportPath); return; }
         if (has("scanLayersToFile")) { callback("OK|" + layersPath); return; }
+        if (has("scanFontsToFile")) { callback("OK|" + fontsPath); return; }
         if (has("writeSettingsFromFile")) {
             var raw = null;
             try { raw = fs.readFileSync(native(clientTemp + "/settings.json"), "utf8"); }
@@ -248,7 +251,7 @@ function launch(options) {
     var dir = path.join(__dirname, "..", "extension", "com.pard.defender", "client");
     ["disk-space.js", "copy-queue.js", "issues.js", "stats.js", "verify.js",
         "housekeeping.js", "updater.js", "host-adapter.js", "workspace-store.js",
-        "duplicate-index.js"].forEach(function (name) {
+        "duplicate-index.js", "font-engine.js"].forEach(function (name) {
         vm.runInContext(fs.readFileSync(path.join(dir, name), "utf8"),
             sandbox, { filename: name });
     });
@@ -327,7 +330,7 @@ function launch(options) {
     }
 
     function visiblePanes() {
-        return ["main", "layers", "unused", "duplicates", "legacy", "journal", "settings"]
+        return ["main", "fonts", "layers", "unused", "duplicates", "legacy", "journal", "settings"]
             .filter(function (n) { return !id("pane-" + n).hidden; });
     }
 
@@ -370,7 +373,7 @@ group("Кнопки: у каждой есть своё дело");
         controls.push(node);
     });
 
-    check("интерактивных элементов в разметке", controls.length, 32);
+    check("интерактивных элементов в разметке", controls.length, 37);
 
     var orphans = controls.filter(function (node) {
         return !node.onclick && !node.onchange;
@@ -491,6 +494,8 @@ group("Каждый блок в своей вкладке");
         [true, true]);
     check("забытые слои — во вкладке layers",
         inPane("layers-section", "layers"), true);
+    check("шрифты — во вкладке fonts",
+        inPane("fonts-section", "fonts"), true);
     check("легенда, диск, облако, проблемы, очередь — на главной",
         ["legend", "disk-row", "cloud-row",
             "issues-section", "queue-section"].map(function (b) {
@@ -501,7 +506,7 @@ group("Каждый блок в своей вкладке");
     var alwaysOn = ["status", "counts", "run-now", "update", "tabs"];
     check("статус, счётчики и «разложить сейчас» — над вкладками",
         alwaysOn.map(function (b) {
-            return ["main", "layers", "unused", "duplicates", "legacy", "journal", "settings"]
+            return ["main", "fonts", "layers", "unused", "duplicates", "legacy", "journal", "settings"]
                 .some(function (n) { return p.id(b).descends(p.id("pane-" + n)); });
         }), [false, false, false, false, false]);
 })();
@@ -1792,6 +1797,49 @@ group("Фильтры и группировка забытых слоёв — т
     check("список больше не ограничен высотой 260px", /max-height\s*:/.test(listStyle), false);
     check("список растёт и сжимается вместе с dock", /flex:\s*1 1 320px/.test(listStyle) && /overflow-y:\s*auto/.test(listStyle), true);
     check("строки не сжимаются в нечитаемые линии", /flex-shrink:\s*0/.test(rowStyle), true);
+})();
+
+group("Шрифты проекта: вкладка, список, сохранение и удаление");
+(function () {
+    var p = launch({
+        report: baseReport({
+            fonts: [
+                {
+                    postScriptName: "ArialMT",
+                    fontFamily: "Arial",
+                    fontStyle: "Regular",
+                    layers: [{ compId: "1", compName: "Main", layerIndex: 1, layerName: "Title" }]
+                }
+            ]
+        })
+    });
+
+    check("вкладка ШРИФТЫ появилась при наличии шрифтов",
+        p.tabTitles(), ["ПАНЕЛЬ", "ШРИФТЫ1", "ЖУРНАЛ", "НАСТРОЙКИ"]);
+
+    p.id("fonts-save").onclick();
+    check("папка Fonts создана в корне проекта",
+        fs.existsSync(native(workspace + "/Fonts")), true);
+
+    check("кнопка открыть папку Fonts имеет обработчик",
+        typeof p.id("fonts-reveal").onclick, "function");
+    check("кнопка обновить шрифты имеет обработчик",
+        typeof p.id("fonts-refresh").onclick, "function");
+    check("чекбокс авто-синхронизации имеет обработчик",
+        typeof p.id("fonts-auto-sync").onchange, "function");
+    check("чекбокс очистки неиспользуемых имеет обработчик",
+        typeof p.id("fonts-clean-unused").onchange, "function");
+    p.id("tabs").children.filter(function (b) { return b.textContent === "ШРИФТЫ1"; })[0].onclick();
+    check("открыта только панель шрифтов", p.visiblePanes(), ["fonts"]);
+    check("очистка копий изначально выключена", p.id("fonts-clean-unused").checked, false);
+})();
+
+group("Отсутствующее начертание отображается как отсутствующее");
+(function () {
+    var p = launch({ report: baseReport({ fonts: [{ postScriptName: "MissingFace_987654321" }] }) });
+    p.id("tabs").children.filter(function (b) { return b.textContent === "ШРИФТЫ1"; })[0].onclick();
+    p.click("fonts-save");
+    check("панель не показывает отсутствующий шрифт готовым", p.id("fonts-list").children[0].children[0].children[1].textContent, "Не найдено точное начертание");
 })();
 
 /* ------------------------------------------------------------------ итог */

@@ -248,6 +248,117 @@
         return host.PANEL_ASSETS + "/" + (branch || host.INBOX_BRANCH) + "/" + name;
     }
 
+    /* ---------------------------------------------------------------- fonts */
+
+    function collectProjectFonts(project) {
+        var list = [];
+        if (!project) return list;
+        var map = {};
+        var currentComp = null;
+        var currentLayer = null;
+
+        function recordDoc(td) {
+            if (!td) return;
+            var ps = "";
+            var fam = "";
+            var style = "";
+            var loc = "";
+
+            try { ps = str(td.font); } catch (eF) {}
+            try { fam = str(td.fontFamily); } catch (eFam) {}
+            try { style = str(td.fontStyle); } catch (eSty) {}
+            try { loc = str(td.fontLocation); } catch (eLoc) {}
+
+            if (!ps && !fam) return;
+
+            var key = ps ? ps : (fam + "___" + style);
+            var entry = map[key];
+            if (!entry) {
+                entry = {
+                    postScriptName: ps,
+                    fontFamily: fam,
+                    fontStyle: style,
+                    fontLocation: loc,
+                    layers: []
+                };
+                map[key] = entry;
+                list.push(entry);
+            }
+            if (currentComp && currentLayer) {
+                entry.layers.push({
+                    compId: str(currentComp.id),
+                    compName: str(currentComp.name),
+                    layerIndex: currentLayer.index,
+                    layerName: str(currentLayer.name)
+                });
+            }
+        }
+
+        var i, j, k;
+        for (i = 1; i <= project.numItems; i++) {
+            var item = project.item(i);
+            if (!host.isCompItem(item)) continue;
+            currentComp = item;
+
+            for (j = 1; j <= currentComp.numLayers; j++) {
+                currentLayer = currentComp.layer(j);
+                if (!currentLayer) continue;
+
+                var textProp = null;
+                try {
+                    if (currentLayer.matchName === "ADBE Text Layer") {
+                        textProp = currentLayer.property("Source Text");
+                    }
+                } catch (eMatch) {}
+
+                if (!textProp) {
+                    try {
+                        textProp = currentLayer.property("Source Text") || currentLayer.property("ADBE Text Properties");
+                        if (textProp && textProp.property("Source Text")) {
+                            textProp = textProp.property("Source Text");
+                        }
+                    } catch (eProp) {}
+                }
+
+                if (!textProp) continue;
+
+                try {
+                    var cur = textProp.value;
+                    recordDoc(cur);
+                } catch (eCur) {}
+
+                try {
+                    var numK = textProp.numKeys;
+                    if (numK && numK > 0) {
+                        for (k = 1; k <= numK; k++) {
+                            recordDoc(textProp.keyValue(k));
+                        }
+                    }
+                } catch (eKeys) {}
+            }
+        }
+
+        try {
+            if ($.global.app && $.global.app.fonts && $.global.app.fonts.allFonts) {
+                var af = $.global.app.fonts.allFonts;
+                for (i = 0; i < list.length; i++) {
+                    if (list[i].fontLocation) continue;
+                    for (j = 0; j < af.length; j++) {
+                        var fObj = af[j];
+                        if (fObj && fObj.postScriptName === list[i].postScriptName) {
+                            if (fObj.location) {
+                                list[i].fontLocation = host.slashes(fObj.location);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (eAppFonts) {}
+
+        return list;
+    }
+
     /* ------------------------------------------------------------- the pass */
 
     host.audit = function () {
@@ -265,6 +376,7 @@
             branches: [],
             items: [],
             comps: [],
+            fonts: [],
             counts: {
                 total: 0, protected_: 0, pending: 0, missing: 0,
                 trusted: 0, unassigned: 0, panelMoves: 0,
@@ -296,6 +408,8 @@
             var settings = host.loadSettings(report.workspace);
             report.settings = settings;
             if (report.workspaceIssue) return report;
+
+            report.fonts = collectProjectFonts(app.project);
 
             var ctx = {
                 settings: settings,
@@ -796,6 +910,46 @@
             if (item && str(item.id) === wanted) return item;
         }
         return null;
+    };
+
+    host.collectProjectFonts = collectProjectFonts;
+
+    host.scanFonts = function () {
+        var report = {
+            ok: true,
+            error: "",
+            projectSaved: false,
+            projectPath: "",
+            workspace: "",
+            fonts: []
+        };
+        try {
+            if (!app.project) {
+                report.ok = false;
+                report.error = "No project is open.";
+                return report;
+            }
+            var projectFile = app.project.file;
+            if (projectFile) {
+                report.projectSaved = true;
+                report.projectPath = host.slashes(projectFile.fsName);
+                report.workspace = host.resolveWorkspace(report.projectPath).workspace;
+            }
+            report.fonts = host.collectProjectFonts(app.project);
+        } catch (err) {
+            report.ok = false;
+            report.error = str(err);
+        }
+        return report;
+    };
+
+    host.scanFontsToFile = function () {
+        var report = host.scanFonts();
+        var path = host.tempFolder() + "/fonts.json";
+        if (!host.writeTextFile(path, host.jsonEncode(report))) {
+            return "ERROR|The fonts report could not be written to " + path;
+        }
+        return "OK|" + path;
     };
 
     $.global.PardDefenderHost = host;

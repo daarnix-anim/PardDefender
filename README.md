@@ -1,5 +1,5 @@
 <!-- @map role: Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
-# PardDefender 2.3.3
+# PardDefender 2.3.4
 
 Мультихостовый комплекс для защиты, организации и синхронизации проектных медиафайлов:
 - **Adobe After Effects:** CEP-расширение (Node + Chromium) с ExtendScript хостом.
@@ -40,7 +40,7 @@ After Effects, открыть **Window → Extensions → PardDefender**.
 1. Установить **Adobe UXP Developer Tool (UDT)**.
 2. Нажать **Add Plugin** и выбрать манифест `premiere/com.pard.defender.uxp/manifest.json`.
 3. Запустить Premiere Pro 25.6 или новее.
-4. В UDT выбрать плагин и нажать **Load**. Панель появится в **Window → UXP Plugins → PardDefender** (в русской версии: **Окно → Подключаемые модули UXP → PardDefender**). Также можно запустить `INSTALL_DEV_WINDOWS.bat` или установить `release/PardDefender-2.3.3.ccx`.
+4. В UDT выбрать плагин и нажать **Load**. Панель появится в **Window → UXP Plugins → PardDefender** (в русской версии: **Окно → Подключаемые модули UXP → PardDefender**). Также можно запустить `INSTALL_DEV_WINDOWS.bat` или установить `release/PardDefender-2.3.4.ccx`.
 5. Для валидации пакета: `node tools/validate-uxp.js`.
 
 ---
@@ -244,6 +244,26 @@ Project
 
 ---
 
+## Сбор шрифтов After Effects
+
+Вкладка **ШРИФТЫ** показывает шрифты текстовых слоёв и позволяет сохранить их
+в `<Рабочая папка>/Fonts`. Автоматический сбор включается отдельно.
+Файлы проверяются SHA-256; разные шрифты с одинаковым именем сохраняются отдельно.
+Если точное начертание найти не удалось, панель сообщает об этом.
+
+Очистка копий выключена по умолчанию. При её включении удаляются только копии,
+созданные плагином и не изменённые после записи, если они не нужны сохранённым
+наборам проектов в общей рабочей папке. Файлы, добавленные вручную, и старые копии
+без записи о владении сохраняются. Перед очисткой обновите наборы проектов,
+использующих общую папку: закрытые проекты автоматически не сканируются.
+При ошибке поиска или копирования предыдущий комплект остаётся защищённым.
+
+Реестр `.parddefender/fonts.json` содержит план записи и наборы отдельных проектов.
+При аварийном завершении может остаться `.parddefender/fonts.lock`: сбор будет
+заблокирован. Перед удалением этой блокировки убедитесь, что сбор шрифтов больше
+не выполняется ни в одном экземпляре After Effects. Незавершённые `.pdpart`
+не используются как готовые шрифты; после аварии они сохраняются для проверки.
+
 ## Безопасность копирования
 
 - Копирование идёт по одному файлу. Параллельная пачка на HDD или в
@@ -271,11 +291,11 @@ Project
 
 ## Архитектура двух хостов
 
-PardDefender 2.3.3 разделяет логику между средами двух приложений:
+PardDefender 2.3.4 разделяет логику между средами двух приложений:
 
 ```
 extension/com.pard.defender/          ← Adobe After Effects (CEP 9.0+)
-├── CSXS/manifest.xml                 манифест пакета (версия 2.3.3)
+├── CSXS/manifest.xml                 манифест пакета (версия 2.3.4)
 ├── client/                           CEP + Node среда
 │   ├── index.html, styles.css        UI панели After Effects
 │   ├── copy-queue.js                 потоковая копия, .pdpart, SHA-256
@@ -286,13 +306,13 @@ extension/com.pard.defender/          ← Adobe After Effects (CEP 9.0+)
 │   ├── host-adapter.js               адаптер взаимодействия с ExtendScript
 │   └── main.js, disk-space.js, ...   оркестрация и сервисы
 └── host/                             ExtendScript (ES3 в After Effects)
-    ├── PardDefenderCore.jsx          JSON, пути, санитизация, версия 2.3.3
+    ├── PardDefenderCore.jsx          JSON, пути, санитизация, версия 2.3.4
     ├── PardDefenderPlan.jsx          рабочая папка, дерево композиций
     ├── PardDefenderAudit.jsx         JSON-отчёт аудита элементов
     └── PardDefenderApply.jsx         перелинковка и раскладка в панели
 
 premiere/com.pard.defender.uxp/       ← Adobe Premiere Pro (UXP, minVersion 25.6)
-├── manifest.json                     UXP Manifest v5 (версия 2.3.3)
+├── manifest.json                     UXP Manifest v5 (версия 2.3.4)
 ├── index.html, styles.css            UI панели Premiere Pro UXP
 ├── adapter.js                        официальный UXP-адаптер Premiere Pro 25.6+
 ├── copy-engine.js                    поблочное копирование через UXP fs + relink

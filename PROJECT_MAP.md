@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **69** · связей: **158** · собрано: 2026-10-07 02:58
+Файлов: **71** · связей: **162** · собрано: 2026-10-14 13:17
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -23,7 +23,7 @@
 
 ### `PardDefenderAudit.jsx`
 
-`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 803 строк · работает
+`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 957 строк · работает
 
 Один проход по проекту → один JSON-отчёт: где что лежит, куда должно попасть на диске и в панели. Решений о времени не принимает.
 
@@ -155,9 +155,17 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 Используется в: `consolidation.js`, `index.html`, `main.js`, `consolidation.test.js`, `duplicate-index.test.js`, `e2e-hardening.test.js`, `panel.test.js`
 
+### `font-engine.js`
+
+`extension/com.pard.defender/client/font-engine.js` · 573 строк · работает
+
+Обнаружение системных шрифтов, парсинг TTF/OTF заголовков и синхронизация шрифтов проекта в папку Fonts.
+
+Используется в: `index.html`, `main.js`, `panel.test.js`
+
 ### `host-adapter.js`
 
-`extension/com.pard.defender/client/host-adapter.js` · 239 строк · работает
+`extension/com.pard.defender/client/host-adapter.js` · 243 строк · работает
 
 Адаптер хоста After Effects: вызовы CEP evalScript, загрузка JSX и изоляция ExtendScript.
 
@@ -185,11 +193,11 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 4251 строк · работает
+`extension/com.pard.defender/client/main.js` · 4531 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
-Использует: `disk-space.js`, `host-adapter.js`, `copy-queue.js`, `issues.js`, `sync-coordinator.js`, `workspace-store.js`, `verify.js`, `stats.js`, `housekeeping.js`, `duplicate-index.js`, `consolidation.js`, `updater.js`
+Использует: `disk-space.js`, `host-adapter.js`, `copy-queue.js`, `issues.js`, `sync-coordinator.js`, `workspace-store.js`, `verify.js`, `stats.js`, `housekeeping.js`, `duplicate-index.js`, `consolidation.js`, `font-engine.js`, `updater.js`
 
 ### `stats.js`
 
@@ -241,11 +249,11 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `index.html`
 
-`extension/com.pard.defender/client/index.html` · 268 строк · работает
+`extension/com.pard.defender/client/index.html` · 298 строк · работает
 
 Разметка панели: шапка, вкладки и панели внутри них — главное, неиспользуемые, старый проект, журнал, настройки. Порядок script-тегов задаёт загрузку модулей.  @map status: ready  @map layer: ui -->
 
-Использует: `disk-space.js`, `copy-queue.js`, `issues.js`, `stats.js`, `verify.js`, `housekeeping.js`, `updater.js`, `host-adapter.js`, `workspace-store.js`, `duplicate-index.js`, `consolidation.js`, `sync-coordinator.js`, `main.js`, `styles.css`
+Использует: `disk-space.js`, `copy-queue.js`, `issues.js`, `stats.js`, `verify.js`, `housekeeping.js`, `updater.js`, `host-adapter.js`, `workspace-store.js`, `duplicate-index.js`, `consolidation.js`, `sync-coordinator.js`, `font-engine.js`, `main.js`, `styles.css`
 
 ### `index.html`
 
@@ -257,7 +265,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `styles.css`
 
-`extension/com.pard.defender/client/styles.css` · 1530 строк · работает
+`extension/com.pard.defender/client/styles.css` · 1668 строк · работает
 
 Оформление панели под тёмный интерфейс After Effects.  @map status: ready  @map layer: ui */
 
@@ -333,6 +341,14 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 Используется в: `host.test.js`
 
+### `font-engine.test.js`
+
+`tests/font-engine.test.js` · 259 строк · работает
+
+Проверки модуля font-engine: парсинг TTF/OTF, индексация, сопоставление и синхронизация в Fonts.
+
+Используется в: `run-all.js`
+
 ### `host-adapter.test.js`
 
 `tests/host-adapter.test.js` · 385 строк · работает
@@ -345,7 +361,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `host.test.js`
 
-`tests/host.test.js` · 1881 строк · работает
+`tests/host.test.js` · 1918 строк · работает
 
 186 проверок хоста: рабочая папка, ветки, маршруты, многослойные PSD/AI, секвенции, границы раскладки.
 
@@ -355,7 +371,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `mock-ae.js`
 
-`tests/mock-ae.js` · 482 строк · работает
+`tests/mock-ae.js` · 506 строк · работает
 
 Мок объектной модели After Effects: настоящие .jsx загружаются через vm.
 
@@ -381,11 +397,11 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `panel.test.js`
 
-`tests/panel.test.js` · 1806 строк · работает
+`tests/panel.test.js` · 1854 строк · работает
 
 Проверки самой панели: вкладки, кнопки, места блоков и дисциплина перерисовки. Первый набор, который запускает main.js.
 
-Использует: `disk-space.js`, `housekeeping.js`, `updater.js`, `copy-queue.js`, `duplicate-index.js`, `sync-coordinator.js`, `issues.js`, `stats.js`, `verify.js`, `host-adapter.js`, `workspace-store.js`, `main.js`, `mock-dom.js`
+Использует: `disk-space.js`, `housekeeping.js`, `updater.js`, `copy-queue.js`, `duplicate-index.js`, `sync-coordinator.js`, `issues.js`, `stats.js`, `verify.js`, `host-adapter.js`, `workspace-store.js`, `font-engine.js`, `main.js`, `mock-dom.js`
 
 Используется в: `run-all.js`
 
@@ -443,7 +459,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 Прогоняет все наборы и выдаёт один вердикт.
 
-Использует: `host.test.js`, `copy-queue.test.js`, `runtime.test.js`, `host-adapter.test.js`, `workspace-store.test.js`, `duplicate-index.test.js`, `consolidation.test.js`, `premiere-adapter.test.js`, `premiere-protection.test.js`, `premiere-duplicates.test.js`, `premiere-uxp-io.test.js`, `sync-coordinator.test.js`, `panel.test.js`, `premiere-panel-protection.test.js`, `e2e-hardening.test.js`
+Использует: `host.test.js`, `copy-queue.test.js`, `runtime.test.js`, `host-adapter.test.js`, `workspace-store.test.js`, `duplicate-index.test.js`, `consolidation.test.js`, `font-engine.test.js`, `premiere-adapter.test.js`, `premiere-protection.test.js`, `premiere-duplicates.test.js`, `premiere-uxp-io.test.js`, `sync-coordinator.test.js`, `panel.test.js`, `premiere-panel-protection.test.js`, `e2e-hardening.test.js`
 
 ### `runtime.test.js`
 
@@ -573,13 +589,13 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `PROJECT_MAP.md`
 
-`PROJECT_MAP.md` · 586 строк · работает
+`PROJECT_MAP.md` · 602 строк · работает
 
 _Описание не задано._
 
 ### `README.md`
 
-`README.md` · 1024 строк · работает
+`README.md` · 1044 строк · работает
 
 Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
 

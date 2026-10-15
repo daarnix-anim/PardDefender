@@ -121,6 +121,19 @@ function MockLayer(comp, source, options) {
     this.selected = false;
     this._children = [];
     this.transform = new MockTransform(o.transform);
+    this.matchName = o.matchName || (o.isText ? "ADBE Text Layer" : "ADBE Layer");
+    if (o.textDocument) {
+        var td = typeof o.textDocument === "object" ? o.textDocument : { font: o.textDocument };
+        var keys = o.textKeys || [];
+        this.textProperty = {
+            name: "Source Text",
+            matchName: "ADBE Text Document",
+            value: td,
+            numKeys: keys.length,
+            keyValue: function (k) { return keys[k - 1] || td; }
+        };
+        this.matchName = "ADBE Text Layer";
+    }
 }
 
 Object.defineProperty(MockLayer.prototype, "index", {
@@ -134,6 +147,7 @@ Object.defineProperty(MockLayer.prototype, "numProperties", {
 MockLayer.prototype.property = function (i) {
     if (typeof i === "string") {
         if (i === "Transform" || i === "ADBE Transform Group") return this.transform;
+        if (i === "Source Text" || i === "ADBE Text Properties") return this.textProperty || null;
         return this._children[0];
     }
     return this._children[i - 1];
@@ -192,6 +206,15 @@ CompItem.prototype.constructor = CompItem;
 /* Adds a layer whose source is the given item and returns the LAYER. */
 CompItem.prototype.addLayer = function (source, options) {
     var layer = new MockLayer(this, source, options);
+    this.layers.push(layer);
+    return layer;
+};
+
+CompItem.prototype.addTextLayer = function (textDoc, options) {
+    var opts = options || {};
+    opts.isText = true;
+    opts.textDocument = textDoc;
+    var layer = new MockLayer(this, null, opts);
     this.layers.push(layer);
     return layer;
 };
@@ -447,6 +470,7 @@ function loadHost(projectPath) {
         PropertyValueType: PropertyValueType,
         ImportAsType: ImportAsType,
         ImportOptions: ImportOptions,
+        TextLayer: MockLayer,
         File: MockFile,
         Folder: MockFolder,
         console: console

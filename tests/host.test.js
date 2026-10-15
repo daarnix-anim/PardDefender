@@ -1871,6 +1871,43 @@ group("Приоритет аудио Premiere: классификация, ка�
     check("эффект внутри sound/sfx НЕ помечен misplaced", itemHit.misplaced, false);
 })();
 
+group("Сбор шрифтов проекта (collectProjectFonts и scanFonts)");
+(function () {
+    var env = mock.loadHost("D:/Projects/2026/Soul/04_edit/Soul.aep");
+    var host = env.host;
+    var project = env.project;
+
+    var comp = new mock.CompItem("Titles");
+    project.items.push(comp);
+
+    comp.addTextLayer({
+        font: "ArialMT",
+        fontFamily: "Arial",
+        fontStyle: "Regular"
+    }, { name: "Title Layer" });
+
+    comp.addTextLayer({
+        font: "Montserrat-Bold",
+        fontFamily: "Montserrat",
+        fontStyle: "Bold"
+    }, { name: "Subtitle Layer" });
+
+    var fonts = host.collectProjectFonts(project);
+    check("собрано 2 уникальных шрифта", fonts.length, 2);
+    check("первый шрифт PostScript name", fonts[0].postScriptName, "ArialMT");
+    check("первый шрифт family", fonts[0].fontFamily, "Arial");
+    check("первый шрифт слой", fonts[0].layers[0].layerName, "Title Layer");
+    check("второй шрифт PostScript name", fonts[1].postScriptName, "Montserrat-Bold");
+
+    var report = host.scanFonts();
+    check("scanFonts успешен", report.ok, true);
+    check("scanFonts нашел шрифты", report.fonts.length, 2);
+    check("scanFonts определил рабочую папку", report.workspace, "D:/Projects/2026/Soul");
+
+    var fileRes = host.scanFontsToFile();
+    check("scanFontsToFile возвращает OK| путь", fileRes.indexOf("OK|") === 0, true);
+})();
+
 /* ------------------------------------------------------------------ итог */
 
 console.log("\n" + (failed === 0

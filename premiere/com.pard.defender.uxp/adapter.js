@@ -154,7 +154,7 @@ var PardPremiereAdapter = (function () {
     }
 
     api.normalizePath = normalizePath;
-    api.pluginVersion = "2.3.3";
+    api.pluginVersion = "2.3.4";
 
     function stripSuffixes(stem) {
         if (!stem) return "";

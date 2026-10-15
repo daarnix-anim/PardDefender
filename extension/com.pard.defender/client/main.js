@@ -54,7 +54,7 @@
         layersFilter: "all",
         layersGroup: "none",
         // Состояние сессии
-        version: "2.3.3",
+        version: "2.3.4",
         confirmCleanupUntil: 0,
         confirmAdoptUntil: 0,
         confirmRedistUntil: 0,
@@ -76,7 +76,13 @@
         },
         consolidationConfirmUntil: 0,
         consolidationGroupId: "",
-        consolidationBusy: false
+        consolidationBusy: false,
+        fonts: [],
+        fontsStatus: null,
+        fontsBusy: false,
+        fontsAutoSync: false,
+        fontsCleanUnused: false,
+        fontScanSeq: 0
     };
 
     var el = {};
@@ -1947,6 +1953,18 @@
             state.report = report;
             state.settings = report.settings || state.settings;
             state.workspace = report.workspace;
+            if (report.fonts) {
+                var prevF = JSON.stringify(state.fonts || []);
+                var nextF = JSON.stringify(report.fonts || []);
+                if (prevF !== nextF) {
+                    state.fonts = report.fonts;
+                    invalidate("fonts");
+                    invalidate("tabs");
+                }
+            }
+            if (state.fontsAutoSync && report.ok && report.projectSaved && !report.workspaceIssue) {
+                saveFontsNow(true);
+            }
             if (report.workspace && !report.workspaceIssue && report.projectPath) {
                 var reg = PardWorkspaceStore.registerProject(report.workspace, {
                     host: "after-effects",
@@ -2010,6 +2028,10 @@
         state.confirmAdoptUntil = 0;
         state.confirmRedistUntil = 0;
         state.tab = "main";
+        state.fonts = [];
+        state.fontsStatus = null;
+        state.fontsBusy = false;
+        state.fontScanSeq++;
         if (state.duplicates) {
             state.duplicates.result = null;
             state.duplicates.stale = false;
@@ -2471,6 +2493,7 @@
         renderDuplicates();
         renderTabs();
         renderLayers();
+        renderFonts();
         renderIssues();
         renderQueue();
         renderStats();
@@ -2727,6 +2750,7 @@
      */
     var TABS = [
         { name: "main", title: "ПАНЕЛЬ" },
+        { name: "fonts", title: "ШРИФТЫ" },
         { name: "layers", title: "ВЫКЛЮЧЕНО И ЗАБЫТО" },
         { name: "unused", title: "НЕ ИСПОЛЬЗУЕТСЯ" },
         { name: "duplicates", title: "ДУБЛИКАТЫ" },
@@ -2738,6 +2762,10 @@
     function tabBadge(name) {
         /* Счётчик означает "требует внимания", а не "сколько тут строк":
          * помеченное забытым остаётся в списке, но больше не считается. */
+        if (name === "fonts") {
+            var fCount = (state.fonts && state.fonts.length) || 0;
+            return fCount ? String(fCount) : "";
+        }
         if (name === "layers") {
             var open = openFindingCount();
             return open ? String(open) : "";
@@ -2764,6 +2792,10 @@
         if (name === "main") return true;
         if (!live) return false;
         /* These exist only while there is something to act on. */
+        if (name === "fonts") {
+            if (state.tab === "fonts") return true;
+            return !!(state.fonts && state.fonts.length > 0);
+        }
         if (name === "layers") return layerFindings().length > 0;
         if (name === "unused") return allUnusedItems().length > 0 || unusedTotals().count > 0;
         if (name === "duplicates") {
@@ -3818,6 +3850,217 @@
         return row;
     }
 
+    /* ---------------------------------------------------------------- fonts */
+
+    function renderFonts() {
+        if (!el.panes || !el.panes.fonts || el.panes.fonts.hidden) return;
+
+        var fontsList = state.fonts || [];
+        var total = fontsList.length;
+
+        var stored = null;
+        if (state.workspace && typeof PardFontEngine !== "undefined") {
+            try { stored = PardFontEngine.getStoredFontsManifest(state.workspace, state.projectPath); } catch (e) {}
+        }
+
+        var signature = total + "|" + (state.fontsBusy ? "1" : "0") + "|" +
+            (stored ? (stored.lastSync + ":" + (stored.fonts ? stored.fonts.length : 0)) : "0") + "|" +
+            fontsList.map(function (f) { return (f.postScriptName || f.fontFamily) + ":" + (f.layers ? f.layers.length : 0); }).join(",");
+
+        if (!changed("fonts", signature)) return;
+
+        if (el.fontsSave) {
+            el.fontsSave.disabled = state.fontsBusy || !state.workspace;
+            el.fontsSave.textContent = state.fontsBusy ? "СОХРАНЕНИЕ ШРИФТОВ…" : "📁 СОХРАНИТЬ ШРИФТЫ В FONTS";
+        }
+        if (el.fontsRefresh) {
+            el.fontsRefresh.disabled = state.fontsBusy;
+            el.fontsRefresh.className = "icon" + (state.fontsBusy ? " busy" : "");
+        }
+        if (el.fontsAutoSync) {
+            el.fontsAutoSync.checked = !!state.fontsAutoSync;
+        }
+        if (el.fontsCleanUnused) {
+            el.fontsCleanUnused.checked = state.fontsCleanUnused !== false;
+        }
+
+        if (el.fontsSummary) {
+            var syncedCount = 0;
+            if (stored && stored.counts) {
+                syncedCount = (stored.counts.copied || 0) + (stored.counts.existing || 0);
+            }
+            el.fontsSummary.innerHTML =
+                "<span>Использовано в проекте: <b>" + total + "</b></span>" +
+                "<span>В папке Fonts: <b>" + syncedCount + "</b></span>";
+        }
+
+        if (el.fontsList) {
+            if (total === 0) {
+                el.fontsList.innerHTML = '<div class="fonts-note" style="padding: 12px 0; text-align: center;">В проекте нет текстовых слоёв или шрифтов.</div>';
+                return;
+            }
+
+            el.fontsList.innerHTML = "";
+            var storedMap = {};
+            if (stored && stored.fonts) {
+                for (var s = 0; s < stored.fonts.length; s++) {
+                    var sf = stored.fonts[s];
+                    if (sf.postScriptName) storedMap[sf.postScriptName.toLowerCase()] = sf;
+                    if (sf.fontFamily) storedMap[sf.fontFamily.toLowerCase()] = sf;
+                }
+            }
+
+            for (var i = 0; i < fontsList.length; i++) {
+                var f = fontsList[i];
+                var card = document.createElement("div");
+                card.className = "font-card";
+
+                var head = document.createElement("div");
+                head.className = "font-card-head";
+
+                var title = document.createElement("div");
+                title.className = "font-card-title";
+                var dispName = f.fontFamily ? (f.fontFamily + (f.fontStyle ? " " + f.fontStyle : "")) : (f.postScriptName || "Неизвестный шрифт");
+                title.textContent = dispName;
+
+                var pill = document.createElement("span");
+                var key = (f.postScriptName || f.fontFamily || "").toLowerCase();
+                var st = storedMap[key];
+
+                if (st && (st.status === "copied" || st.status === "existing")) {
+                    pill.className = "font-status-pill saved";
+                    pill.textContent = "✓ В папке Fonts";
+                } else if (st && (st.status === "missing" || st.status === "error")) {
+                    pill.className = "font-status-pill missing";
+                    pill.textContent = "Не найдено точное начертание";
+                    pill.title = st.error || "";
+                } else if (f.fontLocation) {
+                    pill.className = "font-status-pill ready";
+                    pill.textContent = "⏳ В системе";
+                } else {
+                    pill.className = "font-status-pill ready";
+                    pill.textContent = "⏳ Готов";
+                }
+
+                head.appendChild(title);
+                head.appendChild(pill);
+                card.appendChild(head);
+
+                if (f.postScriptName && f.postScriptName !== dispName) {
+                    var meta = document.createElement("div");
+                    meta.className = "font-card-meta";
+                    meta.textContent = "PostScript: " + f.postScriptName;
+                    card.appendChild(meta);
+                }
+
+                if (f.layers && f.layers.length > 0) {
+                    var layersDiv = document.createElement("div");
+                    layersDiv.className = "font-layers-list";
+                    var layerNames = f.layers.map(function (l) {
+                        return l.compName + ' ("' + l.layerName + '")';
+                    }).slice(0, 3);
+                    if (f.layers.length > 3) layerNames.push("ещё " + (f.layers.length - 3));
+                    layersDiv.textContent = "Слои: " + layerNames.join(", ");
+                    card.appendChild(layersDiv);
+                }
+
+                el.fontsList.appendChild(card);
+            }
+        }
+    }
+
+    function refreshFonts() {
+        if (state.fontsBusy) return;
+        var scanSeq = ++state.fontScanSeq;
+        var projectPath = state.projectPath;
+        state.fontsBusy = true;
+        render();
+
+        if (typeof PardHostAdapter !== "undefined" && PardHostAdapter.scanFontsToFile) {
+            PardHostAdapter.scanFontsToFile(function (raw) {
+                if (scanSeq !== state.fontScanSeq || projectPath !== state.projectPath) return;
+                state.fontsBusy = false;
+                var text = String(raw || "");
+                if (text.indexOf("OK|") === 0) {
+                    var fPath = text.substring(3);
+                    try {
+                        var fsMod = require("fs");
+                        var report = JSON.parse(fsMod.readFileSync(fPath, "utf8"));
+                        if (report && report.ok && report.projectPath === projectPath && report.fonts) {
+                            state.fonts = report.fonts;
+                        }
+                    } catch (eR) {}
+                }
+                invalidate("fonts");
+                invalidate("tabs");
+                render();
+            });
+        } else {
+            state.fontsBusy = false;
+            tick(true);
+        }
+    }
+
+    function saveFontsNow(silent) {
+        if (state.fontsBusy) return;
+        if (!state.workspace || !state.report || !state.report.ok || !state.report.projectSaved || state.report.workspaceIssue) {
+            if (!silent) log("Сохраните проект перед сохранением шрифтов.", "warn");
+            return;
+        }
+        state.fontsBusy = true;
+        render();
+
+        try {
+            var cleanUnused = state.fontsCleanUnused === true;
+            if (typeof PardFontEngine !== "undefined") {
+                var res = PardFontEngine.syncProjectFonts(state.workspace, state.fonts, {
+                    cleanUnused: cleanUnused,
+                    projectPath: state.projectPath
+                });
+                state.fontsStatus = res;
+                state.fontsBusy = false;
+
+                if (res && res.ok) {
+                    var msg = "Шрифты проекта синхронизированы в Fonts: " +
+                        res.copied.length + " скопировано, " +
+                        res.existing.length + " актуально" +
+                        (res.removed.length > 0 ? (", " + res.removed.length + " удалено") : "") +
+                        (res.missing.length > 0 ? (", " + res.missing.length + " не найдено") : "");
+                    log(msg, res.missing.length > 0 ? "warn" : "ok");
+                } else {
+                    log("Ошибка сохранения шрифтов: " + ((res && res.error) || "Неизвестная ошибка"), "warn");
+                }
+            } else {
+                state.fontsBusy = false;
+            }
+        } catch (eSync) {
+            state.fontsBusy = false;
+            log("Ошибка сохранения шрифтов: " + eSync.message, "warn");
+        }
+
+        invalidate("fonts");
+        invalidate("tabs");
+        render();
+    }
+
+    function revealFontsFolder() {
+        if (!state.workspace) {
+            log("Рабочая папка проекта не определена.", "warn");
+            return;
+        }
+        var fontsDir = state.workspace + "/Fonts";
+        try {
+            var pathMod = require("path");
+            fontsDir = pathMod.join(state.workspace, "Fonts");
+            var fsMod = require("fs");
+            if (!fsMod.existsSync(fontsDir)) {
+                fsMod.mkdirSync(fontsDir, { recursive: true });
+            }
+        } catch (e) {}
+
+        revealAndReport(fontsDir, "Папка Fonts");
+    }
+
     /* ---------------------------------------------------------------- boot */
 
     function bind() {
@@ -3889,7 +4132,17 @@
             headPauseBtn: "head-pause-btn",
             pauseProject: "pause-project",
             scanProject: "scan-project",
-            scanNow: "scan-now"
+            scanNow: "scan-now",
+            fontsSection: "fonts-section",
+            fontsTitle: "fonts-title",
+            fontsRefresh: "fonts-refresh",
+            fontsNote: "fonts-note",
+            fontsSummary: "fonts-summary",
+            fontsSave: "fonts-save",
+            fontsReveal: "fonts-reveal",
+            fontsAutoSync: "fonts-auto-sync",
+            fontsCleanUnused: "fonts-clean-unused",
+            fontsList: "fonts-list"
         };
         var key;
         for (key in ids) {
@@ -4000,6 +4253,33 @@
         if (el.sortUnused) {
             el.sortUnused.onclick = function () {
                 checkAndSortUnusedFiles();
+            };
+        }
+
+        if (el.fontsRefresh) {
+            el.fontsRefresh.onclick = function () {
+                refreshFonts();
+            };
+        }
+        if (el.fontsSave) {
+            el.fontsSave.onclick = function () {
+                saveFontsNow();
+            };
+        }
+        if (el.fontsReveal) {
+            el.fontsReveal.onclick = function () {
+                revealFontsFolder();
+            };
+        }
+        if (el.fontsAutoSync) {
+            el.fontsAutoSync.onchange = function () {
+                state.fontsAutoSync = !!el.fontsAutoSync.checked;
+                if (state.fontsAutoSync) saveFontsNow();
+            };
+        }
+        if (el.fontsCleanUnused) {
+            el.fontsCleanUnused.onchange = function () {
+                state.fontsCleanUnused = !!el.fontsCleanUnused.checked;
             };
         }
 

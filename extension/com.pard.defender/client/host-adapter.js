@@ -192,6 +192,10 @@ var PardHostAdapter = (function () {
         evalScript("$.global.PardDefenderHost.scanLayersToFile();", callback);
     };
 
+    api.scanFontsToFile = function (callback) {
+        evalScript("$.global.PardDefenderHost.scanFontsToFile();", callback);
+    };
+
     api.revealComp = function (compId, callback) {
         evalScript(
             "$.global.PardDefenderHost.revealComp('" +
