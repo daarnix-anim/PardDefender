@@ -27,12 +27,38 @@ function check(label, actual, expected) {
 
 function group(name) { console.log("\n" + name); }
 
-var testDir = path.join(os.tmpdir(), "pd-test-premiere-" + Date.now()).replace(/\\/g, "/");
+/*
+ * Фикстуры лежат в tests/.tmp_test_dir, а не в os.tmpdir().
+ *
+ * На Windows os.tmpdir() — это %LOCALAPPDATA%\Temp, а такая папка не может быть
+ * рабочей папкой проекта: unsafeWorkspaceReason отвергает её, и аудит честно
+ * возвращает пустой отчёт. Этот набор проверяет обход проекта и классификацию,
+ * поэтому фикстуры должны лежать там, где настоящий проект и лежал бы. Саму
+ * защиту проверяет отдельная группа — на вымышленных путях, без файлов.
+ */
+var sandboxRoot = path.join(__dirname, ".tmp_test_dir").replace(/\\/g, "/");
+var testDir = sandboxRoot + "/pd-test-premiere-" + Date.now();
 function nativePath(p) { return String(p).replace(/\//g, path.sep); }
 function mkdir(p) { fs.mkdirSync(nativePath(p), { recursive: true }); }
 function writeFile(p, text) { mkdir(path.dirname(nativePath(p))); fs.writeFileSync(nativePath(p), text, "utf8"); }
 
+/* Песочница внутри репозитория, поэтому хвосты прошлых прогонов убираются. */
+function sweepStale(prefix) {
+    var names;
+    try { names = fs.readdirSync(nativePath(sandboxRoot)); } catch (e) { return; }
+    for (var i = 0; i < names.length; i++) {
+        if (names[i].indexOf(prefix) !== 0) continue;
+        try { fs.rmSync(nativePath(sandboxRoot + "/" + names[i]), { recursive: true, force: true }); }
+        catch (eRm) {}
+    }
+}
+
+mkdir(sandboxRoot);
+sweepStale("pd-test-premiere-");
 mkdir(testDir);
+process.on("exit", function () {
+    try { fs.rmSync(nativePath(testDir), { recursive: true, force: true }); } catch (e) {}
+});
 
 var PardPremiereAdapter = require("../premiere/com.pard.defender.uxp/adapter.js");
 var mockPpro = new mock.MockPremierePro("25.6.2");
@@ -332,6 +358,85 @@ group("Нормализация путей Windows (\\?\\, /?/) и разреш�
 
     var ws5 = PardPremiereAdapter.resolveWorkspace("d:/Projects/Soul/Soul.prproj");
     check("resolveWorkspace для проекта в корне возвращает корень", ws5, "d:/Projects/Soul");
+})();
+
+/* ========================================================================= */
+group("Небезопасная рабочая папка: Рабочий стол, Загрузки, профиль, система");
+/* ========================================================================= */
+/*
+ * То же правило, что у хоста After Effects в PardDefenderPlan.jsx, и по той же
+ * причине: проект, сохранённый на Рабочий стол или в «Загрузки», иначе
+ * превратит эту папку в дерево ассетов — а «Загрузки» владелец чистит именно в
+ * расчёте на то, что проектных файлов там нет.
+ *
+ * Пути вымышленные и файлов за ними нет: проверяется правило, а не диск.
+ */
+(function () {
+    function blocked(label, target) {
+        check(label, PardPremiereAdapter.unsafeWorkspaceReason(target) !== "", true);
+    }
+    function allowed(label, target) {
+        check(label, PardPremiereAdapter.unsafeWorkspaceReason(target), "");
+    }
+
+    blocked("пустой путь", "");
+    blocked("корень диска без слеша", "D:");
+    blocked("корень диска со слешем", "D:/");
+    blocked("слишком короткий путь", "/Soul");
+
+    blocked("Рабочий стол", "C:/Users/tester/Desktop");
+    blocked("Загрузки", "C:/Users/tester/Downloads");
+    blocked("Документы", "C:/Users/tester/Documents");
+    blocked("корень профиля", "C:/Users/tester");
+    blocked("Рабочий стол в OneDrive", "C:/Users/tester/OneDrive/Desktop");
+    blocked("Рабочий стол другим регистром", "c:/users/TESTER/DESKTOP");
+
+    blocked("папка Windows", "C:/Windows/System32/config");
+    blocked("Program Files", "C:/Program Files/Adobe/Soul");
+    blocked("ProgramData", "C:/ProgramData/Adobe/Soul");
+    blocked("временная папка пользователя", "C:/Users/tester/AppData/Local/Temp/Soul");
+    blocked("автосохранение Premiere", "D:/Projects/Soul/Adobe Premiere Pro Auto-Save/Soul");
+    blocked("автосохранение After Effects", "D:/Projects/Soul/Adobe After Effects Auto-Save/Soul");
+    blocked("Корзина", "C:/$RECYCLE.BIN/S-1-5-21/Soul");
+    blocked("System Volume Information", "D:/System Volume Information/Soul");
+
+    allowed("обычная папка проекта", "D:/Projects/2026/Soul");
+    allowed("папка проекта на Яндекс.Диске", "D:/Yandex.Disk/00_Projects/Soul");
+    /* Папка ВНУТРИ профиля — нормальный случай и остаётся разрешённой:
+     * запрещено быть профилем, а не лежать в нём. */
+    allowed("своя папка внутри профиля", "C:/Users/tester/Projects/Soul");
+    allowed("папка с именем, похожим на Desktop", "D:/Projects/DesktopShow/Soul");
+
+    /* Отчёт аудита несёт причину и ни одного элемента, иначе защита построит
+     * задачу копирования на Рабочий стол. */
+    var deskPath = "C:/Users/tester/Desktop/Soul.prproj";
+    var deskProj = new mock.MockProject("guid-desktop", deskPath, "Soul.prproj");
+    mockPpro.setActiveProject(deskProj);
+    var deskId = PardPremiereAdapter.identifyProject(deskProj);
+    check("identifyProject сообщает о небезопасной папке",
+        deskId.workspaceIssue !== "" && typeof deskId.workspaceIssue === "string", true);
+    check("identifyProject всё равно сообщает путь проекта",
+        deskId.projectPath, "c:/Users/tester/Desktop/Soul.prproj");
+
+    var deskReport = null;
+    PardPremiereAdapter.auditMedia(deskProj, function (err, rep) { deskReport = rep; });
+    check("аудит вернул отчёт", Boolean(deskReport), true);
+    check("аудит не считает отчёт ошибкой", deskReport.ok, true);
+    check("аудит сообщает причину", deskReport.workspaceIssue, deskId.workspaceIssue);
+    check("аудит не отдал ни одного элемента", (deskReport.items || []).length, 0);
+    check("аудит обнулил статистику", deskReport.stats.totalItems, 0);
+    check("проект при этом сохранён", deskReport.projectSaved, true);
+
+    /* Та же проверка на безопасной папке: причины нет. */
+    var okPath = testDir + "/safe_ws/04_edit/Safe.prproj";
+    writeFile(okPath, "MOCK_PRPROJ");
+    var okProj = new mock.MockProject("guid-safe", okPath, "Safe.prproj");
+    mockPpro.setActiveProject(okProj);
+    var okId = PardPremiereAdapter.identifyProject(okProj);
+    check("безопасная папка проходит без причины", okId.workspaceIssue, "");
+    var okReport = null;
+    PardPremiereAdapter.auditMedia(okProj, function (err, rep) { okReport = rep; });
+    check("аудит безопасной папки без причины", okReport.workspaceIssue, "");
 })();
 
 /* ========================================================================= */

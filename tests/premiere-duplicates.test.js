@@ -11,7 +11,21 @@ const mock = require("./mock-premiere");
 const duplicates = require("../premiere/com.pard.defender.uxp/duplicates");
 const engine = require("../premiere/com.pard.defender.uxp/copy-engine");
 const adapter = require("../premiere/com.pard.defender.uxp/adapter");
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pard-duplicates-"));
+/*
+ * Фикстуры в tests/.tmp_test_dir, а не в os.tmpdir(): на Windows это
+ * %LOCALAPPDATA%\Temp, и такая папка не может быть рабочей папкой проекта —
+ * unsafeWorkspaceReason её отвергает, а аудит возвращает пустой отчёт.
+ */
+const sandboxRoot = path.join(__dirname, ".tmp_test_dir");
+fs.mkdirSync(sandboxRoot, { recursive: true });
+fs.readdirSync(sandboxRoot).forEach(function (name) {
+    if (name.indexOf("pard-duplicates-") !== 0) return;
+    try { fs.rmSync(path.join(sandboxRoot, name), { recursive: true, force: true }); } catch (e) {}
+});
+const temp = fs.mkdtempSync(path.join(sandboxRoot, "pard-duplicates-"));
+process.on("exit", function () {
+    try { fs.rmSync(temp, { recursive: true, force: true }); } catch (e) {}
+});
 const workspace = path.join(temp, "FilmAssets");
 engine.setFs(fs); duplicates.setFs(fs); adapter.setFs(fs);
 let checks = 0;

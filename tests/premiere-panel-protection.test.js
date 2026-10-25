@@ -35,6 +35,7 @@ function launch(options) {
     const report = { ok: true, projectSaved: true, workspace: o.workspace || "d:/Project", projectId: "pr-1",
         projectPath: "d:/Project/04_edit/test.prproj", items, stats: {}, diagnostics: o.diagnostics || [] };
     report.aeProtectedItems = o.aeProtectedItems || [];
+    report.workspaceIssue = o.workspaceIssue || "";
     const calls = { tasks: [], relinks: [], snapshots: [], saves: 0, reveals: [], audits: [] };
     const project = { guid: "pr-1", save: async () => { calls.saves++; return true; } };
     const adapter = {
@@ -212,5 +213,32 @@ async function finish(panel) {
     const lineStyle = css.match(/\.log-line\s*\{([^}]+)\}/)[1];
     check(/display:\s*block/.test(boxStyle) && !/display:\s*flex/.test(boxStyle), "Long journal cannot shrink rows in a fixed-height flex column");
     check(/white-space:\s*pre-wrap/.test(lineStyle) && /line-height:\s*18px/.test(lineStyle), "Multiline errors and file paths have readable spacing");
+
+    /*
+     * Небезопасная рабочая папка. Ни одна кнопка, которая пишет файлы, не
+     * должна ничего сделать: иначе Рабочий стол или «Загрузки» превратятся в
+     * дерево ассетов с собственной папкой метаданных.
+     */
+    p = launch({ quiet: true, workspaceIssue: "Это системная папка, она не может быть рабочей папкой проекта." });
+    check(!p.elements["banner-workspace"].hidden, "Unsafe workspace is announced in the panel");
+    check(p.elements["banner-workspace"].textContent.includes("системная папка"), "Banner carries the reason from the report");
+    check(p.elements["proj-status"].textContent === "ПРОВЕРЬТЕ ПАПКУ", "Status badge names the problem");
+    check(p.elements["btn-protect"].disabled === true && p.elements["btn-sort-unused"].disabled === true &&
+        p.elements["btn-scan-duplicates"].disabled === true, "Every writing action is disabled");
+    check(!p.elements["items-list"].children.some(el => String(el.className || "").includes("media-item-card")),
+        "No media card is listed for an unsafe workspace");
+
+    await p.elements["btn-protect"].click(); await finish(p);
+    p.api.protectExternalMedia();
+    await p.api.sortUnusedClips();
+    await p.api.scanDuplicates();
+    await finish(p);
+    check(p.calls.tasks.length === 0, "Unsafe workspace never produces a copy task");
+    check(p.calls.relinks.length === 0, "Unsafe workspace never relinks a clip");
+    check(p.calls.saves === 0, "Unsafe workspace never saves the project");
+    check(p.calls.snapshots.length === 0, "No snapshot is written into an unsafe workspace");
+    check(!p.api.state.duplicateScanning && !p.api.state.protecting, "Refused actions leave no busy flag behind");
+    check(p.elements["banner-protect-status"].textContent.includes("невозможна"), "The refusal says why, not just that nothing happened");
+
     console.log("Итоги: пройдено " + checks + ", провалено 0");
 })().catch(e => { console.error(e); process.exitCode = 1; });

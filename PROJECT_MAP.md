@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **71** · связей: **162** · собрано: 2026-10-14 13:17
+Файлов: **71** · связей: **163** · собрано: 2026-10-25 11:15
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -57,7 +57,7 @@
 
 ### `adapter.js`
 
-`premiere/com.pard.defender.uxp/adapter.js` · 2138 строк · работает
+`premiere/com.pard.defender.uxp/adapter.js` · 2267 строк · работает
 
 Официальный UXP-адаптер для Premiere Pro 25.6+: инспекция проектов, рекурсивный аудит media items, классификация клипов/секвенций/proxy/generated, подключение к реестру проектов и нормализованный отчёт аудита.
 
@@ -101,7 +101,7 @@ _Описание не задано._
 
 ### `main.js`
 
-`premiere/com.pard.defender.uxp/main.js` · 1709 строк · работает
+`premiere/com.pard.defender.uxp/main.js` · 1770 строк · работает
 
 UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИТА», «ДУБЛИКАТЫ» и «ЖУРНАЛ», копирование внешних медиа в workspace с перелинковкой, поиск дубликатов, поиск по всей библиотеке, объединение с приоритетом AE и журнал операций.
 
@@ -193,7 +193,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 4531 строк · работает
+`extension/com.pard.defender/client/main.js` · 4560 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
@@ -257,7 +257,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `index.html`
 
-`premiere/com.pard.defender.uxp/index.html` · 140 строк · работает
+`premiere/com.pard.defender.uxp/index.html` · 144 строк · работает
 
 Разметка UXP-панели для Premiere Pro: вкладки Защита, Дубликаты и Журнал.
 
@@ -397,17 +397,17 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `panel.test.js`
 
-`tests/panel.test.js` · 1854 строк · работает
+`tests/panel.test.js` · 1985 строк · работает
 
 Проверки самой панели: вкладки, кнопки, места блоков и дисциплина перерисовки. Первый набор, который запускает main.js.
 
-Использует: `disk-space.js`, `housekeeping.js`, `updater.js`, `copy-queue.js`, `duplicate-index.js`, `sync-coordinator.js`, `issues.js`, `stats.js`, `verify.js`, `host-adapter.js`, `workspace-store.js`, `font-engine.js`, `main.js`, `mock-dom.js`
+Использует: `disk-space.js`, `housekeeping.js`, `updater.js`, `copy-queue.js`, `duplicate-index.js`, `sync-coordinator.js`, `host-adapter.js`, `issues.js`, `stats.js`, `verify.js`, `workspace-store.js`, `font-engine.js`, `main.js`, `mock-dom.js`
 
 Используется в: `run-all.js`
 
 ### `premiere-adapter.test.js`
 
-`tests/premiere-adapter.test.js` · 1328 строк · работает
+`tests/premiere-adapter.test.js` · 1433 строк · работает
 
 30 проверок фундамента Premiere Pro UXP адаптера.
 
@@ -417,7 +417,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `premiere-duplicates.test.js`
 
-`tests/premiere-duplicates.test.js` · 156 строк · работает
+`tests/premiere-duplicates.test.js` · 170 строк · работает
 
 Проверяет поиск по всей библиотеке Premiere, приоритет AE, точные ссылки таймлайна и безопасную асинхронную консолидацию.
 
@@ -427,7 +427,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `premiere-panel-protection.test.js`
 
-`tests/premiere-panel-protection.test.js` · 217 строк · работает
+`tests/premiere-panel-protection.test.js` · 245 строк · работает
 
 Исполнение панели Premiere: аудиомаршруты, AE-метки, relink и сбои.
 

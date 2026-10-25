@@ -1700,6 +1700,19 @@ group("Приоритет аудио Premiere: сопоставление в AE,
     check("внутренняя задача использует путь Premiere", internalTasks[0].destPath, premAudioFile);
 })();
 
+/*
+ * Сортировка в /unused — это ПЕРЕНОС, и порядок шагов здесь важнее результата.
+ *
+ * В 2.3.4 и раньше эта кнопка двигала внутренние файлы сама: сносила то, что лежало в
+ * назначении (навсегда, не в Корзину, не спросив манифест), переносила свою
+ * копию на место и удаляла оригинал — всё ДО перелинковки. Отказ хоста оставлял
+ * проект смотреть на несуществующий путь, а решение «это уже тот же файл»
+ * принималось по одному размеру, так что целью перелинковки мог стать чужой
+ * файл того же размера.
+ *
+ * Поэтому набор проверяет не «файл оказался в /unused», а требование:
+ * копия → перелинковка → только потом оригинал, и только в Корзину.
+ */
 group("Неиспользуемые файлы: кнопка сортировки в папку unused");
 (function () {
     var wsUnused = root + "/ws_unused_sort";
@@ -1710,25 +1723,99 @@ group("Неиспользуемые файлы: кнопка сортировк�
     write(existingUnused, "OLD_CLIP_BYTES");
     var statClip = fs.statSync(native(existingUnused));
 
-    var rep = {
-        ok: true,
-        workspace: wsUnused,
-        settings: settings(),
-        items: [{
-            id: 201,
-            key: "k201",
-            name: "old_clip.mp4",
-            path: existingUnused,
-            size: statClip.size,
-            category: "video",
-            state: "protected",
-            unassigned: true,
-            usedInComps: 0
-        }]
+    /* Чужой файл ровно там, куда пойдёт копия. Ни один шаг этого прохода не
+     * имеет права его тронуть. */
+    var occupied = wsUnused + "/unused/VIDEO/old_clip.mp4";
+    write(occupied, "SOMEBODY_ELSES_FILE_OF_ANOTHER_SIZE");
+
+    var seqDir = wsUnused + "/01_assets/00_UNUSED/SEQUENCES/shot";
+    var seqFrame = seqDir + "/shot_0001.png";
+    write(seqFrame, "f1");
+
+    function unusedReport() {
+        return {
+            ok: true,
+            workspace: wsUnused,
+            settings: settings(),
+            items: [{
+                id: 201,
+                key: "k201",
+                name: "old_clip.mp4",
+                path: existingUnused,
+                destFile: "old_clip.mp4",
+                size: statClip.size,
+                category: "video",
+                state: "protected",
+                unassigned: true,
+                usedInComps: 0
+            }, {
+                id: 202,
+                key: "k202",
+                name: "shot_[0001-0001].png",
+                path: seqFrame,
+                size: 2,
+                category: "image",
+                state: "protected",
+                unassigned: true,
+                usedInComps: 0,
+                isSequence: true,
+                destName: "shot",
+                sequence: {
+                    folder: seqDir, prefix: "shot_", padding: 4,
+                    suffix: ".png", firstFrame: "shot_0001.png"
+                }
+            }]
+        };
+    }
+
+    /* Копирование подменяется, как и в остальных наборах панели: проверяется
+     * дисциплина прохода, а не потоковая запись (её держит copy-queue.test.js). */
+    function stubCopy(panel, order) {
+        panel.sandbox.PardCopyQueue.run = function (tasks, options, hooks, done) {
+            if (order) order.push("copy");
+            var results = [], i, t, landed;
+            for (i = 0; i < tasks.length; i++) {
+                t = tasks[i];
+                landed = t.isSequence ? (t.destPath + "/shot_0001.png") : t.destPath;
+                results.push({
+                    ok: true, key: t.key, id: t.id, destPath: landed,
+                    files: 1, bytes: t.size || 0, reusedFiles: 0, reusedBytes: 0,
+                    records: [{ sourcePath: t.sourcePath, destPath: landed,
+                        size: t.size || 0, created: true }],
+                    sources: [t.sourcePath]
+                });
+            }
+            done(results);
+            return tasks;
+        };
+    }
+
+    var p = launch({ report: unusedReport() });
+    check("кнопка сортировки в unused присутствует", Boolean(p.id("sort-unused")), true);
+
+    var order = [], seenTasks = null;
+    var baseRun = p.sandbox.PardCopyQueue.run;
+    stubCopy(p, order);
+    var wrappedRun = p.sandbox.PardCopyQueue.run;
+    p.sandbox.PardCopyQueue.run = function (tasks, options, hooks, done) {
+        seenTasks = tasks;
+        return wrappedRun(tasks, options, hooks, done);
+    };
+    var baseCommit = p.sandbox.PardHostAdapter.commitFromFileJson;
+    p.sandbox.PardHostAdapter.commitFromFileJson = function (planPath, callback) {
+        order.push("relink");
+        baseCommit(planPath, callback);
+    };
+    var baseRecycle = p.sandbox.PardHousekeeping.recycle;
+    p.sandbox.PardHousekeeping.recycle = function (paths, callback) {
+        order.push("recycle");
+        baseRecycle(paths, callback);
     };
 
-    var p = launch({ report: rep });
-    check("кнопка сортировки в unused присутствует", Boolean(p.id("sort-unused")), true);
+    /* Переключатель «старые копии в корзину» отвечает на другой вопрос — про
+     * раскладку старого проекта. Названный владельцем ПЕРЕНОС он отменять не
+     * должен, иначе в рабочей папке останется по два файла. */
+    p.sandbox.window.PardDefender.state.settings.legacyRecycleOld = false;
 
     var doneRes = null;
     p.sandbox.window.PardDefender.checkAndSortUnusedFiles({}, function (res) {
@@ -1736,10 +1823,54 @@ group("Неиспользуемые файлы: кнопка сортировк�
     });
 
     check("сортировка выполнена успешно", Boolean(doneRes && doneRes.ok), true);
-    check("перемещено файлов", doneRes.moved, 1);
-    var targetFile = wsUnused + "/unused/VIDEO/old_clip.mp4";
-    check("файл перемещён в корневую папку unused", fs.existsSync(native(targetFile)), true);
-    check("исходный файл удалён из старого места", fs.existsSync(native(existingUnused)), false);
+    check("перенесено элементов", doneRes.moved, 2);
+    check("порядок шагов", order.join(" → "), "copy → relink → recycle");
+    check("маршрут секвенции — папка, а не кадр", seenTasks[1].destPath,
+        wsUnused + "/unused/SEQUENCES/shot");
+    check("папка панели для секвенции", seenTasks[1].panelFolder, "SEQUENCES");
+    check("внутренний источник помечен relocated", seenTasks[0].relocated, true);
+    check("в Корзину отправлены оба оригинала", p.calls.recycled[0].sort(),
+        [existingUnused, seqFrame].sort());
+    check("оригинал не удалён напрямую", fs.existsSync(native(existingUnused)), true);
+    check("чужой файл в назначении не тронут",
+        fs.readFileSync(native(occupied), "utf8"), "SOMEBODY_ELSES_FILE_OF_ANOTHER_SIZE");
+    check("журнал прохода убран", fs.existsSync(native(wsUnused + "/.parddefender/pending.tsv")), false);
+
+    /* Отказ в перелинковке. Копии остаются как безвредный бэкап, оригинал —
+     * строго на месте: именно это и ломала версия до 2.3.4. */
+    var p2 = launch({ report: unusedReport() });
+    stubCopy(p2, null);
+    p2.sandbox.PardHostAdapter.commitFromFileJson = function (planPath, callback) {
+        callback(JSON.stringify({
+            ok: true, relinked: 0, skipped: 2, failures: [
+                { key: "k201", id: "201", code: "RELINK_REJECTED", reason: "AE отказал" },
+                { key: "k202", id: "202", code: "RELINK_REJECTED", reason: "AE отказал" }
+            ]
+        }));
+    };
+    var doneRes2 = null;
+    p2.sandbox.window.PardDefender.checkAndSortUnusedFiles({}, function (res) {
+        doneRes2 = res;
+    });
+    check("при отказе перелинковки в Корзину ничего не ушло", p2.calls.recycled.length, 0);
+    check("при отказе оригинал остался на месте", fs.existsSync(native(existingUnused)), true);
+    check("при отказе ничего не числится перенесённым", doneRes2.moved, 0);
+
+    /* Хост вообще не ответил: ни перелинковки, ни удалений. */
+    var p3 = launch({ report: unusedReport() });
+    stubCopy(p3, null);
+    p3.sandbox.PardHostAdapter.commitFromFileJson = function (planPath, callback) {
+        callback(JSON.stringify({ ok: false, error: "хост недоступен", failures: [] }));
+    };
+    var doneRes3 = null;
+    p3.sandbox.window.PardDefender.checkAndSortUnusedFiles({}, function (res) {
+        doneRes3 = res;
+    });
+    check("при ошибке хоста в Корзину ничего не ушло", p3.calls.recycled.length, 0);
+    check("при ошибке хоста ничего не числится перенесённым", doneRes3.moved, 0);
+    check("при ошибке хоста оригинал остался на месте",
+        fs.existsSync(native(existingUnused)), true);
+    check("baseRun подменён корректно", typeof baseRun, "function");
 })();
 
 group("Фильтры и группировка забытых слоёв — только представление");

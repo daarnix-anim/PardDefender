@@ -685,23 +685,12 @@
         });
     }
 
-    function commitRelinkDirect(entries, callback) {
-        if (!entries || !entries.length) { callback({ relinked: 0, failures: [] }, ""); return; }
-        var planPath = tempRoot() + "/relink-plan.json";
-        if (!PardCopyQueue.writeText(planPath, JSON.stringify({ items: entries }))) {
-            callback(null, "План перелинковки не удалось записать.");
-            return;
-        }
-        PardHostAdapter.commitFromFileJson(planPath, function (raw) {
-            var parsed = null;
-            try { parsed = JSON.parse(String(raw || "")); } catch (e) { parsed = null; }
-            if (!parsed) {
-                callback(null, "Хост не вернул результат перелинковки.");
-                return;
-            }
-            callback(parsed, parsed.ok ? "" : parsed.error);
-        });
-    }
+    /*
+     * commitRelinkDirect жил здесь, пока сортировка в /unused перелинковывала
+     * файлы, которые перенесла сама. Теперь она идёт через copy-queue и общий
+     * commitRelink, и обходной путь без задач, манифеста и журнала больше не
+     * нужен — а второй вход в перелинковку легко разъезжается с первым.
+     */
 
     function applyPanel(moves, callback) {
         if (!moves.length) { callback({ moved: 0, pruned: 0 }); return; }
@@ -825,8 +814,17 @@
      * Without this step the redistribute button leaves two of everything and
      * doubles the project on disk, which is not a redistribution at all.
      */
-    function recycleRelocated(tasks, results, settled, done) {
-        if (!state.settings || state.settings.legacyRecycleOld === false) { done(); return; }
+    function recycleRelocated(tasks, results, settled, done, options) {
+        var opt = options || {};
+        /*
+         * `force` is for an action the owner named a move: sorting unused files
+         * into /unused. Leaving both copies there would not be a move at all,
+         * so the legacy switch - which answers a different question - does not
+         * apply. Every other fence below still does.
+         */
+        var noun = opt.noun || "Старые копии";
+        if (!opt.force &&
+            (!state.settings || state.settings.legacyRecycleOld === false)) { done(); return; }
         if (!settled.length || !PardHousekeeping.available()) { done(); return; }
 
         var byKey = taskMap(tasks), byResult = {}, paths = [], i, j, r, task, src;
@@ -855,15 +853,15 @@
 
         if (!paths.length) { done(); return; }
 
-        setBusyLabel("Убираю старые копии: " + paths.length + " файл.…");
+        setBusyLabel("Убираю в корзину (" + noun.toLowerCase() + "): " + paths.length + " файл.…");
         PardHousekeeping.recycle(paths, function (result) {
             if (result.ok) {
-                log("Старые копии в корзине: " + result.recycled +
+                log(noun + " в корзине: " + result.recycled +
                     (result.failed ? ", не удалось: " + result.failed : ""), "good");
                 PardStats.add({ filesRelocated: result.recycled });
             } else {
                 log("Корзина: " + result.error +
-                    " — старые копии остались на месте.", "warn");
+                    " — " + noun.toLowerCase() + " остались на месте.", "warn");
             }
             done();
         });
@@ -1233,185 +1231,216 @@
         setBusyLabel("Сортировка " + candidates.length + " неиспользуемых файлов в /unused…");
         render();
 
-        var fsMod = null, pathMod = null;
-        try { fsMod = require("fs"); } catch (e) {}
-        try { pathMod = require("path"); } catch (e2) {}
-
-        var unusedRoot = ws + "/unused";
-        if (fsMod) {
-            try {
-                var nativeUnusedRoot = unusedRoot.replace(/\//g, pathMod ? pathMod.sep : "\\");
-                if (!fsMod.existsSync(nativeUnusedRoot)) {
-                    fsMod.mkdirSync(nativeUnusedRoot, { recursive: true });
-                }
-            } catch (eDir) {}
+        if (!PardCopyQueue.available()) {
+            state.busy = false;
+            setBusyLabel("");
+            var noNodeMsg = "Node недоступен — сортировка невозможна.";
+            log(noNodeMsg, "bad");
+            showActionFeedback(noNodeMsg, "bad");
+            render();
+            cb({ ok: false, error: "NODE_UNAVAILABLE" });
+            return;
         }
 
-        var copyTasks = [];
-        var internalMoves = [];
-        var relinkEntries = [];
-        var panelMoves = [];
-        var seenDestinations = {};
+        var unusedRoot = ws + "/unused";
 
-        var i, item, cat, subFolder, fileName, destDir, destPath;
+        /*
+         * ONE task list for everything, internal sources and external alike.
+         * The only difference between them is what happens to the SOURCE
+         * afterwards, and that is what `relocated` already means everywhere
+         * else in this file.
+         *
+         * Through 2.3.4 this function moved internal files by hand, and it did
+         * three things no other path here is allowed to do. It unlinked
+         * whatever sat at the destination - permanently, not to the Recycle
+         * Bin, without asking the manifest whether we had put it there. It
+         * unlinked the original BEFORE the project was repointed, so a refused
+         * relink left the project pointing at a path that no longer existed.
+         * And it decided "this is already the same file" on SIZE alone, so a
+         * different file of the same size could silently become the relink
+         * target - the project would then play the wrong footage.
+         *
+         * PardCopyQueue answers all three correctly: .pdpart with a unique
+         * name, size verified before the rename, SHA-256 before any reuse, a
+         * collision-safe name when the bytes differ, and the original never
+         * touched. The leftover is then dealt with exactly as runPass does it -
+         * after the relink has settled, and only through the Recycle Bin.
+         */
+        var tasks = [], panelMoves = [], seenDestinations = {};
+
+        var i, item, cat, subFolder, fileName, destDir;
         for (i = 0; i < candidates.length; i++) {
             item = candidates[i];
             cat = item.category || "other";
             subFolder = item.isSequence ? "SEQUENCES" : (cat.toUpperCase() || "OTHER");
             destDir = unusedRoot + "/" + subFolder;
             if (item.isSequence && item.sequence) {
-                var seqName = item.destName || "SEQUENCE";
-                destDir = unusedRoot + "/SEQUENCES/" + seqName;
-            }
-            if (fsMod) {
-                try {
-                    var nativeDestDir = destDir.replace(/\//g, pathMod ? pathMod.sep : "\\");
-                    if (!fsMod.existsSync(nativeDestDir)) {
-                        fsMod.mkdirSync(nativeDestDir, { recursive: true });
-                    }
-                } catch (eMk) {}
+                destDir = unusedRoot + "/SEQUENCES/" + (item.destName || "SEQUENCE");
             }
 
-            fileName = item.destFile || (item.path ? item.path.substring(item.path.lastIndexOf("/") + 1) : ("file_" + item.id));
-            destPath = destDir + "/" + fileName;
+            fileName = item.destFile ||
+                (item.path ? item.path.substring(item.path.lastIndexOf("/") + 1)
+                           : ("file_" + item.id));
 
             var normSrc = (item.path || "").replace(/\\/g, "/");
-            var normDest = destPath.replace(/\\/g, "/");
+            /*
+             * A sequence route names the FOLDER - the copy layer fills it frame
+             * by frame. Appending the first frame's name, as this did before,
+             * made the engine treat that frame's path as the folder.
+             */
+            var normDest = item.isSequence === true ? destDir : (destDir + "/" + fileName);
 
+            /*
+             * Two elements of THIS batch must not aim at one path. A collision
+             * with a file already on disk is deliberately not resolved here:
+             * the copy layer compares bytes and either reuses that file or
+             * picks a free name beside it.
+             */
             var disambig = 2;
             var baseWithoutExt = fileName.replace(/\.[^.]+$/, "");
-            var ext = fileName.indexOf(".") !== -1 ? fileName.substring(fileName.lastIndexOf(".")) : "";
+            var ext = fileName.indexOf(".") !== -1
+                ? fileName.substring(fileName.lastIndexOf(".")) : "";
             while (seenDestinations[normDest.toLowerCase()]) {
-                fileName = baseWithoutExt + " (" + disambig + ")" + ext;
-                destPath = destDir + "/" + fileName;
-                normDest = destPath.replace(/\\/g, "/");
+                if (item.isSequence === true) {
+                    normDest = destDir + " (" + disambig + ")";
+                } else {
+                    fileName = baseWithoutExt + " (" + disambig + ")" + ext;
+                    normDest = destDir + "/" + fileName;
+                }
                 disambig++;
             }
             seenDestinations[normDest.toLowerCase()] = true;
-
-            var isInternal = normSrc.toLowerCase().indexOf(ws.toLowerCase() + "/") === 0;
 
             if (normSrc.toLowerCase() === normDest.toLowerCase()) {
                 panelMoves.push({ id: item.id, target: "unused/" + subFolder });
                 continue;
             }
 
-            if (isInternal) {
-                internalMoves.push({
-                    item: item,
-                    sourcePath: normSrc,
-                    destPath: normDest,
-                    subFolder: subFolder
-                });
-            } else {
-                copyTasks.push({
-                    key: item.key || ("i" + item.id),
-                    id: item.id,
-                    name: item.name,
-                    sourcePath: normSrc,
-                    destPath: normDest,
-                    branch: "unused",
-                    category: cat,
-                    isSequence: item.isSequence === true,
-                    sequence: item.sequence,
-                    size: item.size
-                });
-            }
+            tasks.push({
+                key: item.key || ("i" + item.id),
+                id: item.id,
+                isProxy: false,
+                name: item.name,
+                sourcePath: normSrc,
+                destPath: normDest,
+                branch: "unused",
+                category: cat,
+                isSequence: item.isSequence === true,
+                sequence: item.sequence,
+                size: item.size,
+                /*
+                 * The source is itself inside the workspace, so once the copy
+                 * is verified AND the project points at it, the leftover is a
+                 * duplicate rather than somebody's original. An external
+                 * original stays where it is, always.
+                 */
+                relocated: normSrc.toLowerCase().indexOf(ws.toLowerCase() + "/") === 0,
+                /* The Project-panel folder, which is NOT the folder on disk: a
+                 * sequence lands in unused/SEQUENCES/<name> on disk and in
+                 * unused/SEQUENCES in the panel. */
+                panelFolder: subFolder
+            });
         }
 
-        var movedCount = 0;
-        var totalBytes = 0;
-        for (i = 0; i < internalMoves.length; i++) {
-            var moveOp = internalMoves[i];
-            var src = moveOp.sourcePath;
-            var dst = moveOp.destPath;
-            var nativeSrc = src.replace(/\//g, pathMod ? pathMod.sep : "\\");
-            var nativeDst = dst.replace(/\//g, pathMod ? pathMod.sep : "\\");
+        function finishAll(sortedCount, movedBytes) {
+            applyPanel(panelMoves, function (panelRes, panelErr) {
+                state.busy = false;
+                setBusyLabel("");
+                if (panelErr) log("Группировка: " + panelErr, "warn");
+                var summaryMsg = sortedCount
+                    ? ("Сортировка завершена: " + sortedCount +
+                        " неиспользуемых файлов перенесено в папку /unused (" +
+                        formatBytes(movedBytes) + ").")
+                    : "Сортировка завершена: переносить нечего.";
+                log(summaryMsg, sortedCount ? "good" : "neutral");
+                showActionFeedback(summaryMsg, sortedCount ? "good" : "neutral");
+                tick(true);
+                cb({ ok: true, sorted: sortedCount, moved: sortedCount, bytes: movedBytes });
+            });
+        }
 
-            var success = false;
-            if (fsMod && fsMod.existsSync(nativeSrc)) {
-                try {
-                    var srcStat = fsMod.statSync(nativeSrc);
-                    var canReuse = false;
-                    if (fsMod.existsSync(nativeDst)) {
-                        var dstStat = fsMod.statSync(nativeDst);
-                        if (dstStat.size === srcStat.size) canReuse = true;
-                    }
+        if (!tasks.length) { finishAll(0, 0); return; }
 
-                    if (canReuse) {
-                        success = true;
-                    } else {
-                        var partDst = nativeDst + ".pdpart";
-                        fsMod.copyFileSync(nativeSrc, partDst);
-                        var partStat = fsMod.statSync(partDst);
-                        if (partStat.size === srcStat.size) {
-                            if (fsMod.existsSync(nativeDst)) fsMod.unlinkSync(nativeDst);
-                            fsMod.renameSync(partDst, nativeDst);
-                            try { fsMod.unlinkSync(nativeSrc); } catch (eUnl) {}
-                            success = true;
-                        } else {
-                            try { fsMod.unlinkSync(partDst); } catch (eCl) {}
-                        }
-                    }
-                    if (success) {
-                        movedCount++;
-                        totalBytes += (srcStat ? srcStat.size : 0);
-                        relinkEntries.push({
-                            key: moveOp.item.key || ("i" + moveOp.item.id),
-                            id: moveOp.item.id,
-                            isProxy: false,
-                            expectPath: moveOp.item.path,
-                            destPath: dst,
-                            isSequence: moveOp.item.isSequence === true
-                        });
-                        panelMoves.push({ id: moveOp.item.id, target: "unused/" + moveOp.subFolder });
-                    }
-                } catch (eMove) {
-                    log("Не удалось переместить файл в unused: " + src + " — " + eMove.message, "warn");
+        /* Rule 7: the plan is journalled before the first byte. */
+        if (!journalTasks(tasks)) {
+            state.busy = false;
+            setBusyLabel("");
+            trip("JOURNAL_FAILED", "журнал операции недоступен для записи");
+            render();
+            cb({ ok: false, error: "JOURNAL_FAILED" });
+            return;
+        }
+
+        PardCopyQueue.run(
+            tasks,
+            {
+                reserveBytes: state.settings.reserveBytes,
+                freeBytes: state.disk ? state.disk.freeBytes : 0,
+                stallMs: PardCopyQueue.DEFAULT_STALL_MS
+            },
+            {
+                onTask: function (task, index, total) {
+                    setBusyLabel("Переношу " + index + "/" + total + " — " + task.name);
                 }
-            }
-        }
+            },
+            function (results) {
+                var totals = absorbCopyResults(tasks, results);
+                if (totals.copied || totals.reused) {
+                    log("Перенесено " + totals.copied + " файл. (" +
+                        formatBytes(totals.bytes) + ")" +
+                        (totals.reused ? ", переиспользовано " + totals.reused : ""), "good");
+                }
 
-        function finishAll() {
-            commitRelinkDirect(relinkEntries, function (relinkRes, relinkErr) {
-                applyPanel(panelMoves, function (panelRes, panelErr) {
+                /*
+                 * Provenance has to be durable before the relink and before
+                 * anything is removed. A manifest we could not write means no
+                 * deletion path may reach these copies, so the pass stops here
+                 * and leaves them as harmless unowned files.
+                 */
+                if (!recordManifest(tasks, results)) {
                     state.busy = false;
                     setBusyLabel("");
-                    var count = relinkEntries.length;
-                    var summaryMsg = "Сортировка завершена: " + count + " неиспользуемых файлов перемещено в папку /unused (" + formatBytes(totalBytes) + ").";
-                    log(summaryMsg, "good");
-                    showActionFeedback(summaryMsg, "good");
-                    tick(true);
-                    cb({ ok: true, sorted: count, moved: count, bytes: totalBytes });
-                });
-            });
-        }
-
-        if (copyTasks.length > 0) {
-            journalTasks(copyTasks);
-            PardCopyQueue.run(copyTasks, state.settings, {}, function (results) {
-                recordManifest(copyTasks, results);
-                for (var rIdx = 0; rIdx < results.length; rIdx++) {
-                    var cr = results[rIdx];
-                    if (cr.ok && cr.destPath) {
-                        var cTask = copyTasks[rIdx];
-                        relinkEntries.push({
-                            key: cTask.key,
-                            id: cTask.id,
-                            isProxy: false,
-                            expectPath: cTask.sourcePath,
-                            destPath: cr.destPath,
-                            isSequence: cTask.isSequence === true
-                        });
-                        panelMoves.push({ id: cTask.id, target: "unused/" + (cTask.category ? cTask.category.toUpperCase() : "OTHER") });
-                        totalBytes += (cr.bytes || cTask.size || 0);
-                    }
+                    trip("MANIFEST_FAILED",
+                        "манифест защищённых файлов недоступен для записи");
+                    render();
+                    cb({ ok: false, error: "MANIFEST_FAILED" });
+                    return;
                 }
-                finishAll();
-            });
-        } else {
-            finishAll();
-        }
+
+                commitRelink(tasks, results, function (commit, error, entries) {
+                    PardCopyQueue.removeQuietly(metadataDir() + "/pending.tsv");
+
+                    var settled = [];
+                    if (error) {
+                        log("Перелинковка: " + error, "bad");
+                        PardStats.add({ errorsTotal: 1 });
+                    } else {
+                        settled = absorbRelinkResult(tasks, commit, entries);
+                    }
+                    /* The manifest just grew, so verification needs the new rows. */
+                    PardVerify.attach(state.workspace);
+                    state.lastWeighAt = 0;
+
+                    /* Only an element whose relink actually settled is filed in
+                     * the panel: otherwise the panel would say unused/ while
+                     * the project still pointed somewhere else. */
+                    var byKey = taskMap(tasks), s, doneTask, movedBytes = 0;
+                    for (s = 0; s < settled.length; s++) {
+                        doneTask = byKey[settled[s]];
+                        if (!doneTask) continue;
+                        movedBytes += Number(doneTask.size) || 0;
+                        panelMoves.push({
+                            id: doneTask.id,
+                            target: "unused/" + doneTask.panelFolder
+                        });
+                    }
+
+                    recycleRelocated(tasks, results, settled, function () {
+                        finishAll(settled.length, movedBytes);
+                    }, { force: true, noun: "Перенесённые оригиналы" });
+                });
+            }
+        );
     }
 
     /* ------------------------------------------------------ legacy projects */

@@ -36,6 +36,7 @@
         statGen: document.getElementById("stat-gen"),
         bannerNoProject: document.getElementById("banner-no-project"),
         bannerUnsaved: document.getElementById("banner-unsaved"),
+        bannerWorkspace: document.getElementById("banner-workspace"),
         itemsCount: document.getElementById("items-count"),
         itemsList: document.getElementById("items-list"),
         itemsFilter: document.getElementById("items-filter"),
@@ -149,7 +150,23 @@
         if (el.paneLog) el.paneLog.hidden = (tabName !== "log");
     }
 
+    /*
+     * Небезопасная рабочая папка - Рабочий стол, Загрузки, профиль, системная
+     * папка. Отчёт в этом случае приходит без элементов, но каждое действие,
+     * меняющее файлы, спрашивает отдельно: пустой список и запрет - разные
+     * вещи, и владельцу надо сказать, что именно не так.
+     */
+    function workspaceBlocked(report, action) {
+        var issue = report && report.workspaceIssue;
+        if (!issue) return false;
+        var msg = action + " невозможна: " + issue;
+        log(msg, "bad");
+        showProtectBanner(msg, "bad");
+        return true;
+    }
+
     function render(report) {
+        if (el.bannerWorkspace) el.bannerWorkspace.hidden = true;
         if (!report || !report.ok) {
             if (report && report.error === "NO_ACTIVE_PROJECT") {
                 el.bannerNoProject.hidden = false;
@@ -189,6 +206,35 @@
         }
 
         el.bannerUnsaved.hidden = true;
+
+        /*
+         * Папка есть, но она не может быть рабочей. Ни одной кнопки, которая
+         * пишет файлы: иначе Рабочий стол или «Загрузки» превратятся в дерево
+         * ассетов с собственной папкой метаданных.
+         */
+        if (report.workspaceIssue) {
+            if (el.bannerWorkspace) {
+                el.bannerWorkspace.textContent = report.workspaceIssue +
+                    " Сохраните проект в отдельную папку проекта и просканируйте заново.";
+                el.bannerWorkspace.hidden = false;
+            }
+            el.projTitle.textContent = report.projectName || "Проект";
+            el.projStatus.textContent = "ПРОВЕРЬТЕ ПАПКУ";
+            el.projStatus.className = "status-badge unsaved";
+            el.projWorkspace.textContent = report.workspace || "—";
+            el.projWorkspace.title = report.workspaceIssue;
+            el.projGuid.textContent = report.projectId || "—";
+            if (el.btnProtect) el.btnProtect.disabled = true;
+            if (el.btnSortUnused) el.btnSortUnused.disabled = true;
+            if (el.btnRelinkAe) el.btnRelinkAe.hidden = true;
+            if (el.btnScanDuplicates) el.btnScanDuplicates.disabled = true;
+            updateStats(report.stats || {});
+            renderItems([]);
+            return;
+        }
+
+        if (el.btnSortUnused) el.btnSortUnused.disabled = false;
+        if (el.btnScanDuplicates) el.btnScanDuplicates.disabled = state.duplicateScanning === true;
         el.projTitle.textContent = (report.projectPath ? report.projectPath.substring(report.projectPath.lastIndexOf("/") + 1) : "Проект");
         if (state.userPaused) {
             el.projStatus.textContent = "ПАУЗА";
@@ -285,6 +331,9 @@
 
     function publishMediaSnapshot(report) {
         if (!report || !report.workspace || !report.projectId) return;
+        /* Снапшот живёт в <workspace>/.parddefender - на Рабочем столе этой
+         * папки быть не должно. */
+        if (report.workspaceIssue) return;
         var coord = (typeof PardSyncCoordinator !== "undefined") ? PardSyncCoordinator : null;
         if (!coord) {
             try { coord = require("./sync-coordinator.js"); } catch (eC) {}
@@ -641,6 +690,11 @@
                 return;
             }
 
+            if (workspaceBlocked(rep, "Защита")) {
+                state.protecting = false;
+                return;
+            }
+
             var ws = rep.workspace;
             var normWs = PardPremiereAdapter.normalizePath(ws);
             var wsMeta = typeof PardPremiereCopyEngine !== "undefined" && PardPremiereCopyEngine.loadWorkspaceMeta ? PardPremiereCopyEngine.loadWorkspaceMeta(ws) : null;
@@ -902,6 +956,8 @@
             return;
         }
 
+        if (workspaceBlocked(rep, "Сортировка")) return;
+
         var ws = rep.workspace;
         var normWs = PardPremiereAdapter.normalizePath(ws);
 
@@ -1118,6 +1174,7 @@
 
     function relinkSingleItemToAe(item) {
         if (state.duplicateScanning || state.consolidating) return;
+        if (workspaceBlocked(state.lastReport, "Перелинковка")) return;
         if (!item || !item.crossHost || !item.crossHost.canonicalPath) return;
         var proj = typeof PardPremiereAdapter !== "undefined" ? PardPremiereAdapter.resolveActiveProjectSync() : (typeof premierepro !== "undefined" ? (premierepro.Project.activeProject || (premierepro.Project.projects && premierepro.Project.projects[0])) : null);
         var pMap = buildProjectMap(proj);
@@ -1163,6 +1220,7 @@
         if (state.duplicateScanning || state.consolidating) return;
         var rep = state.lastReport;
         if (!rep || !rep.items) return;
+        if (workspaceBlocked(rep, "Перелинковка")) return;
         var items = rep.items;
         var targets = [];
         for (var i = 0; i < items.length; i++) {
@@ -1317,6 +1375,9 @@
 
     async function scanDuplicates() {
         if (state.duplicateScanning || state.consolidating || state.protecting || state.scanning) return;
+        /* Объединение дубликатов пишет в .parddefender и перелинковывает проект,
+         * так что небезопасная рабочая папка закрывает и его. */
+        if (workspaceBlocked(state.lastReport, "Проверка дубликатов")) return;
         state.duplicateScanning = true;
         state.consolidationArmedGroup = null;
         el.btnScanDuplicates.disabled = true;

@@ -260,6 +260,102 @@ var PardPremiereAdapter = (function () {
 
     api.resolveWorkspace = resolveWorkspace;
 
+    /* ------------------------------------------------- workspace safety */
+
+    /*
+     * Locations that must never become a workspace root. This is the same rule
+     * the After Effects host enforces in PardDefenderPlan.jsx, and it exists for
+     * the same reason: a project saved to the Desktop or into Downloads would
+     * otherwise turn that whole folder into an asset tree - and Downloads is
+     * precisely the folder the owner clears out in the expectation that nothing
+     * of the project lives there.
+     *
+     * Premiere had no equivalent through 2.3.4: resolveWorkspace returned a folder
+     * and protection started copying into it, metadata folder included.
+     *
+     * UXP has no Folder.desktop, so the roots are read from the environment when
+     * it is available AND recognised by path shape when it is not. Neither
+     * answer is trusted on its own.
+     */
+    function envValue(name) {
+        try {
+            if (typeof process === "undefined" || !process.env) return "";
+            return String(process.env[name] || "");
+        } catch (eEnv) { return ""; }
+    }
+
+    function systemRoots() {
+        var roots = [], i, value, profile;
+        var direct = ["USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "PUBLIC",
+            "WINDIR", "SystemRoot", "ProgramFiles", "ProgramFiles(x86)",
+            "ProgramData", "TEMP", "TMP"];
+        for (i = 0; i < direct.length; i++) {
+            value = envValue(direct[i]);
+            if (value) roots.push(normalizePath(value));
+        }
+        profile = normalizePath(envValue("USERPROFILE") || envValue("HOME"));
+        if (profile) {
+            var leaves = ["Desktop", "Downloads", "Documents", "Pictures", "Music",
+                "Videos", "OneDrive", "OneDrive/Desktop", "OneDrive/Documents"];
+            for (i = 0; i < leaves.length; i++) roots.push(profile + "/" + leaves[i]);
+        }
+        return roots;
+    }
+
+    api.systemRoots = systemRoots;
+
+    /*
+     * "" means the folder is a legitimate workspace; anything else is the reason
+     * it is not, in the owner's language, ready to show in the panel.
+     *
+     * Equality only, deliberately. A workspace INSIDE the user profile is the
+     * normal case and must stay allowed; the workspace BEING the profile, the
+     * Desktop or Downloads is what turns a whole folder into an asset tree.
+     */
+    function unsafeWorkspaceReason(workspace) {
+        var w = normalizePath(workspace), i;
+        if (!w) return "Проект не сохранён — рабочую папку определить нельзя.";
+        if (/^[a-z]:$/i.test(w) || /^[a-z]:\/$/i.test(w)) {
+            return "Корень диска не может быть рабочей папкой проекта.";
+        }
+
+        var segments = w.split("/"), filled = 0;
+        for (i = 0; i < segments.length; i++) { if (segments[i]) filled++; }
+        if (filled < 2) return "Путь рабочей папки слишком короткий.";
+
+        var lw = w.toLowerCase();
+
+        var roots = systemRoots();
+        for (i = 0; i < roots.length; i++) {
+            if (roots[i] && roots[i].toLowerCase() === lw) {
+                return "Это системная папка, она не может быть рабочей папкой проекта.";
+            }
+        }
+
+        /*
+         * Without the environment the same folders are still recognisable by
+         * shape: the profile root itself and its well-known leaves. A folder of
+         * the owner's own inside the profile does not match and stays allowed.
+         */
+        if (/^[a-z]:\/users\/[^\/]+(\/(desktop|downloads|documents|pictures|music|videos|onedrive(\/(desktop|documents))?))?$/
+                .test(lw)) {
+            return "Это системная папка, она не может быть рабочей папкой проекта.";
+        }
+
+        var badFragment = ["/windows/", "/program files", "/programdata/",
+            "/appdata/local/temp/", "/adobe after effects auto-save/",
+            "/adobe premiere pro auto-save/", "/$recycle.bin/",
+            "/system volume information/"];
+        for (i = 0; i < badFragment.length; i++) {
+            if ((lw + "/").indexOf(badFragment[i]) >= 0) {
+                return "Проект лежит внутри системной папки или папки автосохранения Adobe.";
+            }
+        }
+        return "";
+    }
+
+    api.unsafeWorkspaceReason = unsafeWorkspaceReason;
+
     var VALID_PROJECT_MEDIA_FOLDERS = [
         "01_assets",
         "03_audio",
@@ -552,6 +648,7 @@ var PardPremiereAdapter = (function () {
         var normPath = normalizePath(pPath);
         var ws = resolveWorkspace(normPath);
         var pName = proj.name || (normPath ? normPath.substring(normPath.lastIndexOf("/") + 1) : "Без названия");
+        var issue = unsafeWorkspaceReason(ws);
 
         var result = {
             ok: true,
@@ -559,8 +656,16 @@ var PardPremiereAdapter = (function () {
             projectId: guid,
             projectPath: normPath,
             projectName: pName,
-            workspace: ws
+            workspace: ws,
+            workspaceIssue: issue
         };
+
+        /*
+         * The registry lives in <workspace>/.parddefender, so the guard has to
+         * come BEFORE it: creating that folder on the Desktop is already the
+         * damage this check exists to prevent.
+         */
+        if (issue) return result;
 
         api.syncProjectRegistry(ws, guid, normPath);
         return result;
@@ -680,6 +785,29 @@ var PardPremiereAdapter = (function () {
                         projectName: idInfo.projectName,
                         projectPath: null,
                         workspace: null,
+                        workspaceIssue: "",
+                        items: [],
+                        stats: { totalItems: 0, clips: 0, sequences: 0, offline: 0, generated: 0 }
+                    });
+                    return;
+                }
+
+                /*
+                 * An unsafe workspace is reported, never scanned. The report
+                 * carries no items, so nothing downstream can build a copy task
+                 * into the Desktop or into Downloads.
+                 */
+                if (idInfo.workspaceIssue) {
+                    cb(null, {
+                        ok: true,
+                        host: "premierepro",
+                        hostVersion: getHostVersion(),
+                        projectSaved: true,
+                        projectId: idInfo.projectId,
+                        projectName: idInfo.projectName,
+                        projectPath: idInfo.projectPath,
+                        workspace: idInfo.workspace,
+                        workspaceIssue: idInfo.workspaceIssue,
                         items: [],
                         stats: { totalItems: 0, clips: 0, sequences: 0, offline: 0, generated: 0 }
                     });
@@ -2048,6 +2176,7 @@ var PardPremiereAdapter = (function () {
                                                 projectName: idInfo.projectName,
                                                 projectPath: idInfo.projectPath,
                                                 workspace: idInfo.workspace,
+                                                workspaceIssue: "",
                                                 items: collectedItems,
                                                 aeProtectedItems: Object.keys(aeProtectedByPath).map(function (key) { return aeProtectedByPath[key]; }),
                                                 stats: stats,
