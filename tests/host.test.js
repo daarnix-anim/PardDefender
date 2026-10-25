@@ -1908,6 +1908,73 @@ group("Сбор шрифтов проекта (collectProjectFonts и scanFonts)
     check("scanFontsToFile возвращает OK| путь", fileRes.indexOf("OK|") === 0, true);
 })();
 
+/* ------------------------------------------------------------ сложность */
+
+/*
+ * Раскладка панели не должна перечитывать проект заново на каждую папку.
+ *
+ * pruneEmptyManagedFolders спрашивала «пуста ли папка?» полным проходом по
+ * app.project, внутри цикла по всем папкам, внутри до шести проходов: O(6*n^2).
+ * На проекте в пять тысяч элементов это сотни миллионов обращений
+ * app.project.item(i) в однопоточном ExtendScript — минуты на каждой раскладке.
+ * Рядом так же вели себя findItemById (на каждую запись плана) и
+ * childFolderNamed (на каждый сегмент пути на каждое перемещение).
+ *
+ * Поэтому проверяется не время, а число обращений к проекту: оно зависит от
+ * машины, а требование — не сканировать проект по кругу.
+ */
+group("Раскладка панели не растёт квадратично по размеру проекта");
+(function () {
+    var env = mock.loadHost("D:/Projects/2026/Soul/04_edit/Soul.aep");
+    var host = env.host, project = env.project;
+
+    /* 02_ASSETS/<ветка>/VIDEO на сорок ветвей: 81 вложенная папка, все пустые. */
+    var branches = 40, b;
+    for (b = 0; b < branches; b++) {
+        host.ensureFolderPath(host.PANEL_ASSETS + "/Branch_" + b + "/VIDEO");
+    }
+    check("дерево папок построено", project.numItems, 1 + branches * 2);
+
+    /* Плюс футаж в корне, которому раскладка найдёт место. */
+    var moved = [], i, item;
+    for (i = 0; i < 10; i++) {
+        item = project.add(new mock.FootageItem("clip_" + i + ".mov",
+            "E:/raw/clip_" + i + ".mov"));
+        moved.push({ id: String(item.id), target: host.PANEL_ASSETS + "/Branch_0/VIDEO" });
+    }
+
+    var itemCount = project.numItems;
+    require("fs").mkdirSync(host.tempFolder(), { recursive: true });
+    var plan = host.tempFolder() + "/organize-complexity.json";
+    host.writeTextFile(plan, host.jsonEncode({ moves: moved, prune: true }));
+
+    /* Считаем обращения к проекту ровно за время раскладки. */
+    var realItem = project.item, reads = 0;
+    project.item = function (index) { reads++; return realItem.call(project, index); };
+    var result;
+    try { result = host.organizeFromFile(plan); }
+    finally { project.item = realItem; }
+
+    check("раскладка прошла без ошибки", result.ok, true);
+    check("все десять элементов разложены", result.moved, 10);
+    /* Папки Branch_1..39 и их VIDEO опустели и убраны; Branch_0/VIDEO занят. */
+    check("пустые папки убраны", result.pruned, (branches - 1) * 2);
+
+    /*
+     * Старый код на этом проекте давал бы минимум шесть проходов по всем
+     * элементам на каждую из 80 папок — десятки тысяч обращений. Новый строит
+     * индекс один раз и поддерживает его; порог взят с запасом, но он
+     * пропорционален размеру проекта, а не его квадрату.
+     */
+    check("обращений к проекту меньше, чем элементов в десятикратном размере",
+        reads < itemCount * 10, true);
+    check("и заведомо меньше квадрата", reads < itemCount * itemCount / 4, true);
+
+    /* Контроль смысла порога: сам проект достаточно велик, чтобы разница была
+     * заметна, иначе проверка ничего не значит. */
+    check("проект достаточно велик для проверки", itemCount > 80, true);
+})();
+
 /* ------------------------------------------------- поверхность API хоста */
 
 /*

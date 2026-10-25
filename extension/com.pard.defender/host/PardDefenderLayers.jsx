@@ -227,15 +227,23 @@
         return true;
     }
 
-    function hasChildren(comp, layer) {
-        var i, other, parent;
+    /*
+     * Which layer indices are somebody's parent, for one composition.
+     *
+     * Asked per candidate, this walked every layer of the composition
+     * again - O(layers^2) on exactly the compositions that have the most
+     * layers. One pass answers it for all candidates at once.
+     */
+    function collectParentIndices(comp) {
+        var parents = {}, i, other, parent;
         for (i = 1; i <= comp.numLayers; i++) {
             other = comp.layer(i);
-            if (other === layer) continue;
+            if (!other) continue;
             try { parent = other.parent; } catch (e) { parent = null; }
-            if (parent === layer) return true;
+            if (!parent) continue;
+            try { parents[parent.index] = true; } catch (e2) {}
         }
-        return false;
+        return parents;
     }
 
     /* Layer names are user text; a name that is a bare word would match half an
@@ -359,6 +367,7 @@
                 if (!candidates.length) continue;
 
                 var refs = collectReferences(comp);
+                var parentIndices = collectParentIndices(comp);
 
                 for (j = 0; j < candidates.length; j++) {
                     if (report.findings.length >= MAX_FINDINGS) {
@@ -371,7 +380,7 @@
 
                     if (refs.referenced[layer.index]) continue;
                     if (namedInExpressions(refs.expressions, str(layer.name))) continue;
-                    if (hasChildren(comp, layer)) continue;
+                    if (parentIndices[layer.index]) continue;
 
                     key = layerKey(comp, layer, source);
                     if (exceptionFor(settings, key)) continue;

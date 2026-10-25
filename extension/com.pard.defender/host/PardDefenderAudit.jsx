@@ -418,6 +418,14 @@
             };
 
             var i, item, id, branchSet = {}, k;
+            /*
+             * The composition items themselves, in the same order as
+             * report.comps. Panel eligibility needs them once `managed`
+             * exists, and findItemById per composition made that loop
+             * O(comps * numItems) - a fresh scan of the whole project for
+             * every composition in it.
+             */
+            var compItems = [];
 
             /* Pass one: compositions, so branch names are known before folders. */
             for (i = 1; i <= app.project.numItems; i++) {
@@ -458,6 +466,7 @@
                         panelPath: panelPathOf(item),
                         eligible: true
                     });
+                    compItems.push(item);
                     continue;
                 }
 
@@ -476,6 +485,7 @@
                     panelPath: panelPathOf(item),
                     eligible: true
                 });
+                compItems.push(item);
             }
 
             var branchNames = [];
@@ -871,7 +881,7 @@
 
             /* Panel eligibility for compositions, now that `managed` exists. */
             for (i = 0; i < report.comps.length; i++) {
-                var compItem = host.findItemById(report.comps[i].id);
+                var compItem = compItems[i];
                 report.comps[i].eligible = compItem
                     ? panelEligible(compItem, settings, managed)
                     : false;

@@ -119,44 +119,100 @@ var PardFontEngine = (function () {
         return res;
     }
 
+    /* fs.readSync отдаёт столько, сколько смог: добираем до конца. */
+    function readExact(fd, length, position) {
+        var buf = Buffer.alloc(length), got = 0, n;
+        while (got < length) {
+            n = fs.readSync(fd, buf, got, length - got, position + got);
+            if (!n) break;
+            got += n;
+        }
+        return got === length ? buf : buf.slice(0, got);
+    }
+
+    /*
+     * Имена одного шрифта sfnt, начинающегося со смещения base.
+     *
+     * Читается ровно то, что нужно: 12 байт заголовка, затем numTables * 16
+     * байт описаний таблиц, затем сама таблица 'name'. Три коротких чтения
+     * вместо двух мегабайт.
+     *
+     * До 2.3.5 здесь читался весь файл до 2 МБ — и так для КАЖДОГО файла в
+     * C:\Windows\Fonts, %LOCALAPPDATA%\...\Fonts и %APPDATA%\Adobe\Fonts.
+     * На обычной машине это 400-1500 файлов, то есть до двух гигабайт
+     * синхронного чтения при построении индекса, с полной блокировкой панели.
+     * Смещение таблицы 'name' при этом лежит в первых сотнях байт.
+     */
+    function readSfntNames(fd, fileSize, base, filePath, out, knownHead) {
+        if (base < 0 || base + 12 > fileSize) return;
+
+        /* Первые 12 байт уже прочитаны вызывающим, когда он опознавал ttcf. */
+        var head = knownHead || readExact(fd, 12, base);
+        if (head.length < 12) return;
+
+        var numTables = head.readUInt16BE(4);
+        /* Пустой или абсурдный заголовок: дальше читать нечего. */
+        if (numTables < 1 || numTables > 4096) return;
+
+        var recordsLength = numTables * 16;
+        if (base + 12 + recordsLength > fileSize) return;
+        var records = readExact(fd, recordsLength, base + 12);
+        if (records.length < recordsLength) return;
+
+        var nameOffset = 0, nameLength = 0, i, rec;
+        for (i = 0; i < numTables; i++) {
+            rec = i * 16;
+            if (records.toString("latin1", rec, rec + 4) !== "name") continue;
+            nameOffset = records.readUInt32BE(rec + 8);
+            nameLength = records.readUInt32BE(rec + 12);
+            break;
+        }
+        if (nameOffset <= 0 || nameLength <= 0) return;
+        if (nameOffset + nameLength > fileSize) return;
+
+        var nameBuf = readExact(fd, nameLength, nameOffset);
+        if (nameBuf.length < nameLength) return;
+
+        var names = parseNameTable(nameBuf, 0, nameLength);
+        if (names && (names.postScriptName || names.family || names.fullName)) {
+            names.filePath = filePath;
+            out.push(names);
+        }
+    }
+
     function readFontNamesFromFile(filePath) {
-        if (!fs || !fs.existsSync(filePath)) return [];
+        if (!fs || !Buffer) return [];
         var fd = null;
         try {
             var stat = fs.statSync(filePath);
-            var readLen = Math.min(stat.size, 2097152); // read up to 2MB header
-            var buf = Buffer.alloc(readLen);
-            fd = fs.openSync(filePath, "r");
-            fs.readSync(fd, buf, 0, readLen, 0);
-            fs.closeSync(fd);
-            fd = null;
+            if (!stat.isFile() || stat.size < 12) return [];
 
-            var tables = parseHeader(buf, 0);
+            fd = fs.openSync(filePath, "r");
             var out = [];
-            for (var i = 0; i < tables.length; i++) {
-                var t = tables[i];
-                var names = null;
-                if (t.nameOffset + t.nameLength <= buf.length) {
-                    names = parseNameTable(buf, t.nameOffset, t.nameLength);
-                } else {
-                    // Name table beyond 2MB buffer, read on demand
-                    var nameBuf = Buffer.alloc(t.nameLength);
-                    var fdN = fs.openSync(filePath, "r");
-                    fs.readSync(fdN, nameBuf, 0, t.nameLength, t.nameOffset);
-                    fs.closeSync(fdN);
-                    names = parseNameTable(nameBuf, 0, t.nameLength);
+
+            var head = readExact(fd, 12, 0);
+            if (head.length < 12) return [];
+
+            if (head.toString("latin1", 0, 4) === "ttcf") {
+                /* TrueType Collection: numFonts, затем массив смещений. */
+                var numFonts = head.readUInt32BE(8);
+                if (numFonts > 0 && numFonts <= 4096 &&
+                        12 + numFonts * 4 <= stat.size) {
+                    var offsets = readExact(fd, numFonts * 4, 12);
+                    for (var f = 0; f + 4 <= offsets.length; f += 4) {
+                        readSfntNames(fd, stat.size, offsets.readUInt32BE(f), filePath, out);
+                    }
                 }
-                if (names && (names.postScriptName || names.family || names.fullName)) {
-                    names.filePath = filePath;
-                    out.push(names);
-                }
+            } else {
+                readSfntNames(fd, stat.size, 0, filePath, out, head);
             }
             return out;
         } catch (err) {
+            return [];
+        } finally {
             if (fd !== null) {
                 try { fs.closeSync(fd); } catch (eC) {}
             }
-            return [];
         }
     }
 

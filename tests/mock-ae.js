@@ -374,11 +374,17 @@ MockFolder.userData = new MockFolder("C:/Users/tester/AppData/Roaming");
 /* ------------------------------------------------------------------ project */
 
 function Project() {
+    var self = this;
     this.items = [];
     this.rootFolder = new FolderItem("Root");
     this.rootFolder._project = this;
     this.file = null;
     this.renderQueue = { numItems: 0, item: function () { return null; } };
+    /* В After Effects app.project.items — это ItemCollection, и
+     * ensureFolderPath создаёт папки именно через неё. */
+    this.items.addFolder = function (name) {
+        return self.add(new FolderItem(name));
+    };
 }
 
 Object.defineProperty(Project.prototype, "numItems", {

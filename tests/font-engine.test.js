@@ -249,6 +249,129 @@ group("Безопасность копий шрифтов: коллизии, в�
     fs.rmSync(root, { recursive: true, force: true });
 })();
 
+/* --------------------------------------------------- объём чтения файла */
+
+/*
+ * Читается заголовок, а не файл.
+ *
+ * До 2.3.5 readFontNamesFromFile читала min(размер, 2 МБ) с КАЖДОГО файла в
+ * C:\Windows\Fonts, %LOCALAPPDATA%\...\Fonts и %APPDATA%\Adobe\Fonts. На этой
+ * машине 1265 файлов и 305 МБ синхронного чтения при построении индекса, с
+ * полной блокировкой панели. Смещение таблицы 'name' при этом лежит в первых
+ * сотнях байт: 12 байт заголовка плюс numTables * 16 байт описаний таблиц.
+ *
+ * Проверяется именно объём чтения, а не время: время зависит от машины и кэша
+ * диска, а требование — не читать лишнего.
+ */
+group("Объём чтения: заголовок вместо всего файла");
+(function () {
+    var root = fs.mkdtempSync(path.join(os.tmpdir(), "pd-font-reads-"));
+
+    /* Минимальный валидный sfnt: одна таблица 'name' с единственной записью
+     * nameID 6 (PostScript), положенная далеко от начала файла. */
+    function buildFont(psName, nameTableOffset, fileSize) {
+        var utf16 = Buffer.from(psName, "utf16le").swap16();   // UTF-16BE
+        var storageOffset = 6 + 12;
+        var nameTable = Buffer.alloc(storageOffset + utf16.length);
+        nameTable.writeUInt16BE(0, 0);                  // version
+        nameTable.writeUInt16BE(1, 2);                  // count
+        nameTable.writeUInt16BE(storageOffset, 4);      // storageOffset
+        nameTable.writeUInt16BE(3, 6);                  // platformID = Windows
+        nameTable.writeUInt16BE(1, 8);                  // encodingID = UCS-2
+        nameTable.writeUInt16BE(0x0409, 10);            // languageID
+        nameTable.writeUInt16BE(6, 12);                 // nameID = PostScript
+        nameTable.writeUInt16BE(utf16.length, 14);      // length
+        nameTable.writeUInt16BE(0, 16);                 // stringOffset
+        utf16.copy(nameTable, storageOffset);
+
+        var file = Buffer.alloc(fileSize);              // нули вместо глифов
+        file.writeUInt32BE(0x00010000, 0);              // sfntVersion
+        file.writeUInt16BE(1, 4);                       // numTables
+        file.write("name", 12, 4, "latin1");
+        file.writeUInt32BE(0, 16);                      // checksum
+        file.writeUInt32BE(nameTableOffset, 20);
+        file.writeUInt32BE(nameTable.length, 24);
+        nameTable.copy(file, nameTableOffset);
+        return file;
+    }
+
+    function countReads(target) {
+        var realRead = fs.readSync, bytes = 0, calls = 0, names = null;
+        fs.readSync = function (fd, buf, offset, length) {
+            calls++;
+            bytes += length;
+            return realRead.apply(fs, arguments);
+        };
+        try { names = fe.readFontNamesFromFile(target); }
+        finally { fs.readSync = realRead; }
+        return { names: names, bytes: bytes, calls: calls };
+    }
+
+    var fileSize = 320000;
+    var padded = path.join(root, "Padded Test Font.ttf");
+    fs.writeFileSync(padded, buildFont("PaddedTestFont", 250000, fileSize));
+
+    var res = countReads(padded);
+    check("имя из дальней таблицы прочитано", res.names.length, 1);
+    check("PostScript имя разобрано", res.names[0].postScriptName, "PaddedTestFont");
+    check("путь к файлу записан", res.names[0].filePath, padded);
+    /* 12 + 16 + ~46 байт. Порог с большим запасом: важно, что он не зависит
+     * от размера файла. */
+    check("прочитано меньше 4 КБ", res.bytes < 4096, true);
+    check("файл при этом в сотни раз больше прочитанного",
+        fileSize > res.bytes * 100, true);
+    check("чтений не больше трёх", res.calls <= 3, true);
+
+    /* Тот же шрифт, но файл в десять раз больше: объём чтения не меняется. */
+    var bigger = path.join(root, "Bigger Test Font.ttf");
+    fs.writeFileSync(bigger, buildFont("BiggerTestFont", 2500000, 3200000));
+    var resBig = countReads(bigger);
+    check("в большом файле имя тоже прочитано",
+        resBig.names[0].postScriptName, "BiggerTestFont");
+    check("объём чтения не зависит от размера файла", resBig.bytes, res.bytes);
+
+    /* Таблица 'name' в самом конце файла. */
+    var tail = path.join(root, "Tail Test Font.ttf");
+    var tailTable = 4096;
+    var tailFont = buildFont("TailTestFont", tailTable, tailTable + 64);
+    fs.writeFileSync(tail, tailFont);
+    check("таблица в конце файла читается",
+        countReads(tail).names[0].postScriptName, "TailTestFont");
+
+    /* Битые и обрезанные файлы: пусто, без исключений. */
+    var tooSmall = path.join(root, "tiny.ttf");
+    fs.writeFileSync(tooSmall, Buffer.alloc(8));
+    check("файл короче заголовка даёт пусто", countReads(tooSmall).names, []);
+
+    var noTables = path.join(root, "notables.ttf");
+    var empty = Buffer.alloc(64);
+    empty.writeUInt32BE(0x00010000, 0);
+    empty.writeUInt16BE(0, 4);
+    fs.writeFileSync(noTables, empty);
+    check("ноль таблиц даёт пусто", countReads(noTables).names, []);
+
+    var truncated = path.join(root, "truncated.ttf");
+    /* Смещение таблицы 'name' указывает за конец файла. */
+    var broken = buildFont("BrokenFont", 1000, 2000);
+    broken.writeUInt32BE(1900000, 20);
+    fs.writeFileSync(truncated, broken);
+    check("смещение за концом файла даёт пусто", countReads(truncated).names, []);
+
+    var notFont = path.join(root, "text.ttf");
+    fs.writeFileSync(notFont, "это вообще не шрифт, просто текст подходящей длины");
+    check("не-шрифт даёт пусто", countReads(notFont).names, []);
+
+    check("пропавший файл даёт пусто",
+        fe.readFontNamesFromFile(path.join(root, "absent.ttf")), []);
+    check("папка вместо файла даёт пусто", fe.readFontNamesFromFile(root), []);
+
+    if (path.dirname(path.resolve(root)) !== path.resolve(os.tmpdir()) ||
+            !/^pd-font-reads-/.test(path.basename(root))) {
+        throw new Error("Unsafe test cleanup path");
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+})();
+
 /* ------------------------------------------------------------------ итог */
 
 console.log("\n" + (failed === 0

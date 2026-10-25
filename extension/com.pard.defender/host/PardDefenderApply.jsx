@@ -211,17 +211,47 @@
         return ambiguous ? null : best;
     }
 
-    function layeredUsages(item, importedItems) {
-        var usages = [], p, cl, comp, layer;
+    /*
+     * Every layer of every composition, grouped by the source item it uses -
+     * one pass instead of one pass per entry of the group. A PSD with thirty
+     * layers used to walk the whole project thirty times before the first
+     * change was made.
+     *
+     * Only valid until something is replaced, so it is built once for planning
+     * and never consulted afterwards.
+     */
+    function buildLayerUsageMap(importedItems) {
+        var map = {}, p, cl, comp, layer, key;
         for (p = 1; p <= app.project.numItems; p++) {
             comp = app.project.item(p);
             if (!host.isCompItem(comp) || importedItems[comp.id]) continue;
             for (cl = 1; cl <= comp.numLayers; cl++) {
                 layer = comp.layer(cl);
-                if (layer && layer.source === item) usages.push({ layer: layer });
+                if (!layer || !layer.source) continue;
+                key = str(layer.source.id);
+                if (!map[key]) map[key] = [];
+                map[key].push({ layer: layer });
             }
         }
-        return usages;
+        return map;
+    }
+
+    /*
+     * The post-replacement check only asks "is anything still using it?", so it
+     * stops at the first hit instead of collecting every usage. It has to read
+     * the live project: the usage map was built before the replacement.
+     */
+    function hasLayerUsage(item, importedItems) {
+        var p, cl, comp, layer;
+        for (p = 1; p <= app.project.numItems; p++) {
+            comp = app.project.item(p);
+            if (!host.isCompItem(comp) || importedItems[comp.id]) continue;
+            for (cl = 1; cl <= comp.numLayers; cl++) {
+                layer = comp.layer(cl);
+                if (layer && layer.source === item) return true;
+            }
+        }
+        return false;
     }
 
     function replaceLayerSource(layer, source) {
@@ -237,9 +267,10 @@
         }
     }
 
-    function relinkLayeredGroup(destination, groupEntries, result) {
+    function relinkLayeredGroup(destination, groupEntries, result, projectIndex) {
         var itemsBefore = {}, importedItems = {}, newlyCreatedItems = [], candidates = [];
         var importErrors = [], prepared = [], i, entry, item, file, currentPath;
+        var index = projectIndex || buildProjectIndex();
         for (i = 1; i <= app.project.numItems; i++) itemsBefore[app.project.item(i).id] = true;
 
         function rememberImportedItems() {
@@ -312,7 +343,7 @@
          * imported sources or changing any composition references. */
         for (i = 0; i < groupEntries.length; i++) {
             entry = groupEntries[i];
-            item = host.findItemById(entry.id);
+            item = indexedItem(index, entry.id);
             if (!item || !host.isFootageItem(item)) {
                 failure(entry, "RELINK_ITEM_GONE", "The item is no longer in the project.");
                 continue;
@@ -339,10 +370,11 @@
         }
 
         try {
+            var usageMap = buildLayerUsageMap(importedItems);
             for (i = 0; i < prepared.length; i++) {
                 var state = prepared[i];
                 if (state.merged) continue;
-                state.usages = layeredUsages(state.item, importedItems);
+                state.usages = usageMap[str(state.item.id)] || [];
                 state.candidate = matchLayerCandidate(state.item, candidates, state.usages);
             }
             for (i = 0; i < prepared.length; i++) {
@@ -394,7 +426,7 @@
                     continue;
                 }
                 /* Never delete an original that still has a composition use. */
-                if (layeredUsages(item, importedItems).length > 0) {
+                if (hasLayerUsage(item, importedItems)) {
                     failure(entry, "LAYER_RELINK_REJECTED", "Original layer still has references; item retained.");
                     continue;
                 }
@@ -468,6 +500,8 @@
             app.beginUndoGroup("PardDefender: Relink protected sources");
             undoStarted = true;
 
+            /* One pass over the project for the whole plan, not one per entry. */
+            var index = buildProjectIndex();
             var i, entry, item, file, currentPath, saved;
             var handledKeys = {};
 
@@ -512,11 +546,11 @@
                         }
                     }
 
-                    relinkLayeredGroup(destFileCandidate, groupEntries, result);
+                    relinkLayeredGroup(destFileCandidate, groupEntries, result, index);
                     continue;
                 }
 
-                item = host.findItemById(entry.id);
+                item = indexedItem(index, entry.id);
 
                 if (!item || !host.isFootageItem(item)) {
                     result.skipped++;
@@ -631,7 +665,97 @@
 
     /* ------------------------------------------------ Project-panel folders */
 
-    function childFolderNamed(parent, name) {
+    /*
+     * One pass over app.project, three answers reused by everything below:
+     * an item by its id, how many items a folder holds, and the folder with a
+     * given name inside a given parent.
+     *
+     * Every one of those used to be a fresh scan of the whole project. The
+     * costs multiplied: findItemById per plan entry, childFolderNamed per path
+     * segment per move, and - the worst - isEmptyFolder inside a loop over all
+     * folders inside up to six passes, which is O(6 * n^2). On a project with
+     * five thousand items that is a hundred and fifty million iterations of
+     * app.project.item(i) in single-threaded ExtendScript: minutes, on every
+     * panel-organise pass.
+     *
+     * The index is maintained as the project changes rather than rebuilt:
+     * moveItem, addFolder and removeFolder keep it true, so prune still sees
+     * the project it is actually pruning.
+     */
+    function keyOfChild(parent, name) {
+        return (parent ? str(parent.id) : "root") + "\n" + str(name);
+    }
+
+    function buildProjectIndex() {
+        var index = {
+            byId: {},
+            childCount: {},
+            folderByKey: {},
+            folders: []
+        };
+        var i, item, parent, pid;
+
+        for (i = 1; i <= app.project.numItems; i++) {
+            item = app.project.item(i);
+            if (!item) continue;
+            index.byId[str(item.id)] = item;
+
+            try { parent = item.parentFolder; } catch (eParent) { parent = null; }
+            pid = parent ? str(parent.id) : "root";
+            index.childCount[pid] = (index.childCount[pid] || 0) + 1;
+
+            if (host.isFolderItem(item)) {
+                index.folders.push(item);
+                index.folderByKey[keyOfChild(parent, item.name)] = item;
+                if (index.childCount[str(item.id)] === undefined) {
+                    index.childCount[str(item.id)] = 0;
+                }
+            }
+        }
+        return index;
+    }
+
+    host.buildProjectIndex = buildProjectIndex;
+
+    function indexedItem(index, id) {
+        if (index && index.byId) {
+            var found = index.byId[str(id)];
+            if (found) return found;
+            return null;
+        }
+        return host.findItemById(id);
+    }
+
+    /* Keeps childCount and folderByKey true after the project changed. */
+    function noteMove(index, item, oldParent, newParent) {
+        if (!index) return;
+        var from = oldParent ? str(oldParent.id) : "root";
+        var to = newParent ? str(newParent.id) : "root";
+        if (from === to) return;
+        index.childCount[from] = Math.max(0, (index.childCount[from] || 0) - 1);
+        index.childCount[to] = (index.childCount[to] || 0) + 1;
+        if (host.isFolderItem(item)) {
+            delete index.folderByKey[keyOfChild(oldParent, item.name)];
+            index.folderByKey[keyOfChild(newParent, item.name)] = item;
+        }
+    }
+
+    function noteRemoved(index, item, parent) {
+        if (!index) return;
+        var pid = parent ? str(parent.id) : "root";
+        index.childCount[pid] = Math.max(0, (index.childCount[pid] || 0) - 1);
+        delete index.byId[str(item.id)];
+        if (host.isFolderItem(item)) {
+            delete index.folderByKey[keyOfChild(parent, item.name)];
+            delete index.childCount[str(item.id)];
+        }
+    }
+
+    function childFolderNamed(parent, name, index) {
+        if (index && index.folderByKey) {
+            var hit = index.folderByKey[keyOfChild(parent, name)];
+            return hit ? hit : null;
+        }
         var i, item;
         for (i = 1; i <= app.project.numItems; i++) {
             item = app.project.item(i);
@@ -642,16 +766,24 @@
         return null;
     }
 
-    function ensureFolderPath(pathText) {
+    function ensureFolderPath(pathText, index) {
         var segments = host.slashes(pathText).split("/");
         var parent = app.project.rootFolder, i, name, folder;
         for (i = 0; i < segments.length; i++) {
             name = host.trimText(segments[i]);
             if (!name) continue;
-            folder = childFolderNamed(parent, name);
+            folder = childFolderNamed(parent, name, index);
             if (!folder) {
                 folder = app.project.items.addFolder(name);
                 folder.parentFolder = parent;
+                if (index) {
+                    index.byId[str(folder.id)] = folder;
+                    index.folders.push(folder);
+                    index.folderByKey[keyOfChild(parent, name)] = folder;
+                    index.childCount[str(folder.id)] = 0;
+                    index.childCount[parent ? str(parent.id) : "root"] =
+                        (index.childCount[parent ? str(parent.id) : "root"] || 0) + 1;
+                }
             }
             parent = folder;
         }
@@ -689,26 +821,29 @@
             app.beginUndoGroup("PardDefender: Organise project panel");
             undoStarted = true;
 
-            var i, move, item, target;
+            var index = buildProjectIndex();
+            var i, move, item, target, before;
             for (i = 0; i < plan.moves.length; i++) {
                 move = plan.moves[i];
-                item = host.findItemById(move.id);
+                item = indexedItem(index, move.id);
                 if (!item || host.isFolderItem(item)) { result.skipped++; continue; }
 
                 target = host.trimText(move.target)
-                    ? ensureFolderPath(move.target)
+                    ? ensureFolderPath(move.target, index)
                     : app.project.rootFolder;
 
                 if (item.parentFolder === target) { result.skipped++; continue; }
                 try {
+                    before = item.parentFolder;
                     item.parentFolder = target;
+                    noteMove(index, item, before, target);
                     result.moved++;
                 } catch (moveError) {
                     result.skipped++;
                 }
             }
 
-            if (plan.prune === true) result.pruned = pruneEmptyManagedFolders();
+            if (plan.prune === true) result.pruned = pruneEmptyManagedFolders(index);
         } catch (error) {
             result.ok = false;
             result.error = str(error) + " (line " + str(error.line) + ")";
@@ -727,9 +862,10 @@
      * at all, and only inside our three managed roots. A folder the owner made
      * is never a candidate even if it happens to be empty right now.
      */
-    function pruneEmptyManagedFolders() {
+    function pruneEmptyManagedFolders(projectIndex) {
         var roots = [host.PANEL_COMPS, host.PANEL_ASSETS, host.PANEL_AUDIO];
-        var removed = 0, pass, i, item, changed = true;
+        var index = projectIndex || buildProjectIndex();
+        var removed = 0, pass, i, item, parent, changed = true;
 
         function insideManagedRoot(folder) {
             var current = folder, depth = 0, name;
@@ -744,24 +880,34 @@
             return false;
         }
 
+        /*
+         * "Empty" is read from the index, not re-counted by scanning the whole
+         * project per folder. That scan inside this loop inside up to six
+         * passes was the O(6 * n^2) in the audit.
+         */
         function isEmptyFolder(folder) {
-            var j;
-            for (j = 1; j <= app.project.numItems; j++) {
-                if (app.project.item(j).parentFolder === folder) return false;
-            }
-            return true;
+            return (index.childCount[str(folder.id)] || 0) === 0;
         }
 
         /* Removing a leaf can empty its parent, so repeat until stable. */
         for (pass = 0; pass < 6 && changed; pass++) {
             changed = false;
-            for (i = app.project.numItems; i >= 1; i--) {
-                item = app.project.item(i);
-                if (!host.isFolderItem(item)) continue;
-                if (item.parentFolder === app.project.rootFolder) continue;
+            for (i = index.folders.length - 1; i >= 0; i--) {
+                item = index.folders[i];
+                if (!item) continue;
+                /* Already removed in an earlier pass. */
+                if (!index.byId[str(item.id)]) { index.folders[i] = null; continue; }
+                try { parent = item.parentFolder; } catch (eParent) { continue; }
+                if (!parent || parent === app.project.rootFolder) continue;
                 if (!insideManagedRoot(item)) continue;
                 if (!isEmptyFolder(item)) continue;
-                try { item.remove(); removed++; changed = true; } catch (e) {}
+                try {
+                    item.remove();
+                    noteRemoved(index, item, parent);
+                    index.folders[i] = null;
+                    removed++;
+                    changed = true;
+                } catch (e) {}
             }
         }
         return removed;
@@ -876,9 +1022,10 @@
             app.beginUndoGroup("PardDefender: Remove unused footage");
             undoStarted = true;
 
+            var removeIndex = buildProjectIndex();
             var i, item, usedIn;
             for (i = 0; i < plan.ids.length; i++) {
-                item = host.findItemById(plan.ids[i]);
+                item = indexedItem(removeIndex, plan.ids[i]);
                 if (!item || !host.isFootageItem(item)) { result.skipped++; continue; }
 
                 try { usedIn = item.usedIn || []; } catch (eUsed) { usedIn = null; }
@@ -938,7 +1085,8 @@
             return result;
         }
 
-        var canonicalItem = host.findItemById(plan.canonicalId);
+        var consolidateIndex = buildProjectIndex();
+        var canonicalItem = indexedItem(consolidateIndex, plan.canonicalId);
         if (!canonicalItem || !host.isFootageItem(canonicalItem)) {
             result.ok = false;
             result.error = "Canonical project item not found (ID: " + str(plan.canonicalId) + ").";
@@ -999,7 +1147,7 @@
             /* Step 2: Remove unreferenced duplicate items */
             for (var dupKey in dupIdMap) {
                 if (!dupIdMap.hasOwnProperty(dupKey)) continue;
-                var dupItem = host.findItemById(dupKey);
+                var dupItem = indexedItem(consolidateIndex, dupKey);
                 if (!dupItem) {
                     result.skippedItems++;
                     continue;

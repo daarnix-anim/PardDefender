@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **71** · связей: **167** · собрано: 2026-10-25 16:04
+Файлов: **71** · связей: **167** · собрано: 2026-10-25 16:57
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -15,7 +15,7 @@
 
 ### `PardDefenderApply.jsx`
 
-`extension/com.pard.defender/host/PardDefenderApply.jsx` · 1053 строк · работает
+`extension/com.pard.defender/host/PardDefenderApply.jsx` · 1201 строк · работает
 
 Две мутирующие операции: перелинковка на проверенную копию с сохранением интерпретации и раскладка панели проекта.
 
@@ -23,7 +23,7 @@
 
 ### `PardDefenderAudit.jsx`
 
-`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 957 строк · работает
+`extension/com.pard.defender/host/PardDefenderAudit.jsx` · 967 строк · работает
 
 Один проход по проекту → один JSON-отчёт: где что лежит, куда должно попасть на диске и в панели. Решений о времени не принимает.
 
@@ -39,7 +39,7 @@
 
 ### `PardDefenderLayers.jsx`
 
-`extension/com.pard.defender/host/PardDefenderLayers.jsx` · 484 строк · работает
+`extension/com.pard.defender/host/PardDefenderLayers.jsx` · 493 строк · работает
 
 Ищет выключенные и забытые слои в композициях и композиции, которые никуда не входят и не помечены. Отсекает всё, что выключено по делу.
 
@@ -157,7 +157,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `font-engine.js`
 
-`extension/com.pard.defender/client/font-engine.js` · 573 строк · работает
+`extension/com.pard.defender/client/font-engine.js` · 629 строк · работает
 
 Обнаружение системных шрифтов, парсинг TTF/OTF заголовков и синхронизация шрифтов проекта в папку Fonts.
 
@@ -343,7 +343,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `font-engine.test.js`
 
-`tests/font-engine.test.js` · 259 строк · работает
+`tests/font-engine.test.js` · 382 строк · работает
 
 Проверки модуля font-engine: парсинг TTF/OTF, индексация, сопоставление и синхронизация в Fonts.
 
@@ -361,7 +361,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `host.test.js`
 
-`tests/host.test.js` · 1972 строк · работает
+`tests/host.test.js` · 2039 строк · работает
 
 186 проверок хоста: рабочая папка, ветки, маршруты, многослойные PSD/AI, секвенции, границы раскладки.
 
@@ -371,7 +371,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `mock-ae.js`
 
-`tests/mock-ae.js` · 506 строк · работает
+`tests/mock-ae.js` · 512 строк · работает
 
 Мок объектной модели After Effects: настоящие .jsx загружаются через vm.
 
