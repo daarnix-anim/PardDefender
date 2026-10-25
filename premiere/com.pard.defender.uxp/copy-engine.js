@@ -1118,9 +1118,32 @@ var PardPremiereCopyEngine = (function () {
         streamFile(filePath).then(function (result) { callback(null, result.hash); }, callback);
     };
 
+    /*
+     * Свой журнал у каждого хоста.
+     *
+     * До 2.3.5 After Effects и Premiere писали в один <workspace>/.parddefender/
+     * pending.tsv при несовместимых форматах: у AE четыре колонки
+     * (ts, key, src, dest), у Premiere пять (ts, id, src, dest, part). AE писал
+     * файл целиком через writeText, то есть началом своего прохода стирал
+     * журнал незавершённого копирования Premiere, а восстановление каждого из
+     * них удаляло файл целиком вместе со строками другого.
+     */
+    var JOURNAL_NAME = "pending-premiere.tsv";
+    var LEGACY_JOURNAL_NAME = "pending.tsv";
+
+    api.JOURNAL_NAME = JOURNAL_NAME;
+    api.LEGACY_JOURNAL_NAME = LEGACY_JOURNAL_NAME;
+
     function pendingFile(workspace) {
-        return normalizePath(workspace) + "/.parddefender/pending.tsv";
+        return normalizePath(workspace) + "/.parddefender/" + JOURNAL_NAME;
     }
+
+    function legacyPendingFile(workspace) {
+        return normalizePath(workspace) + "/.parddefender/" + LEGACY_JOURNAL_NAME;
+    }
+
+    api.pendingFile = pendingFile;
+    api.legacyPendingFile = legacyPendingFile;
 
     function assetsFile(workspace) {
         return normalizePath(workspace) + "/.parddefender/assets.tsv";
@@ -1129,13 +1152,18 @@ var PardPremiereCopyEngine = (function () {
     api.assetsFile = assetsFile;
     api.nativePath = nativePath;
 
-    api.recoverPending = function (workspace) {
-        if (!fs || !workspace) return { recovered: 0, removedParts: [] };
-        var pFile = pendingFile(workspace);
-        if (!fileExists(nativePath(pFile))) return { recovered: 0, removedParts: [] };
-
-        var recovered = 0;
-        var removed = [];
+    /*
+     * Откатывает один журнал. Удаляется ровно то, что в нём записано: путь
+     * недописанного файла известен точно, папка не просматривается, чужие
+     * .pdpart не трогаются никогда.
+     *
+     * keepForeign: строки, которые не наши (ровно четыре колонки - формат AE),
+     * остаются в файле, и файл удаляется только когда своих строк не осталось.
+     * Откатывать копирование After Effects не наше дело.
+     */
+    function sweepJournal(pFile, keepForeign, removed) {
+        var recovered = 0, kept = [];
+        if (!fileExists(nativePath(pFile))) return { recovered: 0, kept: 0 };
         try {
             var raw = fs.readFileSync(nativePath(pFile), { encoding: "utf-8" });
             var lines = raw.split("\n");
@@ -1144,21 +1172,42 @@ var PardPremiereCopyEngine = (function () {
                 if (!line) continue;
                 var cols = line.split("\t");
                 // cols: timestamp, taskId, sourcePath, destPath, partPath
-                if (cols.length >= 5) {
-                    var nPart = nativePath(cols[4]);
-                    if (fileExists(nPart)) {
-                        try {
-                            fs.unlinkSync(nPart);
-                            removed.push(cols[4]);
-                            recovered++;
-                        } catch (eDel) {}
-                    }
+                if (cols.length < 5) {
+                    if (keepForeign) kept.push(line);
+                    continue;
+                }
+                var nPart = nativePath(cols[4]);
+                if (fileExists(nPart)) {
+                    try {
+                        fs.unlinkSync(nPart);
+                        removed.push(cols[4]);
+                        recovered++;
+                    } catch (eDel) {}
                 }
             }
-            fs.unlinkSync(nativePath(pFile));
+            if (kept.length) {
+                fs.writeFileSync(nativePath(pFile), kept.join("\n") + "\n",
+                    { encoding: "utf-8" });
+            } else {
+                fs.unlinkSync(nativePath(pFile));
+            }
         } catch (eRec) {}
+        return { recovered: recovered, kept: kept.length };
+    }
 
-        return { recovered: recovered, removedParts: removed };
+    api.recoverPending = function (workspace) {
+        if (!fs || !workspace) return { recovered: 0, removedParts: [], keptForeignRows: 0 };
+
+        var removed = [];
+        var own = sweepJournal(pendingFile(workspace), false, removed);
+        /* Журнал версий до 2.3.5 был общим. Берём из него только свои строки. */
+        var legacy = sweepJournal(legacyPendingFile(workspace), true, removed);
+
+        return {
+            recovered: own.recovered + legacy.recovered,
+            removedParts: removed,
+            keptForeignRows: legacy.kept
+        };
     };
 
     function journalTask(workspace, task, partPath, callback) {

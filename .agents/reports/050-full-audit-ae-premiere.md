@@ -103,7 +103,12 @@ if (partStat.size === srcStat.size) {
 
 ## B. Серьёзное — функция не работает или врёт об успехе
 
-### B-1. Хост AE не имеет метода `removeItemsFromFileJson` — очистка неиспользуемых молча не доводится до конца
+> **Исправлено 2026-10-25/26.**
+> B-1, B-2, B-4, B-5, B-6, B-7 — см. [`052-group-b-fixes.md`](052-group-b-fixes.md).
+> B-3 — см. [`053-b3-split-copy-journals.md`](053-b3-split-copy-journals.md).
+> Группа B закрыта целиком. Проверки: 1 669 в 16 наборах, зелено.
+
+### B-1. ~~Хост AE не имеет метода `removeItemsFromFileJson` — очистка неиспользуемых молча не доводится до конца~~ — ИСПРАВЛЕНО
 
 - Клиент зовёт: `extension/com.pard.defender/client/host-adapter.js:152`
   → `$.global.PardDefenderHost.removeItemsFromFileJson('…')`
@@ -134,7 +139,7 @@ host.removeItemsFromFileJson = function (planPath) {
 };
 ```
 
-### B-2. Поиск дубликатов секвенций в After Effects не работает никогда
+### B-2. ~~Поиск дубликатов секвенций в After Effects не работает никогда~~ — ИСПРАВЛЕНО
 
 `extension/com.pard.defender/client/duplicate-index.js:414-418` ждёт
 `item.sequence.files` (массив кадров) и `item.sequence.pattern`:
@@ -166,7 +171,7 @@ if (!frames.length) { currentStep++; nextSeq(); return; }   // всегда зд
 `duplicate-index` понимать дескриптор хоста напрямую. Второе честнее — тест тогда
 проверит требование.
 
-### B-3. `pending.tsv` общий для двух хостов, и они затирают журналы друг другу
+### B-3. ~~`pending.tsv` общий для двух хостов, и они затирают журналы друг другу~~ — ИСПРАВЛЕНО
 
 Один и тот же файл `<workspace>/.parddefender/pending.tsv`, но разные форматы и
 несовместимые процедуры восстановления:
@@ -188,7 +193,7 @@ if (!frames.length) { currentStep++; nextSeq(); return; }   // всегда зд
    назначения — включая тот, в который Premiere **прямо сейчас пишет**. Premiere
    затем упадёт на `stat` своей части.
 
-### B-4. `Premiere.recoverPending` написан, но нигде не вызывается
+### B-4. ~~`Premiere.recoverPending` написан, но нигде не вызывается~~ — ИСПРАВЛЕНО
 
 `premiere/com.pard.defender.uxp/copy-engine.js:1131` — единственные вызовы в
 репозитории это `tests/premiere-protection.test.js:119`. В `main.js` плагина
@@ -198,7 +203,7 @@ Premiere вызова нет (`init()` зовёт только `triggerAudit` и
 не откатывает незавершённое**: `.pdpart` после краха остаются на диске, а
 `pending.tsv` растёт. Починка — один вызов в `init()`.
 
-### B-5. `PardConsolidation.executeRelink` рапортует успех, когда хост вернул отказ
+### B-5. ~~`PardConsolidation.executeRelink` рапортует успех, когда хост вернул отказ~~ — ИСПРАВЛЕНО
 
 `extension/com.pard.defender/client/consolidation.js:398-410`
 
@@ -224,7 +229,7 @@ var failures = parsed.failures || [];
 имеет — там `commitRelink` отдаёт `parsed.ok ? "" : parsed.error` и `absorbRelinkResult`
 вообще не вызывается при непустом `error`. Нужна та же проверка здесь.
 
-### B-6. Событие консолидации в журнале теряет все свои данные
+### B-6. ~~Событие консолидации в журнале теряет все свои данные~~ — ИСПРАВЛЕНО
 
 `consolidation.js:569` передаёт поля верхним уровнем:
 
@@ -250,7 +255,7 @@ var record = { …, type: …, projectId: …, host: …, payload: ev.payload ||
 Запись в `events.jsonl` получается с `payload: {}`. `sync-coordinator.js` (и AE, и
 Premiere) оборачивает в `payload` правильно — расходится только этот один вызов.
 
-### B-7. Четыре кода ошибок не зарегистрированы в `PardIssues`
+### B-7. ~~Четыре кода ошибок не зарегистрированы в `PardIssues`~~ — ИСПРАВЛЕНО
 
 Автопроверка кодов:
 

@@ -144,7 +144,7 @@ function uxpFs(errorStyle) {
     const badFs = uxpFs();
     const realWrite = badFs.writeFile;
     badFs.writeFile = (...args) => {
-        if (args[0].endsWith("pending.tsv")) return Promise.reject(Object.assign(new Error("journal denied"), { code: "EACCES" }));
+        if (args[0].endsWith(engine.JOURNAL_NAME)) return Promise.reject(Object.assign(new Error("journal denied"), { code: "EACCES" }));
         return realWrite(...args);
     };
     engine.setFs(badFs);

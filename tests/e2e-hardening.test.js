@@ -445,6 +445,120 @@ steps.push(function (next) {
     next();
 });
 
+/* ========================================================================= */
+/*
+ * Два хоста в одной рабочей папке и их журналы незавершённого копирования.
+ *
+ * До 2.3.5 оба писали в ОДИН <workspace>/.parddefender/pending.tsv, при
+ * несовместимых форматах — четыре колонки у AE против пяти у Premiere — и при
+ * несовместимых процедурах откат. Отсюда два реальных следствия:
+ *
+ *   1. AE писал журнал целиком через writeText, то есть началом своего прохода
+ *      стирал записи Premiere о незавершённом копировании;
+ *   2. откат AE удалял ВСЕ .pdpart в папке назначения, а запускается он на
+ *      каждую смену проекта — то есть мог снести файл, в который Premiere
+ *      писал прямо в этот момент.
+ *
+ * Набор воспроизводит именно это: журналы раздельны, и каждый хост трогает
+ * только свои недописанные файлы.
+ */
+steps.push(function (next) {
+    group("12. Раздельные журналы двух хостов в одной рабочей папке");
+
+    var ws = testDir + "/ws_journals";
+    var meta = ws + "/.parddefender";
+    var videoDir = ws + "/01_assets/_SHARED/VIDEO";
+    mkdir(meta);
+    mkdir(videoDir);
+
+    check("журналы хостов — разные файлы",
+        PardCopyQueue.JOURNAL_NAME !== PardPremiereCopyEngine.JOURNAL_NAME, true);
+    check("имя журнала AE", PardCopyQueue.JOURNAL_NAME, "pending-ae.tsv");
+    check("имя журнала Premiere", PardPremiereCopyEngine.JOURNAL_NAME, "pending-premiere.tsv");
+
+    /* Premiere в процессе копирования: журнал и недописанный файл. */
+    var premierePart = videoDir + "/premiere_clip.mov.pptoken.pdpart";
+    writeFile(premierePart, "PREMIERE IS WRITING THIS RIGHT NOW");
+    var premiereJournal = meta + "/" + PardPremiereCopyEngine.JOURNAL_NAME;
+    writeFile(premiereJournal, [new Date().toISOString(), "p1", ws + "/src.mov",
+        videoDir + "/premiere_clip.mov", premierePart].join("\t") + "\n");
+
+    /* AE начинает свой проход: пишет свой журнал целиком. */
+    var aeJournal = PardCopyQueue.journalPath(meta);
+    var aeToken = PardCopyQueue.newPartToken();
+    var aePart = PardCopyQueue.partialNameFor(videoDir + "/ae_clip.mp4", aeToken);
+    writeFile(aePart, "AE HALF");
+    check("запись журнала AE удалась", PardCopyQueue.writeText(aeJournal,
+        [new Date().toISOString(), "i1", ws + "/src.mp4",
+            videoDir + "/ae_clip.mp4", aeToken].join("\t") + "\n"), true);
+
+    check("журнал Premiere не затёрт проходом AE",
+        fs.existsSync(nativePath(premiereJournal)), true);
+    check("и его содержимое целое",
+        fs.readFileSync(nativePath(premiereJournal), "utf8").indexOf(premierePart) >= 0, true);
+
+    /* Откат AE — он запускается на каждую смену проекта. */
+    var aeRec = PardCopyQueue.recoverJournal(aeJournal);
+    check("AE убрал свой недописанный файл", aeRec.removedPartials, 1);
+    check("свой .pdpart действительно удалён", fs.existsSync(nativePath(aePart)), false);
+    check("AE НЕ тронул недописанный файл Premiere",
+        fs.existsSync(nativePath(premierePart)), true);
+    check("и его содержимое не изменилось",
+        fs.readFileSync(nativePath(premierePart), "utf8"), "PREMIERE IS WRITING THIS RIGHT NOW");
+    check("чужой .pdpart посчитан как неопознанный", aeRec.unattributed, 1);
+    check("журнал Premiere после отката AE на месте",
+        fs.existsSync(nativePath(premiereJournal)), true);
+
+    /* Теперь откат Premiere — он не должен зависеть от того, что делал AE. */
+    var premRec = PardPremiereCopyEngine.recoverPending(ws);
+    check("Premiere убрал свой недописанный файл", premRec.recovered, 1);
+    check("и он действительно удалён", fs.existsSync(nativePath(premierePart)), false);
+    check("свой журнал Premiere удалил", fs.existsSync(nativePath(premiereJournal)), false);
+    check("журнал AE уже был убран своим откатом",
+        fs.existsSync(nativePath(aeJournal)), false);
+
+    next();
+});
+
+steps.push(function (next) {
+    group("13. Старый общий журнал: каждый хост забирает только свои строки");
+
+    var ws = testDir + "/ws_legacy_shared";
+    var meta = ws + "/.parddefender";
+    var videoDir = ws + "/01_assets/_SHARED/VIDEO";
+    mkdir(meta);
+    mkdir(videoDir);
+
+    var aePart = videoDir + "/old_ae.mp4.oldrandom.pdpart";
+    var premierePart = videoDir + "/old_premiere.mov.pp.pdpart";
+    writeFile(aePart, "AE HALF");
+    writeFile(premierePart, "PREMIERE HALF");
+
+    var legacy = meta + "/" + PardCopyQueue.LEGACY_JOURNAL_NAME;
+    var aeRow = [new Date().toISOString(), "i1", ws + "/a.mp4",
+        videoDir + "/old_ae.mp4"].join("\t");
+    var premiereRow = [new Date().toISOString(), "p1", ws + "/b.mov",
+        videoDir + "/old_premiere.mov", premierePart].join("\t");
+    writeFile(legacy, aeRow + "\n" + premiereRow + "\n");
+
+    /* Сначала AE: своя строка из четырёх колонок, чужая остаётся. */
+    var aeRec = PardCopyQueue.recoverJournal(
+        PardCopyQueue.legacyJournalPath(meta), { ownColumns: 4, keepForeign: true });
+    check("AE забрал свою строку", aeRec.removedPartials, 1);
+    check("недописанный файл AE убран", fs.existsSync(nativePath(aePart)), false);
+    check("недописанный файл Premiere на месте", fs.existsSync(nativePath(premierePart)), true);
+    check("общий журнал сохранён ради чужой строки",
+        fs.existsSync(nativePath(legacy)), true);
+
+    /* Затем Premiere: забирает свою, и теперь файл можно удалить. */
+    var premRec = PardPremiereCopyEngine.recoverPending(ws);
+    check("Premiere забрал свою строку", premRec.recovered, 1);
+    check("недописанный файл Premiere убран", fs.existsSync(nativePath(premierePart)), false);
+    check("опустевший общий журнал удалён", fs.existsSync(nativePath(legacy)), false);
+
+    next();
+});
+
 /* Runner */
 function runSteps(idx) {
     if (idx >= steps.length) {

@@ -299,6 +299,117 @@ steps.push(function (next) {
     next();
 });
 
+/*
+ * Откат удаляет ТОЛЬКО свои недописанные файлы.
+ *
+ * До 2.3.5 он сносил все .pdpart в папке назначения, потому что имя
+ * недописанного файла было случайным и нигде не записывалось. На общей рабочей
+ * папке это удаляло файл, в который Premiere писал прямо в этот момент: откат
+ * After Effects запускается на каждую смену проекта, а не только на старте.
+ *
+ * Теперь у задачи есть токен, он же в имени .pdpart, он же в журнале.
+ */
+steps.push(function (next) {
+    group("Откат трогает только свои .pdpart");
+
+    check("имя .pdpart собирается из токена",
+        queue.partialNameFor(dest + "/own.mp4", "TOK123"),
+        dest + "/own.mp4.TOK123.pdpart");
+    check("без токена имя всё равно уникально",
+        queue.partialNameFor(dest + "/own.mp4") === queue.partialNameFor(dest + "/own.mp4"),
+        false);
+
+    var ourPart = queue.partialNameFor(dest + "/own.mp4", "TOK123");
+    var foreignPart = dest + "/premiere_clip.mov.OTHER.pdpart";
+    var foreignSameName = dest + "/own.mp4.SOMEONEELSE.pdpart";
+    fs.writeFileSync(ourPart.replace(/\//g, path.sep), "our half");
+    fs.writeFileSync(foreignPart.replace(/\//g, path.sep), "premiere half");
+    fs.writeFileSync(foreignSameName.replace(/\//g, path.sep), "another host, same destination");
+
+    var journal2 = root + "/workspace/.parddefender/pending-ae.tsv";
+    check("путь журнала строится модулем",
+        queue.journalPath(root + "/workspace/.parddefender"), journal2);
+    queue.writeText(journal2, [
+        new Date().toISOString(), "i7", src + "/clip.mp4", dest + "/own.mp4", "TOK123"
+    ].join("\t") + "\n");
+
+    var res = queue.recoverJournal(journal2);
+    check("свой недописанный файл убран", readFile(ourPart), null);
+    check("чужой .pdpart в той же папке на месте", readFile(foreignPart), "premiere half");
+    check("чужой .pdpart с тем же назначением тоже на месте",
+        readFile(foreignSameName), "another host, same destination");
+    check("удалён ровно один", res.removedPartials, 1);
+    check("неопознанные посчитаны, но не тронуты", res.unattributed, 2);
+    check("свой журнал удалён", queue.readText(journal2), null);
+
+    fs.unlinkSync(foreignPart.replace(/\//g, path.sep));
+    fs.unlinkSync(foreignSameName.replace(/\//g, path.sep));
+    next();
+});
+
+steps.push(function (next) {
+    group("Откат секвенции: назначение — папка, токен один на все кадры");
+    var seqFolder = dest + "/SEQUENCES/shot";
+    fs.mkdirSync(seqFolder.replace(/\//g, path.sep), { recursive: true });
+    var frame1 = queue.partialNameFor(seqFolder + "/shot_0001.png", "SEQTOK");
+    var frame2 = queue.partialNameFor(seqFolder + "/shot_0002.png", "SEQTOK");
+    var alien = seqFolder + "/shot_0003.png.NOTOURS.pdpart";
+    fs.writeFileSync(frame1.replace(/\//g, path.sep), "f1");
+    fs.writeFileSync(frame2.replace(/\//g, path.sep), "f2");
+    fs.writeFileSync(alien.replace(/\//g, path.sep), "not ours");
+
+    /* Для секвенции в журнале лежит ПАПКА, а не файл. */
+    var journal3 = root + "/workspace/.parddefender/pending-ae.tsv";
+    queue.writeText(journal3, [
+        new Date().toISOString(), "i8", src + "/shot_0001.png", seqFolder, "SEQTOK"
+    ].join("\t") + "\n");
+
+    var res = queue.recoverJournal(journal3);
+    check("оба своих кадра убраны", [readFile(frame1), readFile(frame2)], [null, null]);
+    check("чужой кадр на месте", readFile(alien), "not ours");
+    check("удалено ровно два", res.removedPartials, 2);
+    next();
+});
+
+/*
+ * Общий журнал версий до 2.3.5. Строки AE там ровно из четырёх колонок, строки
+ * Premiere — из пяти, и у каждого хоста своя процедура отката. Каждый забирает
+ * только свои строки, а файл исчезает лишь когда чужих в нём не осталось:
+ * откатывать копирование другого хоста — не наше дело.
+ */
+steps.push(function (next) {
+    group("Старый общий журнал: забираем только свои строки");
+    var legacy = root + "/workspace/.parddefender/pending.tsv";
+    var aePart = dest + "/legacy_ae.mp4.oldtoken.pdpart";
+    var premierePart = dest + "/legacy_premiere.mov.pp.pdpart";
+    fs.writeFileSync(aePart.replace(/\//g, path.sep), "ae half");
+    fs.writeFileSync(premierePart.replace(/\//g, path.sep), "premiere half");
+
+    var aeRow = [new Date().toISOString(), "i9", src + "/a.mp4",
+        dest + "/legacy_ae.mp4"].join("\t");
+    var premiereRow = [new Date().toISOString(), "p1", src + "/b.mov",
+        dest + "/legacy_premiere.mov", premierePart].join("\t");
+    queue.writeText(legacy, aeRow + "\n" + premiereRow + "\n");
+
+    var res = queue.recoverJournal(legacy, { ownColumns: 4, keepForeign: true });
+    check("своя строка без токена опознана по имени назначения", res.removedPartials, 1);
+    check("недописанный файл AE убран", readFile(aePart), null);
+    check("недописанный файл Premiere не тронут", readFile(premierePart), "premiere half");
+    check("чужая строка сохранена", res.keptRows, 1);
+
+    var left = queue.readText(legacy);
+    check("общий журнал не удалён, пока в нём чужие строки", left !== null, true);
+    check("в нём осталась ровно строка Premiere", left.trim(), premiereRow);
+
+    /* Второй проход: своих строк больше нет, удалять нечего. */
+    var res2 = queue.recoverJournal(legacy, { ownColumns: 4, keepForeign: true });
+    check("повторный откат ничего не удаляет", res2.removedPartials, 0);
+    check("и строку Premiere по-прежнему хранит", queue.readText(legacy).trim(), premiereRow);
+
+    fs.unlinkSync(premierePart.replace(/\//g, path.sep));
+    next();
+});
+
 steps.push(function (next) {
     group("Ключ задачи и список прочитанных исходников");
     /*

@@ -897,6 +897,20 @@
     };
 
     /*
+     * The client speaks JSON over evalScript, so every entry point it calls
+     * needs a ...Json twin. This one was missing: the panel called
+     * removeItemsFromFileJson, ExtendScript threw "undefined is not a
+     * function", evalScript answered "EvalScript error.", the client's
+     * JSON.parse produced null, and BOTH of its logging branches were skipped.
+     * The files were already in the Recycle Bin by then, so the owner was left
+     * with offline footage in the Project panel and not a word about why.
+     * host.test.js now cross-checks the whole adapter surface against the host.
+     */
+    host.removeItemsFromFileJson = function (planPath) {
+        return host.jsonEncode(host.removeItemsFromFile(planPath));
+    };
+
+    /*
      * Consolidates duplicate project items in After Effects: replaces usages
      * of duplicate items in all compositions with the canonical item, then
      * removes the redundant duplicate items from the Project panel.

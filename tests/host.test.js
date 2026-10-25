@@ -1908,6 +1908,60 @@ group("Сбор шрифтов проекта (collectProjectFonts и scanFonts)
     check("scanFontsToFile возвращает OK| путь", fileRes.indexOf("OK|") === 0, true);
 })();
 
+/* ------------------------------------------------- поверхность API хоста */
+
+/*
+ * Клиент зовёт хост по имени через evalScript, и ошибку в этом имени не видит
+ * никто: ExtendScript бросает «undefined is not a function», evalScript
+ * отвечает строкой "EvalScript error.", JSON.parse на клиенте даёт null — и
+ * обработчик уходит в ветку «ничего не делаем».
+ *
+ * Так и прожил removeItemsFromFileJson: клиент его звал, хост определял только
+ * removeItemsFromFile. Файлы к этому моменту уже лежали в Корзине, а в панели
+ * проекта оставались offline-элементы — без единого слова в журнале.
+ *
+ * Старый тест сверял СТРОКУ скрипта, которую собирает адаптер, то есть
+ * проверял, что код делает то, что делает. Здесь сверяется требование: всё,
+ * что адаптер зовёт, у хоста есть.
+ */
+group("Каждый метод, который зовёт адаптер, существует у хоста");
+(function () {
+    var adapterSource = fs.readFileSync(
+        path.join(__dirname, "..", "extension", "com.pard.defender", "client",
+            "host-adapter.js"), "utf8");
+
+    var called = {}, match;
+    var re = /PardDefenderHost\.([A-Za-z_][A-Za-z0-9_]*)/g;
+    while ((match = re.exec(adapterSource)) !== null) called[match[1]] = true;
+
+    var names = Object.keys(called).sort();
+    check("адаптер вообще что-то зовёт у хоста", names.length > 10, true);
+
+    var host = mock.loadHost().host;
+    var missing = [];
+    for (var i = 0; i < names.length; i++) {
+        if (names[i] === "version") {
+            if (typeof host.version !== "string") missing.push(names[i]);
+            continue;
+        }
+        if (typeof host[names[i]] !== "function") missing.push(names[i]);
+    }
+    check("у хоста нет ни одного недостающего метода", missing, []);
+
+    /* Та самая пара, из-за которой очистка неиспользуемых молча не доводилась
+     * до конца. Проверяется отдельно, чтобы причина была видна в выводе. */
+    check("removeItemsFromFile существует", typeof host.removeItemsFromFile, "function");
+    check("removeItemsFromFileJson существует", typeof host.removeItemsFromFileJson, "function");
+
+    /* ...Json-близнец обязан отдавать именно JSON, а не объект: через
+     * evalScript назад проходит только строка. */
+    var answer = host.removeItemsFromFileJson("Z:/nope/plan.json");
+    check("removeItemsFromFileJson возвращает строку", typeof answer, "string");
+    var parsed = JSON.parse(answer);
+    check("removeItemsFromFileJson отдаёт разбираемый JSON", parsed.ok, false);
+    check("и сообщает причину", parsed.error.length > 0, true);
+})();
+
 /* ------------------------------------------------------------------ итог */
 
 console.log("\n" + (failed === 0

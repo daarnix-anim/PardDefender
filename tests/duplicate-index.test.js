@@ -385,6 +385,126 @@ steps.push(function (next) {
     });
 });
 
+/* ------------------------------------------------------------- 9b */
+
+/*
+ * Дескриптор секвенции в том виде, в каком его ОТДАЁТ хост After Effects.
+ *
+ * sequenceDescriptor в PardDefenderAudit.jsx возвращает
+ * {folder, prefix, padding, suffix, firstFrame} — ни pattern, ни files в нём
+ * нет и никогда не было. Набор выше подавал выдуманную форму {pattern, files},
+ * был зелёным, и поиск дубликатов секвенций в AE при этом не работал ни разу:
+ * каждая секвенция попадала в scannedSequences и выходила через проверку на
+ * пустой список кадров, а группа появиться не могла.
+ *
+ * Здесь подаётся ровно то, что приходит из хоста, и файлы на диске настоящие.
+ */
+var hostSeqDirA = testDir + "/hostSeqA";
+var hostSeqDirB = testDir + "/hostSeqB";
+writeFile("hostSeqA/shot_0001.png", "HOST_FRAME_ONE");
+writeFile("hostSeqA/shot_0002.png", "HOST_FRAME_TWO");
+writeFile("hostSeqA/readme.txt", "не кадр, в секвенцию попасть не должен");
+writeFile("hostSeqB/shot_0001.png", "HOST_FRAME_ONE");
+writeFile("hostSeqB/shot_0002.png", "HOST_FRAME_TWO");
+
+function hostDescriptorItem(id, folder) {
+    return {
+        id: id,
+        key: "i" + id,
+        name: "shot_[0001-0002].png",
+        path: folder + "/shot_0001.png",
+        isSequence: true,
+        /* Ровно поля хоста, без pattern и без files. */
+        sequence: {
+            folder: folder,
+            prefix: "shot_",
+            padding: 4,
+            suffix: ".png",
+            firstFrame: "shot_0001.png"
+        }
+    };
+}
+
+steps.push(function (next) {
+    group("9b. Дескриптор хоста AE: шаблон, разворот папки и поиск дубликатов");
+
+    check("patternOf собирает шаблон из prefix/padding/suffix",
+        engine.patternOf({ prefix: "shot_", padding: 4, suffix: ".png" }), "shot_%04d.png");
+    check("patternOf не трогает готовый pattern",
+        engine.patternOf({ pattern: "frame_%03d.png" }), "frame_%03d.png");
+    check("patternOf на пустом дескрипторе молчит", engine.patternOf({}), "");
+    check("patternOf переносит нулевой padding в единицу",
+        engine.patternOf({ prefix: "a", padding: 0, suffix: ".png" }), "a%01d.png");
+
+    var expanded = engine.expandDescriptor({
+        folder: hostSeqDirA, prefix: "shot_", padding: 4, suffix: ".png"
+    });
+    check("разворот нашёл оба кадра", expanded.length, 2);
+    check("кадры отсортированы", expanded.map(function (f) { return f.name; }),
+        ["shot_0001.png", "shot_0002.png"]);
+    check("посторонний файл в папке не стал кадром",
+        expanded.some(function (f) { return /readme/.test(f.name); }), false);
+    check("разворот несуществующей папки пуст",
+        engine.expandDescriptor({ folder: testDir + "/nope", prefix: "a", padding: 2, suffix: ".png" }), []);
+
+    /* И то, ради чего всё это: две одинаковые секвенции — дубликат. */
+    engine.scan({
+        workspaceRoot: testDir,
+        items: [hostDescriptorItem("hA", hostSeqDirA), hostDescriptorItem("hB", hostSeqDirB)]
+    }, function (err, res) {
+        check("дескриптор хоста даёт группу дубликатов", res.duplicateGroups.length, 1);
+        var grp = res.duplicateGroups[0];
+        check("вид группы — sequence", grp.kind, "sequence");
+        check("обе секвенции в группе", grp.files.length, 2);
+        /* totalSize раньше выходил нулевым: дескриптор размеров не несёт, а
+         * считался он из files[].size. Теперь — из тех же stat, что и так
+         * делаются на каждый кадр. */
+        check("размер секвенции посчитан", grp.size > 0, true);
+        check("размер равен сумме кадров", grp.size,
+            fs.statSync((hostSeqDirA + "/shot_0001.png").replace(/\//g, path.sep)).size +
+            fs.statSync((hostSeqDirA + "/shot_0002.png").replace(/\//g, path.sep)).size);
+        check("освобождаемое место — одна копия", grp.reclaimableBytes, grp.size);
+
+        /* Повторный проход идёт по прогретому кэшу: именно он раньше уходил в
+         * синхронную рекурсию на каждый кадр. Результат обязан не измениться. */
+        engine.scan({
+            workspaceRoot: testDir,
+            items: [hostDescriptorItem("hA", hostSeqDirA), hostDescriptorItem("hB", hostSeqDirB)]
+        }, function (err2, res2) {
+            check("на прогретом кэше результат тот же", res2.duplicateGroups.length, 1);
+            check("и размер тот же", res2.duplicateGroups[0].size, grp.size);
+
+            /* Изменённый кадр разводит секвенции. */
+            fs.writeFileSync((hostSeqDirB + "/shot_0002.png").replace(/\//g, path.sep),
+                "HOST_FRAME_TWO_CHANGED", "utf8");
+            engine.scan({
+                workspaceRoot: testDir,
+                items: [hostDescriptorItem("hA", hostSeqDirA), hostDescriptorItem("hB", hostSeqDirB)]
+            }, function (err3, res3) {
+                check("изменённый кадр снимает дубликат", res3.duplicateGroups.length, 0);
+
+                /* Разные имена кадров — разные секвенции, даже при равных
+                 * байтах: переименованная копия не тот же набор. */
+                writeFile("hostSeqC/take_0001.png", "HOST_FRAME_ONE");
+                writeFile("hostSeqC/take_0002.png", "HOST_FRAME_TWO");
+                var renamed = {
+                    id: "hC", key: "ihC", name: "take_[0001-0002].png",
+                    path: testDir + "/hostSeqC/take_0001.png", isSequence: true,
+                    sequence: { folder: testDir + "/hostSeqC", prefix: "take_",
+                        padding: 4, suffix: ".png", firstFrame: "take_0001.png" }
+                };
+                engine.scan({
+                    workspaceRoot: testDir,
+                    items: [hostDescriptorItem("hA", hostSeqDirA), renamed]
+                }, function (err4, res4) {
+                    check("переименованная секвенция не дубликат", res4.duplicateGroups.length, 0);
+                    next();
+                });
+            });
+        });
+    });
+});
+
 /* ------------------------------------------------------------- 10 */
 
 var ownedFile = writeFile("01_assets/Intro/VIDEO/owned.mp4", "CANONICAL_TEST_BYTES_999");

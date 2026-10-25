@@ -3,7 +3,7 @@
 <!-- СГЕНЕРИРОВАНО tools/build-map.js — правки будут затёрты.
      Чтобы изменить описание файла, отредактируйте блок @map в его шапке. -->
 
-Файлов: **71** · связей: **163** · собрано: 2026-10-25 11:15
+Файлов: **71** · связей: **167** · собрано: 2026-10-25 16:04
 
 Визуальная карта: [`docs/project-map.html`](docs/project-map.html) — откройте в браузере, узлы кликабельны.
 
@@ -15,11 +15,11 @@
 
 ### `PardDefenderApply.jsx`
 
-`extension/com.pard.defender/host/PardDefenderApply.jsx` · 1039 строк · работает
+`extension/com.pard.defender/host/PardDefenderApply.jsx` · 1053 строк · работает
 
 Две мутирующие операции: перелинковка на проверенную копию с сохранением интерпретации и раскладка панели проекта.
 
-Используется в: `host-adapter.js`, `host-adapter.test.js`, `mock-ae.js`
+Используется в: `host-adapter.js`, `host-adapter.test.js`, `mock-ae.js`, `runtime.test.js`
 
 ### `PardDefenderAudit.jsx`
 
@@ -67,7 +67,7 @@
 
 ### `copy-engine.js`
 
-`premiere/com.pard.defender.uxp/copy-engine.js` · 1584 строк · работает
+`premiere/com.pard.defender.uxp/copy-engine.js` · 1633 строк · работает
 
 Асинхронное поблочное копирование через UXP fs с инкрементальным SHA-256, временными файлами .pdpart, journal-before-copy в pending.tsv, фиксацией provenance в assets.tsv и безопасной перелинковкой клипов Premiere.
 
@@ -101,13 +101,13 @@ _Описание не задано._
 
 ### `main.js`
 
-`premiere/com.pard.defender.uxp/main.js` · 1770 строк · работает
+`premiere/com.pard.defender.uxp/main.js` · 1807 строк · работает
 
 UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИТА», «ДУБЛИКАТЫ» и «ЖУРНАЛ», копирование внешних медиа в workspace с перелинковкой, поиск дубликатов, поиск по всей библиотеке, объединение с приоритетом AE и журнал операций.
 
 Использует: `copy-engine.js`, `adapter.js`, `sync-coordinator.js`, `duplicates.js`
 
-Используется в: `index.html`, `host-adapter.test.js`, `panel.test.js`
+Используется в: `index.html`, `host-adapter.test.js`, `panel.test.js`, `runtime.test.js`
 
 ### `sync-coordinator.js`
 
@@ -123,7 +123,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `consolidation.js`
 
-`extension/com.pard.defender/client/consolidation.js` · 604 строк · работает
+`extension/com.pard.defender/client/consolidation.js` · 628 строк · работает
 
 Безопасное объединение точных дубликатов: транзакционная машина состояний, re-verification, внешний copy каноникала, relink через хост и crash recovery.
 
@@ -133,7 +133,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `copy-queue.js`
 
-`extension/com.pard.defender/client/copy-queue.js` · 724 строк · работает
+`extension/com.pard.defender/client/copy-queue.js` · 857 строк · работает
 
 Проверенное копирование: потоковая запись в .pdpart, сверка размера, дедуп по SHA-256, откат и коды ошибок. Оригинал не трогается никогда.
 
@@ -149,7 +149,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `duplicate-index.js`
 
-`extension/com.pard.defender/client/duplicate-index.js` · 678 строк · работает
+`extension/com.pard.defender/client/duplicate-index.js` · 780 строк · работает
 
 Движок поиска точных дубликатов: группировка по размерам, потоковый SHA-256, hash-cache и секвенции.
 
@@ -171,7 +171,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 Использует: `PardDefenderAudit.jsx`, `PardDefenderApply.jsx`, `PardDefenderLayers.jsx`, `PardDefenderCore.jsx`, `PardDefenderPlan.jsx`
 
-Используется в: `consolidation.js`, `index.html`, `main.js`, `host-adapter.test.js`, `panel.test.js`
+Используется в: `consolidation.js`, `index.html`, `main.js`, `host-adapter.test.js`, `host.test.js`, `panel.test.js`
 
 ### `housekeeping.js`
 
@@ -183,7 +183,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `issues.js`
 
-`extension/com.pard.defender/client/issues.js` · 306 строк · работает
+`extension/com.pard.defender/client/issues.js` · 323 строк · работает
 
 Хранилище проблем: четыре класса ошибок, расписание повторов, предохранитель. Одна строка на элемент, а не на попытку.
 
@@ -193,7 +193,7 @@ UI-контроллер панели Premiere Pro UXP: вкладки «ЗАЩИ
 
 ### `main.js`
 
-`extension/com.pard.defender/client/main.js` · 4560 строк · работает
+`extension/com.pard.defender/client/main.js` · 4616 строк · работает
 
 Оркестратор панели: владеет таймерами, решает когда действовать, собирает планы для хоста и рисует интерфейс.
 
@@ -295,7 +295,7 @@ _Описание не задано._
 
 ### `consolidation.test.js`
 
-`tests/consolidation.test.js` · 512 строк · работает
+`tests/consolidation.test.js` · 617 строк · работает
 
 25 проверок безопасного объединения дубликатов в After Effects.
 
@@ -305,7 +305,7 @@ _Описание не задано._
 
 ### `copy-queue.test.js`
 
-`tests/copy-queue.test.js` · 385 строк · работает
+`tests/copy-queue.test.js` · 496 строк · работает
 
 50 проверок копирования на настоящих файлах во временной папке.
 
@@ -315,7 +315,7 @@ _Описание не задано._
 
 ### `duplicate-index.test.js`
 
-`tests/duplicate-index.test.js` · 494 строк · работает
+`tests/duplicate-index.test.js` · 614 строк · работает
 
 45 проверок движка точных дубликатов: группировка, хэширование, секвенции, кэш.
 
@@ -325,7 +325,7 @@ _Описание не задано._
 
 ### `e2e-hardening.test.js`
 
-`tests/e2e-hardening.test.js` · 461 строк · работает
+`tests/e2e-hardening.test.js` · 575 строк · работает
 
 40 интеграционных end-to-end проверок надёжности (hardening), синхронизации и безопасности релиза 2.1.0.
 
@@ -361,11 +361,11 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `host.test.js`
 
-`tests/host.test.js` · 1918 строк · работает
+`tests/host.test.js` · 1972 строк · работает
 
 186 проверок хоста: рабочая папка, ветки, маршруты, многослойные PSD/AI, секвенции, границы раскладки.
 
-Использует: `mock-ae.js`, `extendscript-syntax.js`
+Использует: `host-adapter.js`, `mock-ae.js`, `extendscript-syntax.js`
 
 Используется в: `run-all.js`
 
@@ -397,7 +397,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `panel.test.js`
 
-`tests/panel.test.js` · 1985 строк · работает
+`tests/panel.test.js` · 1990 строк · работает
 
 Проверки самой панели: вкладки, кнопки, места блоков и дисциплина перерисовки. Первый набор, который запускает main.js.
 
@@ -427,7 +427,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `premiere-panel-protection.test.js`
 
-`tests/premiere-panel-protection.test.js` · 245 строк · работает
+`tests/premiere-panel-protection.test.js` · 277 строк · работает
 
 Исполнение панели Premiere: аудиомаршруты, AE-метки, relink и сбои.
 
@@ -437,7 +437,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `premiere-protection.test.js`
 
-`tests/premiere-protection.test.js` · 771 строк · работает
+`tests/premiere-protection.test.js` · 822 строк · работает
 
 35 проверок защиты файлов, поблочного копирования, хеширования и консолидации в Premiere UXP.
 
@@ -463,11 +463,11 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `runtime.test.js`
 
-`tests/runtime.test.js` · 570 строк · работает
+`tests/runtime.test.js` · 643 строк · работает
 
 112 проверок клиентских модулей: ошибки, метрики, сверка, обновления.
 
-Использует: `issues.js`, `stats.js`, `verify.js`, `updater.js`, `copy-queue.js`, `housekeeping.js`
+Использует: `issues.js`, `stats.js`, `verify.js`, `updater.js`, `copy-queue.js`, `housekeeping.js`, `PardDefenderApply.jsx`, `main.js`
 
 Используется в: `run-all.js`
 
@@ -583,7 +583,7 @@ Checks the ES3 literal-regex slash restriction missed by Node's ES5+ parser.
 
 ### `CLAUDE.md`
 
-`CLAUDE.md` · 296 строк · работает
+`CLAUDE.md` · 297 строк · работает
 
 Точка входа для любого агента и нового чата: правила, архитектура, команды.  @map status: ready  @map layer: docs -->
 
@@ -595,7 +595,7 @@ _Описание не задано._
 
 ### `README.md`
 
-`README.md` · 1044 строк · работает
+`README.md` · 1045 строк · работает
 
 Полное описание продукта: поведение, структура папок, безопасность, метрики, ошибки, автообновление.  @map status: ready  @map layer: docs -->
 

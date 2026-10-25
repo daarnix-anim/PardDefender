@@ -603,17 +603,26 @@
 
     function metadataDir() { return state.workspace + "/.parddefender"; }
 
+    function journalPath() { return PardCopyQueue.journalPath(metadataDir()); }
+
     function journalTasks(tasks) {
         var lines = [], i, now = new Date().toISOString();
         for (i = 0; i < tasks.length; i++) {
-            /* Column two is the element KEY, not the bare id: an element and its
-             * proxy are two rows about the same id. Only the destination column
-             * is ever read back, by recoverJournal. */
+            /*
+             * Column two is the element KEY, not the bare id: an element and its
+             * proxy are two rows about the same id.
+             *
+             * Column five is the token that will name every .pdpart of this
+             * task. It is what lets recovery delete exactly our own unfinished
+             * files instead of every .pdpart in the destination folder - which
+             * on a shared workspace meant deleting the file Premiere was
+             * writing at that very moment.
+             */
+            tasks[i].partToken = PardCopyQueue.newPartToken();
             lines.push([now, tasks[i].key, tasks[i].sourcePath,
-                tasks[i].destPath].join("\t"));
+                tasks[i].destPath, tasks[i].partToken].join("\t"));
         }
-        return PardCopyQueue.writeText(
-            metadataDir() + "/pending.tsv", lines.join("\n") + "\n");
+        return PardCopyQueue.writeText(journalPath(), lines.join("\n") + "\n");
     }
 
     function taskMap(tasks) {
@@ -867,6 +876,25 @@
         });
     }
 
+    /*
+     * Неудача операции, которую владелец запустил кнопкой. В отличие от trip()
+     * она НЕ ставит автоматический режим на паузу: фоновая защита не имеет
+     * отношения к тому, что хост отказал на «объединить дубликаты». Строка
+     * живёт в общем списке проблем, ключ с префиксом sys: - потому что она не
+     * про элемент проекта и не должна выпасть при pruneMissing.
+     */
+    function recordActionIssue(code, name, detail) {
+        PardIssues.record({
+            key: "sys:" + code,
+            id: "",
+            name: name,
+            code: code,
+            detail: detail || ""
+        });
+        PardIssues.save();
+        invalidate("issues");
+    }
+
     function trip(code, reason, detail) {
         state.paused = { code: code, reason: reason, detail: detail || "", at: Date.now() };
         PardIssues.record({
@@ -957,7 +985,7 @@
                 }
 
                 commitRelink(tasks, results, function (commit, error, entries) {
-                    PardCopyQueue.removeQuietly(metadataDir() + "/pending.tsv");
+                    PardCopyQueue.removeQuietly(journalPath());
 
                     var settled = [];
                     if (error) {
@@ -1408,7 +1436,7 @@
                 }
 
                 commitRelink(tasks, results, function (commit, error, entries) {
-                    PardCopyQueue.removeQuietly(metadataDir() + "/pending.tsv");
+                    PardCopyQueue.removeQuietly(journalPath());
 
                     var settled = [];
                     if (error) {
@@ -2081,10 +2109,33 @@
         }
 
         if (workspace) {
-            var recovered = PardCopyQueue.recoverJournal(workspace + "/.parddefender/pending.tsv");
-            if (recovered.removedPartials) {
-                log("После сбоя убрано незавершённых копий: " +
-                    recovered.removedPartials, "warn");
+            var meta = workspace + "/.parddefender";
+            var removed = 0;
+
+            var recovered = PardCopyQueue.recoverJournal(PardCopyQueue.journalPath(meta));
+            removed += recovered.removedPartials;
+
+            /*
+             * Журнал версий до 2.3.5 был общим для двух хостов. Берём из него
+             * ТОЛЬКО свои строки - у AE их ровно четыре колонки, у Premiere
+             * пять - и переписываем файл без них. Удаляется он лишь когда
+             * чужих строк в нём больше не осталось: откатывать копирование
+             * Premiere не наше дело.
+             */
+            var legacy = PardCopyQueue.recoverJournal(
+                PardCopyQueue.legacyJournalPath(meta),
+                { ownColumns: 4, keepForeign: true }
+            );
+            removed += legacy.removedPartials;
+
+            if (removed) {
+                log("После сбоя убрано незавершённых копий: " + removed, "warn");
+            }
+            if (recovered.unattributed || legacy.unattributed) {
+                /* Чужие или неопознанные .pdpart мы не удаляем - только
+                 * сообщаем, что они есть. */
+                log("Недописанные файлы не из нашего журнала оставлены на месте: " +
+                    (recovered.unattributed + legacy.unattributed), "neutral");
             }
         }
     }
@@ -3732,13 +3783,16 @@
             if (!res || !res.ok) {
                 var errMsg = res ? res.error : ("Сбой хоста: " + raw);
                 log("Ошибка объединения элементов проекта: " + errMsg, "bad");
-                trip("CONSOLIDATE_PROJECT_ITEMS_FAILED", errMsg);
+                recordActionIssue("CONSOLIDATE_PROJECT_ITEMS_FAILED",
+                    "Объединение элементов проекта", errMsg);
                 showActionFeedback("Ошибка объединения: " + errMsg, "bad");
             } else {
                 var msg = "✓ Элементы проекта объединены: перелинковано слоёв: " +
                     res.relinkedLayers + ", удалено дубликатов: " + res.removedItems + ".";
                 log("✅ " + msg, "good");
                 showActionFeedback(msg, "good", 8000);
+                PardIssues.clear("sys:CONSOLIDATE_PROJECT_ITEMS_FAILED");
+                PardIssues.save();
             }
 
             if (state.duplicates) {
@@ -3776,7 +3830,7 @@
             setBusyLabel("");
             if (err) {
                 log("Ошибка объединения дубликатов: " + err.message, "bad");
-                trip("CONSOLIDATE_FAILED", err.message);
+                recordActionIssue("CONSOLIDATE_FAILED", "Объединение дубликатов", err.message);
                 showActionFeedback("Ошибка объединения: " + err.message, "bad");
             } else if (res && res.op) {
                 var r = res.op.results;
@@ -3784,6 +3838,8 @@
                     var okMsg = "✓ Дубликаты успешно объединены: перелинковано " + r.relinked + " ссылок.";
                     log(okMsg, "good");
                     showActionFeedback(okMsg, "good", 8000);
+                    PardIssues.clear("sys:CONSOLIDATE_FAILED");
+                    PardIssues.save();
                 } else if (res.partial) {
                     var partMsg = "Частичное объединение: перелинковано " + r.relinked + ", пропущено " + r.skipped;
                     log(partMsg, "bad");

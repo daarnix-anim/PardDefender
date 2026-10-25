@@ -75,7 +75,10 @@
         canonicalOverrides: {},
         protectionLinks: {},
         consolidationArmedGroup: null,
-        consolidationArmedUntil: 0
+        consolidationArmedUntil: 0,
+        /* Рабочие папки, для которых откат незавершённого копирования уже
+         * сделан в этой сессии. Один раз на папку, а не на каждый аудит. */
+        recoveredWorkspaces: {}
     };
 
     function showProtectBanner(text, kind) {
@@ -603,6 +606,39 @@
 
     var scanTimeout = null;
 
+    /*
+     * Правило 7 требует не просто записать план до первого байта, а чтобы
+     * следующий старт мог по нему откатить незавершённое. copy-engine журнал
+     * писал честно, но recoverPending не вызывался нигде, кроме теста: после
+     * падения Premiere посреди копирования .pdpart оставались на диске навсегда,
+     * а pending.tsv только рос.
+     *
+     * Откат делается, когда рабочая папка стала известна, то есть после первого
+     * удачного аудита - в init() её ещё нет. Один раз на папку: повторный аудит
+     * не должен трогать журнал, который может принадлежать уже идущему проходу.
+     */
+    function recoverPendingOnce(report) {
+        if (!report || !report.ok || !report.projectSaved) return;
+        if (!report.workspace || report.workspaceIssue) return;
+        if (typeof PardPremiereCopyEngine === "undefined" ||
+            typeof PardPremiereCopyEngine.recoverPending !== "function") return;
+
+        var key = PardPremiereAdapter.normalizePath(report.workspace).toLowerCase();
+        if (!key || state.recoveredWorkspaces[key]) return;
+        state.recoveredWorkspaces[key] = true;
+
+        var res = null;
+        try { res = PardPremiereCopyEngine.recoverPending(report.workspace); }
+        catch (eRec) {
+            log("Не удалось проверить журнал незавершённого копирования: " +
+                (eRec && eRec.message ? eRec.message : eRec), "warn");
+            return;
+        }
+        if (res && res.recovered) {
+            log("После сбоя убрано незавершённых копий: " + res.recovered, "warn");
+        }
+    }
+
     function triggerAudit(onComplete, isSilent) {
         if (state.userPaused && isSilent) {
             if (onComplete) onComplete(null, state.lastReport);
@@ -645,6 +681,7 @@
             } else {
                 state.lastReport = report;
                 render(report);
+                recoverPendingOnce(report);
                 if (!isSilent) {
                     var count = (report.items ? report.items.length : 0);
                     log("Сканирование проекта завершено: " + count + " элементов.", "neutral");

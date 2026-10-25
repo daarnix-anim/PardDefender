@@ -349,6 +349,28 @@ steps.push(function (next) {
         check("все 3 элемента отмечены relinked (1 каноникал + 2 цели)", runRes.op.results.relinked, 3);
         check("событие записано в журнал операций", !!runRes.op.eventId, true);
 
+        /*
+         * Событие должно нести СВОИ данные. appendEvent берёт всё, кроме
+         * eventId/workspaceId/projectId/host/type/createdAt, только из payload,
+         * а здесь пять полей лежали верхним уровнем и молча выбрасывались: в
+         * events.jsonl попадала запись с payload: {} — без каноникала, без
+         * contentId и без счётчиков, то есть без всего, зачем её пишут.
+         */
+        var journalRaw = fs.readFileSync(nativePath(ws + "/.parddefender/events.jsonl"), "utf8");
+        var journalLines = journalRaw.split(/\r?\n/).filter(function (line) { return line.trim(); });
+        var consolidateEvents = journalLines.map(function (line) { return JSON.parse(line); })
+            .filter(function (ev) { return ev.type === "consolidate_duplicates"; });
+        check("в журнале ровно одно событие объединения", consolidateEvents.length, 1);
+        var ev = consolidateEvents[0];
+        check("событие знает проект", ev.projectId, "proj_happy");
+        check("событие знает хост", ev.host, "aftereffects");
+        check("payload не пустой", Object.keys(ev.payload || {}).length > 0, true);
+        check("payload несёт каноникал", ev.payload.canonical, canFile);
+        check("payload несёт contentId", ev.payload.contentId, contentId);
+        check("payload несёт счётчик перелинкованных", ev.payload.relinkedCount, 3);
+        check("payload несёт общее число целей", ev.payload.totalCount, 3);
+        check("payload несёт идентификатор операции", ev.payload.operationId, runRes.op.operationId);
+
         // Проверка сохранённого состояния на диске
         var savedOp = PardConsolidation.loadOperation(ws, runRes.op.operationId);
         check("на диске сохранено состояние completed", savedOp && savedOp.state, "completed");
@@ -366,6 +388,89 @@ steps.push(function (next) {
             check("дубликат 2 на месте (не удалён)", fs.existsSync(nativePath(dupFile2)), true);
             next();
         });
+    });
+});
+
+/* ========================================================================= */
+/*
+ * Хост прервал проход целиком: ok === false и ПУСТОЙ failures.
+ *
+ * Так выглядит исключение внутри commitFromFile — оно вылетает из внешнего try
+ * и заполнить failures уже некому. Раньше executeRelink смотрел только на
+ * failures: отказа ни для одной цели не находилось, все помечались "relinked",
+ * операция уходила в completed, в журнал писалось событие об успешном
+ * объединении, а панель показывала «✓ дубликаты объединены» — при том, что не
+ * перелинковано ничего.
+ */
+steps.push(function (next) {
+    group("Хост прервал перелинковку (ok: false без failures)");
+    var ws = testRoot + "/ws_host_refused";
+    mkdir(ws + "/01_assets");
+    mkdir(ws + "/.parddefender");
+    var canFile = ws + "/01_assets/main.mp4";
+    var dupFile = ws + "/01_assets/copy.mp4";
+    writeFile(canFile, "REFUSED_FOOTAGE");
+    writeFile(dupFile, "REFUSED_FOOTAGE");
+
+    var stat = fs.statSync(nativePath(canFile));
+    var contentId = crypto.createHash("sha256").update("REFUSED_FOOTAGE").digest("hex");
+    var audit = [{ id: 1, key: "i1", path: canFile }, { id: 2, key: "i2", path: dupFile }];
+    var groupData = {
+        groupId: "grp_refused", contentId: contentId, kind: "file", size: stat.size,
+        recommendedCanonical: canFile,
+        files: [{ path: canFile, references: [1] }, { path: dupFile, references: [2] }]
+    };
+
+    var mockHostAdapter = {
+        commitFromFileJson: function (planPath, cb) {
+            cb(JSON.stringify({
+                ok: false,
+                relinked: 0,
+                skipped: 0,
+                failures: [],
+                error: "Object is invalid (line 412)"
+            }));
+        }
+    };
+
+    PardConsolidation.run({
+        workspace: ws,
+        projectId: "proj_refused",
+        group: groupData,
+        canonical: canFile,
+        auditItems: audit,
+        hostAdapter: mockHostAdapter
+    }, function (err, op) {
+        check("отказ хоста пришёл как ошибка", !!err, true);
+        check("сообщение называет причину от хоста",
+            err && err.message.indexOf("Object is invalid") >= 0, true);
+        check("операция в состоянии failed", op && op.state, "failed");
+        check("ни одна цель не помечена перелинкованной", op.results.relinked, 0);
+
+        var targetStatuses = op.targets.map(function (t) { return t.status; }).sort();
+        check("цель осталась не перелинкованной",
+            targetStatuses.indexOf("relinked") >= 0 && targetStatuses.length === 2, true);
+
+        /* Сохранённое состояние обязано быть тем же: иначе следующий старт
+         * подхватит операцию как «почти готовую». */
+        var savedOp = PardConsolidation.loadOperation(ws, op.operationId);
+        check("на диске сохранено состояние failed", savedOp && savedOp.state, "failed");
+
+        /* И главное: в журнал ничего не писалось. */
+        var journalPath = nativePath(ws + "/.parddefender/events.jsonl");
+        var consolidateEvents = [];
+        if (fs.existsSync(journalPath)) {
+            consolidateEvents = fs.readFileSync(journalPath, "utf8")
+                .split(/\r?\n/)
+                .filter(function (line) { return line.trim(); })
+                .map(function (line) { return JSON.parse(line); })
+                .filter(function (ev) { return ev.type === "consolidate_duplicates"; });
+        }
+        check("события об объединении в журнале нет", consolidateEvents.length, 0);
+
+        check("оба файла на месте", fs.existsSync(nativePath(canFile)) &&
+            fs.existsSync(nativePath(dupFile)), true);
+        next();
     });
 });
 

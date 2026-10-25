@@ -310,13 +310,54 @@ var PardCopyQueue = (function () {
         next();
     }
 
-    function partialNameFor(destPath) {
-        return toSlash(destPath) + "." +
-            Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36) +
-            ".pdpart";
+    /*
+     * Имя журнала. Своё у каждого хоста, и это не косметика.
+     *
+     * До 2.3.5 After Effects и Premiere писали в ОДИН <workspace>/.parddefender/
+     * pending.tsv, при несовместимых форматах (4 колонки против 5) и
+     * несовместимых процедурах восстановления. AE писал файл целиком через
+     * writeText, то есть началом своего прохода стирал журнал незавершённого
+     * копирования Premiere; восстановление каждого из них удаляло файл целиком,
+     * выбрасывая строки другого.
+     */
+    var JOURNAL_NAME = "pending-ae.tsv";
+    var LEGACY_JOURNAL_NAME = "pending.tsv";
+
+    api.JOURNAL_NAME = JOURNAL_NAME;
+    api.LEGACY_JOURNAL_NAME = LEGACY_JOURNAL_NAME;
+
+    api.journalPath = function (metaDir) {
+        return toSlash(metaDir).replace(/\/$/, "") + "/" + JOURNAL_NAME;
+    };
+
+    api.legacyJournalPath = function (metaDir) {
+        return toSlash(metaDir).replace(/\/$/, "") + "/" + LEGACY_JOURNAL_NAME;
+    };
+
+    function newPartToken() {
+        return Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+    }
+
+    api.newPartToken = newPartToken;
+
+    /*
+     * Токен задачи попадает И в имя .pdpart, И в журнал. Это единственное, что
+     * позволяет откату удалить ровно свои недописанные файлы.
+     *
+     * Раньше имя было случайным и нигде не записывалось, поэтому восстановление
+     * сносило ВСЕ .pdpart в папке назначения — включая тот, в который Premiere
+     * (или вторая копия AE) писал прямо в этот момент. Для секвенции токен один
+     * на все кадры: задача одна, и откатывается она целиком.
+     */
+    function partialNameFor(destPath, token) {
+        return toSlash(destPath) + "." + (token || newPartToken()) + ".pdpart";
     }
 
     api.partialNameFor = partialNameFor;
+
+    function partialSuffixFor(token) {
+        return "." + token + ".pdpart";
+    }
 
     function removeQuietly(target) {
         try { fs.unlinkSync(toNative(target)); return true; } catch (e) { return false; }
@@ -329,7 +370,7 @@ var PardCopyQueue = (function () {
      * the final rename, so an interrupted copy leaves a .pdpart and nothing the
      * project could be relinked to.
      */
-    function copyOne(sourcePath, destPath, stallMs, onDone) {
+    function copyOne(sourcePath, destPath, stallMs, onDone, partToken) {
         var sourceStats = statOf(sourcePath);
         if (!sourceStats) {
             onDone({
@@ -351,7 +392,7 @@ var PardCopyQueue = (function () {
             return;
         }
 
-        var partial = partialNameFor(destPath);
+        var partial = partialNameFor(destPath, partToken);
         var settled = false;
 
         function finish(result) {
@@ -476,6 +517,15 @@ var PardCopyQueue = (function () {
          */
         var taskKey = task.key || task.id;
 
+        /*
+         * Один токен на задачу: он попадает в имя каждого .pdpart этой задачи и
+         * в её строку журнала, так что откат находит ровно свои недописанные
+         * файлы. Журнал пишет клиент, поэтому обычно токен уже задан; значение
+         * по умолчанию нужно вызовам в обход журнала (например копированию
+         * каноникала в consolidation.js).
+         */
+        var partToken = task.partToken || newPartToken();
+
         if (!sources.length) {
             done({
                 ok: false,
@@ -590,7 +640,7 @@ var PardCopyQueue = (function () {
                     });
                     if (!firstDest) firstDest = finalTarget;
                     next();
-                });
+                }, partToken);
             });
         }
 
@@ -686,32 +736,115 @@ var PardCopyQueue = (function () {
      * because deleting something we did not certainly write is the one mistake
      * this whole design exists to avoid.
      */
-    api.recoverJournal = function (journalPath) {
+    /*
+     * Строка журнала: ts, key, sourcePath, destPath, partToken.
+     *
+     * Удаляется только то, что принадлежит записанным здесь задачам. Раньше
+     * удалялись ВСЕ .pdpart в папке назначения — ровно то, чего этот модуль
+     * обещает не делать: «deleting something we did not certainly write is the
+     * one mistake this whole design exists to avoid». На общей рабочей папке
+     * это сносило недописанный файл Premiere прямо во время его копирования,
+     * потому что откат AE запускается на каждую смену проекта.
+     *
+     * options.ownColumns  — обрабатывать только строки с таким числом колонок
+     *                       (для старого общего pending.tsv: строки AE там ровно
+     *                       из четырёх, строки Premiere — из пяти).
+     * options.keepForeign — чужие строки не выбрасывать: файл перезаписывается
+     *                       без наших, и удаляется только когда пуст.
+     */
+    api.recoverJournal = function (journalPath, options) {
+        var opt = options || {};
         var raw = api.readText(journalPath);
-        var summary = { removedPartials: 0, folders: 0 };
+        var summary = { removedPartials: 0, folders: 0, unattributed: 0, keptRows: 0 };
         if (!raw) return summary;
 
-        var seen = {}, lines = raw.split(/\r?\n/), i, fields, folder;
+        /* folderKey -> { folder, tokens: {}, prefixes: {} } */
+        var byFolder = {}, order = [];
+        var kept = [], lines = raw.split(/\r?\n/), i, fields;
+
+        function folderEntry(folder) {
+            var key = folder.toLowerCase();
+            if (!byFolder[key]) {
+                byFolder[key] = { folder: folder, tokens: {}, prefixes: {} };
+                order.push(key);
+            }
+            return byFolder[key];
+        }
+
         for (i = 0; i < lines.length; i++) {
             if (!lines[i]) continue;
             fields = lines[i].split("\t");
-            /* ts, id, sourcePath, destPath - the destination folder is what we
-             * need; the partial file inside it carries a random name. */
             if (fields.length < 4) continue;
-            folder = toSlash(fields[3]).replace(/\/[^\/]*$/, "");
-            if (!folder || seen[folder.toLowerCase()]) continue;
-            seen[folder.toLowerCase()] = true;
-            summary.folders++;
+            if (opt.ownColumns && fields.length !== opt.ownColumns) {
+                if (opt.keepForeign) { kept.push(lines[i]); summary.keptRows++; }
+                continue;
+            }
 
-            var names;
-            try { names = fs.readdirSync(toNative(folder)); } catch (e) { continue; }
-            var j;
-            for (j = 0; j < names.length; j++) {
-                if (!/\.pdpart$/i.test(names[j])) continue;
-                if (removeQuietly(folder + "/" + names[j])) summary.removedPartials++;
+            var dest = toSlash(fields[3]);
+            if (!dest) continue;
+            var token = fields.length > 4 ? String(fields[4] || "") : "";
+
+            /*
+             * Для обычного файла назначение — сам файл, для секвенции — папка.
+             * Смотрим оба варианта: лишний каталог просто не даст совпадений,
+             * потому что сверка идёт по токену.
+             */
+            var candidates = [dest.replace(/\/[^\/]*$/, ""), dest];
+            var c, entry;
+            for (c = 0; c < candidates.length; c++) {
+                if (!candidates[c]) continue;
+                entry = folderEntry(candidates[c]);
+                if (token) {
+                    entry.tokens[partialSuffixFor(token).toLowerCase()] = true;
+                } else {
+                    /*
+                     * Строка из версии до 2.3.5: токена нет. Удаляем только
+                     * недописанные файлы ЭТОГО назначения — "clip.mp4.<что-то>
+                     * .pdpart" рядом с clip.mp4. Кадры секвенции так не
+                     * опознаются и остаются на диске: безвредный мусор лучше
+                     * удаления по догадке.
+                     */
+                    var leaf = dest.substring(dest.lastIndexOf("/") + 1);
+                    if (leaf) entry.prefixes[(leaf + ".").toLowerCase()] = true;
+                }
             }
         }
-        removeQuietly(journalPath);
+
+        for (i = 0; i < order.length; i++) {
+            var folderInfo = byFolder[order[i]];
+            var names;
+            try { names = fs.readdirSync(toNative(folderInfo.folder)); } catch (e) { continue; }
+            summary.folders++;
+
+            var j, name, lower, matched, prefix;
+            for (j = 0; j < names.length; j++) {
+                name = names[j];
+                if (!/\.pdpart$/i.test(name)) continue;
+                lower = name.toLowerCase();
+
+                matched = false;
+                for (var suffix in folderInfo.tokens) {
+                    if (!folderInfo.tokens.hasOwnProperty(suffix)) continue;
+                    if (lower.length > suffix.length &&
+                        lower.substring(lower.length - suffix.length) === suffix) {
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) {
+                    for (prefix in folderInfo.prefixes) {
+                        if (!folderInfo.prefixes.hasOwnProperty(prefix)) continue;
+                        if (lower.indexOf(prefix) === 0) { matched = true; break; }
+                    }
+                }
+
+                if (!matched) { summary.unattributed++; continue; }
+                if (removeQuietly(folderInfo.folder + "/" + name)) summary.removedPartials++;
+            }
+        }
+
+        if (kept.length) api.writeText(journalPath, kept.join("\n") + "\n");
+        else removeQuietly(journalPath);
         return summary;
     };
 

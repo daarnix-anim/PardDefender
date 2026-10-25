@@ -58,6 +58,14 @@ var PardIssues = (function () {
         RELINK_PROXY:          ["permanent", "включён прокси — перелинковка пропущена"],
         RELINK_MISSING_COPY:   ["transient", "проверенная копия не найдена на месте"],
         RELINK_REJECTED:       ["owner",     "After Effects отказал в перелинковке"],
+        /*
+         * Хост умеет отвечать этими двумя с 1.1.0, а здесь их не было: строка
+         * получала текст «неизвестная ошибка (PROXY_REJECTED)» и класс
+         * transient, то есть молча перепроверялась по расширяющемуся
+         * расписанию вместо того, чтобы быть показанной владельцу.
+         */
+        PROXY_GONE:            ["permanent", "у элемента больше нет прокси"],
+        PROXY_REJECTED:        ["owner",     "After Effects отказал в перелинковке прокси"],
         LAYERED_RELINK_FAILED: ["owner",     "не удалось импортировать слои PSD/AI"],
         LAYER_MATCH_FAILED:    ["owner",     "не удалось однозначно определить слой PSD/AI"],
         LAYER_RELINK_REJECTED: ["owner",     "After Effects отказал в замене слоя PSD/AI"],
@@ -66,6 +74,15 @@ var PardIssues = (function () {
         PROTECTED_CHANGED:     ["owner",     "защищённый файл изменился на диске"],
 
         PANEL_FAILED:          ["transient", "не удалось разложить панель проекта"],
+        /*
+         * Объединение дубликатов запускает владелец вручную, поэтому его
+         * неудача - это "owner", а не "system": она не ставит на паузу
+         * автоматическую защиту. Раньше оба кода уходили в trip(), и один
+         * отказ хоста на кнопке «объединить» останавливал весь фоновый проход -
+         * причём под подписью «неизвестная ошибка».
+         */
+        CONSOLIDATE_FAILED:               ["owner", "не удалось объединить дубликаты"],
+        CONSOLIDATE_PROJECT_ITEMS_FAILED: ["owner", "не удалось объединить элементы проекта"],
         HOST_ERROR:            ["system",    "хост After Effects вернул ошибку"],
         NODE_UNAVAILABLE:      ["system",    "Node недоступен — копирование невозможно"]
     };

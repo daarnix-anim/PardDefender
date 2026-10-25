@@ -559,6 +559,79 @@ group("Манифест отвечает, клали ли файл мы");
 
 /* ------------------------------------------------------------------ итог */
 
+/* ------------------------------------------- полнота справочника ошибок */
+
+/*
+ * Незарегистрированный код не падает — он тихо получает fallback: класс
+ * transient и текст «неизвестная ошибка (КОД)». Владелец видит бессмыслицу
+ * вместо объяснения, а проблема, которую он должен решить руками, вместо этого
+ * молча перепроверяется по расписанию.
+ *
+ * Так жили четыре кода. PROXY_GONE и PROXY_REJECTED хост отдавал с 1.1.0;
+ * CONSOLIDATE_FAILED и CONSOLIDATE_PROJECT_ITEMS_FAILED панель вообще передавала
+ * в trip(), то есть отказ хоста на кнопке «объединить дубликаты» останавливал
+ * весь автоматический режим — под подписью «неизвестная ошибка».
+ *
+ * Поэтому проверяется не список кодов, а требование: каждый код, который
+ * где-либо передаётся в хранилище проблем, в нём описан.
+ */
+group("Все используемые коды ошибок описаны");
+(function () {
+    var sources = [
+        ["client", "main.js"], ["client", "copy-queue.js"], ["client", "verify.js"],
+        ["host", "PardDefenderApply.jsx"]
+    ];
+    var patterns = [
+        /\bcode:\s*"([A-Z][A-Z0-9_]{2,})"/g,   /* code: "X" в записи проблемы */
+        /\btrip\(\s*"([A-Z][A-Z0-9_]{2,})"/g,  /* пауза автоматического режима */
+        /\brecordActionIssue\(\s*"([A-Z][A-Z0-9_]{2,})"/g,
+        /\breturn\s+"([A-Z][A-Z0-9_]{2,})";/g, /* codeForError по errno */
+        /\bfailure\(\w+,\s*"([A-Z][A-Z0-9_]{2,})"/g /* отказы хоста по позиции */
+    ];
+
+    var used = {}, i, j, text, match;
+    for (i = 0; i < sources.length; i++) {
+        text = fs.readFileSync(path.join(__dirname, "..", "extension",
+            "com.pard.defender", sources[i][0], sources[i][1]), "utf8");
+        for (j = 0; j < patterns.length; j++) {
+            patterns[j].lastIndex = 0;
+            while ((match = patterns[j].exec(text)) !== null) used[match[1]] = true;
+        }
+    }
+
+    var names = Object.keys(used).sort();
+    check("коды вообще нашлись", names.length > 20, true);
+
+    var unknown = [];
+    for (i = 0; i < names.length; i++) {
+        if (/неизвестная ошибка/.test(Issues.describe(names[i]).text)) unknown.push(names[i]);
+    }
+    check("ни одного неописанного кода", unknown, []);
+
+    /* Те самые четыре, отдельно — чтобы причина читалась в выводе. */
+    check("PROXY_GONE описан", Issues.describe("PROXY_GONE").klass, "permanent");
+    check("PROXY_REJECTED описан", Issues.describe("PROXY_REJECTED").klass, "owner");
+    check("CONSOLIDATE_FAILED описан", Issues.describe("CONSOLIDATE_FAILED").klass, "owner");
+    check("CONSOLIDATE_PROJECT_ITEMS_FAILED описан",
+        Issues.describe("CONSOLIDATE_PROJECT_ITEMS_FAILED").klass, "owner");
+
+    /*
+     * Класс важен не меньше текста. Неудача ручного объединения не системная:
+     * будь она "system", isSystem() сработал бы как предохранитель и остановил
+     * бы фоновую защиту, к которой она не имеет отношения.
+     */
+    check("объединение дубликатов не системная ошибка",
+        Issues.isSystem("CONSOLIDATE_FAILED"), false);
+    check("объединение элементов проекта не системная ошибка",
+        Issues.isSystem("CONSOLIDATE_PROJECT_ITEMS_FAILED"), false);
+    /* "owner" означает: само не повторяется, ждёт владельца. */
+    check("отказ в прокси ждёт владельца, а не таймер",
+        Issues.describe("PROXY_REJECTED").klass === "owner", true);
+    /* А вот исчезнувший прокси повторять вообще незачем. */
+    check("исчезнувший прокси не повторяется",
+        Issues.describe("PROXY_GONE").klass === "permanent", true);
+})();
+
 try { fs.rmSync(root.replace(/\//g, path.sep), { recursive: true, force: true }); }
 catch (e) {}
 

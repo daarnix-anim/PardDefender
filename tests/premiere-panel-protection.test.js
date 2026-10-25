@@ -36,7 +36,7 @@ function launch(options) {
         projectPath: "d:/Project/04_edit/test.prproj", items, stats: {}, diagnostics: o.diagnostics || [] };
     report.aeProtectedItems = o.aeProtectedItems || [];
     report.workspaceIssue = o.workspaceIssue || "";
-    const calls = { tasks: [], relinks: [], snapshots: [], saves: 0, reveals: [], audits: [] };
+    const calls = { tasks: [], relinks: [], snapshots: [], saves: 0, reveals: [], audits: [], recoveries: [] };
     const project = { guid: "pr-1", save: async () => { calls.saves++; return true; } };
     const adapter = {
         normalizePath: engine.normalizePath, resolveActiveProjectSync: () => project,
@@ -50,6 +50,12 @@ function launch(options) {
     };
     const copy = o.realCopy ? engine : Object.assign({}, engine, {
         loadWorkspaceMeta: () => ({}),
+        /* Что именно recoverPending удаляет, проверяет premiere-protection.test.js.
+         * Здесь проверяется то, что было сломано: его вообще никто не звал. */
+        recoverPending: ws => {
+            calls.recoveries.push(ws);
+            return { recovered: o.recovered || 0, removedParts: [] };
+        },
         runQueue: (ws, tasks, opts, cb) => {
             calls.tasks = tasks;
             Promise.resolve().then(() => cb.onDone({ ok: true, results: tasks.map(t => ({
@@ -239,6 +245,32 @@ async function finish(panel) {
     check(p.calls.snapshots.length === 0, "No snapshot is written into an unsafe workspace");
     check(!p.api.state.duplicateScanning && !p.api.state.protecting, "Refused actions leave no busy flag behind");
     check(p.elements["banner-protect-status"].textContent.includes("невозможна"), "The refusal says why, not just that nothing happened");
+    check(p.calls.recoveries.length === 0, "No journal recovery is attempted in an unsafe workspace");
+
+    /*
+     * Откат незавершённого копирования. copy-engine честно писал pending.tsv
+     * до первого байта, но recoverPending не вызывался нигде, кроме теста:
+     * после падения Premiere посреди копирования .pdpart оставались на диске
+     * навсегда. Правило 7 требует не записи журнала, а возможности откатить по
+     * нему, так что проверяется вызов, а не наличие функции.
+     */
+    p = launch({ quiet: true, recovered: 2 });
+    check(p.calls.recoveries.length === 1, "First audit recovers the copy journal");
+    check(p.calls.recoveries[0] === "d:/Project", "Recovery is scoped to the resolved workspace");
+    check(p.elements["log-box"].children.some(line => line.textContent.includes("незавершённых копий: 2")),
+        "What the recovery removed is reported in the journal");
+
+    /* Повторный аудит журнал не трогает: он может принадлежать уже идущему
+     * проходу этой же сессии. */
+    p.api.triggerAudit();
+    p.api.triggerAudit();
+    check(p.calls.recoveries.length === 1, "Later audits never touch the journal again");
+
+    /* Нечего откатывать - нечего и говорить. */
+    p = launch({ quiet: true });
+    check(p.calls.recoveries.length === 1, "Recovery still runs when the journal is clean");
+    check(!p.elements["log-box"].children.some(line => line.textContent.includes("незавершённых копий")),
+        "A clean journal produces no message");
 
     console.log("Итоги: пройдено " + checks + ", провалено 0");
 })().catch(e => { console.error(e); process.exitCode = 1; });

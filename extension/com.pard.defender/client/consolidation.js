@@ -438,8 +438,20 @@ var PardConsolidation = (function () {
                 return;
             }
 
+            /*
+             * ok === false означает исключение внутри хоста: он прервал проход
+             * целиком и НЕ заполнил failures. Без этой проверки цикл ниже не
+             * находил отказа ни для одной цели, помечал все «relinked», ставил
+             * операции состояние completed, писал событие в журнал и показывал
+             * «✓ дубликаты объединены» — при том, что не перелинковано ничего.
+             */
+            if (parsed.ok === false) {
+                callback(new Error("Хост прервал перелинковку: " +
+                    (parsed.error || "причина не указана")));
+                return;
+            }
+
             var failures = parsed.failures || [];
-            var relinkedMap = {};
             var failMap = {};
             for (var f = 0; f < failures.length; f++) {
                 failMap[failures[f].id] = failures[f];
@@ -566,14 +578,26 @@ var PardConsolidation = (function () {
                 /* Journal event */
                 if (typeof PardWorkspaceStore !== "undefined" && PardWorkspaceStore.appendEvent && (res.relinked > 0 || op.state === "completed")) {
                     try {
+                        /*
+                         * Всё, кроме eventId/workspaceId/projectId/host/type/
+                         * createdAt, appendEvent берёт ТОЛЬКО из payload.
+                         * Эти пять полей лежали верхним уровнем и молча
+                         * выбрасывались: в events.jsonl попадала запись с
+                         * payload: {} - без каноникала, без contentId и без
+                         * счётчиков, то есть без всего, зачем её пишут.
+                         * sync-coordinator в обоих хостах оборачивает правильно.
+                         */
                         var evRes = PardWorkspaceStore.appendEvent(workspace, {
                             type: "consolidate_duplicates",
                             projectId: op.projectId,
-                            contentId: op.contentId,
-                            canonical: op.canonical,
-                            relinkedCount: res.relinked,
-                            totalCount: res.total,
-                            operationId: op.operationId
+                            host: "aftereffects",
+                            payload: {
+                                contentId: op.contentId,
+                                canonical: op.canonical,
+                                relinkedCount: res.relinked,
+                                totalCount: res.total,
+                                operationId: op.operationId
+                            }
                         });
                         if (evRes && evRes.eventId) op.eventId = evRes.eventId;
                     } catch (eEv) {}

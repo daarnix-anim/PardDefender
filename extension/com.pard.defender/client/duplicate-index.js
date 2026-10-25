@@ -39,6 +39,63 @@ var PardDuplicateIndex = (function () {
         return s;
     };
 
+    /* -------------------------------------------------------- sequences */
+
+    function escapeRegExp(value) {
+        return String(value === undefined || value === null ? "" : value)
+            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    /*
+     * Обе формы дескриптора секвенции сводятся к одной строке-шаблону.
+     *
+     * Хост After Effects отдаёт {folder, prefix, padding, suffix, firstFrame},
+     * Premiere - готовый {pattern, files}. Шаблон участвует в contentId, то
+     * есть одинаковые кадры под разными именами остаются разными секвенциями,
+     * и это намеренно: переименованная копия - не тот же набор.
+     */
+    api.patternOf = function (descriptor) {
+        if (!descriptor) return "";
+        if (descriptor.pattern) return String(descriptor.pattern);
+        if (!descriptor.prefix && !descriptor.suffix) return "";
+        var pad = Math.max(1, Math.round(Number(descriptor.padding) || 1));
+        return String(descriptor.prefix || "") + "%0" + pad + "d" +
+            String(descriptor.suffix || "");
+    };
+
+    /*
+     * Разворачивает дескриптор хоста в список кадров. Папка перечисляется
+     * здесь, а не в ExtendScript: на секвенции в две тысячи кадров это разница
+     * между мгновением и минутой на однопоточном хосте - та же причина, по
+     * которой хост вообще отдаёт шаблон, а не список.
+     */
+    api.expandDescriptor = function (descriptor) {
+        if (!fs || !descriptor || !descriptor.folder) return [];
+        var pad = Math.max(1, Math.round(Number(descriptor.padding) || 1));
+        var pattern = new RegExp(
+            "^" + escapeRegExp(descriptor.prefix) +
+            "\\d{" + pad + "}" +
+            escapeRegExp(descriptor.suffix) + "$",
+            "i"
+        );
+        var folder = api.normalizePath(descriptor.folder);
+        var names;
+        try { names = fs.readdirSync(nativePath(folder)); }
+        catch (eDir) { return []; }
+
+        var out = [], i;
+        for (i = 0; i < names.length; i++) {
+            if (!pattern.test(names[i])) continue;
+            out.push({ name: names[i], path: folder + "/" + names[i] });
+        }
+        /* Нумерация с ведущими нулями делает лексикографический порядок
+         * числовым, а порядок кадров входит в contentId. */
+        out.sort(function (a, b) {
+            return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+        });
+        return out;
+    };
+
     /* ------------------------------------------------------------- cache */
 
     api.loadCache = function (workspaceRoot) {
@@ -351,23 +408,34 @@ var PardDuplicateIndex = (function () {
                 return;
             }
 
+            /*
+             * Попадания в кэш забираются ЦИКЛОМ, а не рекурсией. Раньше каждое
+             * из них вызывало processNextFile() синхронно, то есть на прогретом
+             * кэше стек рос на файл: несколько тысяч файлов - и панель падала с
+             * RangeError: Maximum call stack size exceeded. Рекурсия осталась
+             * только там, где действительно считается хэш, а это асинхронный
+             * поток, между вызовами которого стек разворачивается.
+             */
+            var item = null, cached;
+            while (hashIdx < filesToHash.length) {
+                item = filesToHash[hashIdx];
+                cached = cache.entries[item.normalizedPath];
+                if (!(cached && cached.size === item.size &&
+                      cached.mtimeMs === item.mtimeMs && cached.sha256)) break;
+                hashIdx++;
+                item.sha256 = cached.sha256;
+                hashedBytes += (item.size || 0);
+                currentStep++;
+                reportProg("hash");
+                item = null;
+            }
+
             if (hashIdx >= filesToHash.length) {
                 processSequences();
                 return;
             }
 
-            var item = filesToHash[hashIdx++];
-            var cached = cache.entries[item.normalizedPath];
-
-            /* Check cache validity: size and mtime must match */
-            if (cached && cached.size === item.size && cached.mtimeMs === item.mtimeMs && cached.sha256) {
-                item.sha256 = cached.sha256;
-                hashedBytes += (item.size || 0);
-                currentStep++;
-                reportProg("hash");
-                processNextFile();
-                return;
-            }
+            item = filesToHash[hashIdx++];
 
             api.hashFile(item.path, { cancelToken: cancelToken }, function (err, digest) {
                 if (err) {
@@ -410,8 +478,22 @@ var PardDuplicateIndex = (function () {
 
                 var seqItem = sequences[seqIdx++];
                 var seqData = seqItem.sequence || {};
-                var pattern = String(seqData.pattern || seqItem.name || "");
-                var frames = seqData.files || [];
+                /*
+                 * Хост After Effects отдаёт ДЕСКРИПТОР нумерации -
+                 * {folder, prefix, padding, suffix, firstFrame} - и ни pattern,
+                 * ни files в нём нет (PardDefenderAudit.jsx, sequenceDescriptor).
+                 * Поэтому `seqData.files || []` всегда оказывался пустым, и
+                 * поиск дубликатов секвенций в AE не работал ни разу: каждая
+                 * секвенция попадала в scannedSequences и выходила через
+                 * `if (!frames.length)`, а группа не могла появиться.
+                 *
+                 * Теперь список кадров разворачивается из дескриптора здесь же.
+                 * Готовый files по-прежнему принимается: его даёт Premiere.
+                 */
+                var pattern = api.patternOf(seqData) || String(seqItem.name || "");
+                var frames = (seqData.files && seqData.files.length)
+                    ? seqData.files
+                    : api.expandDescriptor(seqData);
 
                 if (!frames.length) {
                     currentStep++;
@@ -424,11 +506,41 @@ var PardDuplicateIndex = (function () {
                 var frameHashes = [];
                 var frameErr = null;
                 var frameIdx = 0;
+                /* Размер берётся из тех же stat, что уже делаются на кадр:
+                 * дескриптор хоста размеров не несёт, а files[].size есть не
+                 * всегда, и totalSize выходил нулевым. */
+                var frameBytes = 0;
 
                 function nextFrame() {
                     if (cancelToken.cancelled) {
                         done(new Error("CANCELLED"), null);
                         return;
+                    }
+
+                    /*
+                     * Кадры из кэша забираются циклом. Секвенция на несколько
+                     * тысяч кадров при прогретом кэше иначе рекурсирует на всю
+                     * свою длину и роняет панель по стеку.
+                     */
+                    var fr = null, frPath = "", st = null;
+                    while (frameIdx < frames.length) {
+                        fr = frames[frameIdx];
+                        frPath = api.normalizePath(fr.path || fr);
+                        st = null;
+                        try { st = fs.statSync(nativePath(frPath)); }
+                        catch (eFrStat) {
+                            frameIdx++;
+                            frameErr = "Missing frame: " + frPath;
+                            fr = null;
+                            continue;
+                        }
+                        var cachedFr = cache.entries[frPath];
+                        if (!(cachedFr && cachedFr.size === st.size &&
+                              cachedFr.mtimeMs === st.mtimeMs && cachedFr.sha256)) break;
+                        frameIdx++;
+                        frameBytes += st.size || 0;
+                        frameHashes.push((fr.name || frPath) + ":" + st.size + ":" + cachedFr.sha256);
+                        fr = null;
                     }
 
                     if (frameIdx >= frames.length) {
@@ -440,7 +552,7 @@ var PardDuplicateIndex = (function () {
                                 pattern: pattern,
                                 contentId: seqHash,
                                 framesCount: frames.length,
-                                totalSize: frames.reduce(function (sum, f) { return sum + (Number(f.size) || 0); }, 0)
+                                totalSize: frameBytes
                             });
                         }
                         currentStep++;
@@ -449,32 +561,22 @@ var PardDuplicateIndex = (function () {
                         return;
                     }
 
-                    var fr = frames[frameIdx++];
-                    var frPath = api.normalizePath(fr.path || fr);
-                    var cachedFr = cache.entries[frPath];
-
-                    try {
-                        var st = fs.statSync(nativePath(frPath));
-                        if (cachedFr && cachedFr.size === st.size && cachedFr.mtimeMs === st.mtimeMs) {
-                            frameHashes.push((fr.name || frPath) + ":" + st.size + ":" + cachedFr.sha256);
-                            nextFrame();
-                            return;
+                    frameIdx++;
+                    var statSize = st.size, statMtime = st.mtimeMs;
+                    var frName = fr.name || frPath;
+                    api.hashFile(frPath, { cancelToken: cancelToken }, function (errH, digestH) {
+                        if (errH) {
+                            frameErr = errH.message;
+                        } else {
+                            cache.entries[frPath] = {
+                                size: statSize, mtimeMs: statMtime, sha256: digestH
+                            };
+                            cacheDirty = true;
+                            frameBytes += statSize || 0;
+                            frameHashes.push(frName + ":" + statSize + ":" + digestH);
                         }
-
-                        api.hashFile(frPath, { cancelToken: cancelToken }, function (errH, digestH) {
-                            if (errH) {
-                                frameErr = errH.message;
-                            } else {
-                                cache.entries[frPath] = { size: st.size, mtimeMs: st.mtimeMs, sha256: digestH };
-                                cacheDirty = true;
-                                frameHashes.push((fr.name || frPath) + ":" + st.size + ":" + digestH);
-                            }
-                            nextFrame();
-                        });
-                    } catch (eFrStat) {
-                        frameErr = "Missing frame: " + frPath;
                         nextFrame();
-                    }
+                    });
                 }
 
                 nextFrame();

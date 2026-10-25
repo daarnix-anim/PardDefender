@@ -111,8 +111,18 @@ steps.push(function (next) {
     var innocentFile = ws + "/01_assets/_SHARED/VIDEO/innocent.mp4";
     writeFile(innocentFile, "DO_NOT_TOUCH_ME");
 
-    // Записываем брошенный .pdpart в pending.tsv
-    var pTsv = ws + "/.parddefender/pending.tsv";
+    /*
+     * Журнал Premiere — свой файл. До 2.3.5 он был общим с After Effects, и AE
+     * писал его целиком через writeText, то есть началом своего прохода стирал
+     * записи Premiere о незавершённом копировании.
+     */
+    var pTsv = ws + "/.parddefender/pending-premiere.tsv";
+    check("имя журнала задаёт сам движок",
+        PardPremiereCopyEngine.JOURNAL_NAME, "pending-premiere.tsv");
+    check("путь журнала строится движком",
+        PardPremiereCopyEngine.pendingFile(ws),
+        PardPremiereCopyEngine.normalizePath(pTsv));
+
     var row = [new Date().toISOString(), "task-crash", "src.mp4", "dst.mp4", deadPart].join("\t") + "\n";
     writeFile(pTsv, row);
 
@@ -120,7 +130,48 @@ steps.push(function (next) {
     check("найден и удалён ровно 1 брошенный .pdpart", rec.recovered, 1);
     check("файл .pdpart реально удалён", fs.existsSync(nativePath(deadPart)), false);
     check("невинный файл не удалён", fs.existsSync(nativePath(innocentFile)), true);
-    check("pending.tsv очищен после восстановления", fs.existsSync(nativePath(pTsv)), false);
+    check("свой журнал очищен после восстановления", fs.existsSync(nativePath(pTsv)), false);
+
+    next();
+});
+
+/* ========================================================================= */
+/*
+ * Общий журнал версий до 2.3.5: строки AE ровно из четырёх колонок, строки
+ * Premiere — из пяти. Каждый хост забирает только свои, и файл исчезает лишь
+ * когда чужих строк не осталось. Откатывать копирование AE — не наше дело: его
+ * недописанные файлы умеет опознавать только он сам.
+ */
+steps.push(function (next) {
+    group("Старый общий журнал: Premiere забирает только свои строки");
+
+    var ws = testDir + "/ws_legacy_journal";
+    mkdir(ws + "/.parddefender");
+    var ourPart = ws + "/01_assets/_SHARED/VIDEO/ours.mov.pp.pdpart";
+    var aePart = ws + "/01_assets/_SHARED/VIDEO/theirs.mp4.ae.pdpart";
+    writeFile(ourPart, "PREMIERE_HALF");
+    writeFile(aePart, "AE_HALF");
+
+    var legacy = ws + "/.parddefender/pending.tsv";
+    check("путь старого журнала известен движку",
+        PardPremiereCopyEngine.legacyPendingFile(ws),
+        PardPremiereCopyEngine.normalizePath(legacy));
+
+    var aeRow = [new Date().toISOString(), "i1", "src.mp4",
+        ws + "/01_assets/_SHARED/VIDEO/theirs.mp4"].join("\t");
+    var ourRow = [new Date().toISOString(), "p1", "src.mov",
+        ws + "/01_assets/_SHARED/VIDEO/ours.mov", ourPart].join("\t");
+    writeFile(legacy, aeRow + "\n" + ourRow + "\n");
+
+    var rec = PardPremiereCopyEngine.recoverPending(ws);
+    check("из общего журнала убрана только своя копия", rec.recovered, 1);
+    check("свой .pdpart удалён", fs.existsSync(nativePath(ourPart)), false);
+    check("недописанный файл AE не тронут", fs.existsSync(nativePath(aePart)), true);
+    check("строка AE сохранена", rec.keptForeignRows, 1);
+    check("общий журнал не удалён, пока в нём строка AE",
+        fs.existsSync(nativePath(legacy)), true);
+    check("в нём осталась ровно строка AE",
+        fs.readFileSync(nativePath(legacy), "utf8").trim(), aeRow);
 
     next();
 });

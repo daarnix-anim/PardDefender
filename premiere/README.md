@@ -162,7 +162,7 @@ UXP требует `fullAccess` для чтения и организации м
   - Кнопка «ЗАЩИТИТЬ СЕЙЧАС» копирует внешние медиафайлы в `01_assets/_SHARED/VIDEO` рабочей папки проекта;
   - Асинхронное поблочное копирование с инкрементальным SHA-256 (NIST векторы);
   - Временные файлы `.pdpart`, валидация размера и контрольной суммы до атомарного rename;
-  - Журналирование до записи (`pending.tsv`) и аварийное восстановление;
+  - Журналирование до записи (`pending-premiere.tsv`, свой файл, не общий с AE) и аварийное восстановление;
   - Фиксация provenance в `.parddefender/assets.tsv`;
   - Перелинковка через `ClipProjectItem.changeMediaFilePath(newPath, false)` с проверкой `canChangeMediaPath()` и post-relink verification.
 - **Поиск дубликатов и консолидация (`duplicates.js`):**

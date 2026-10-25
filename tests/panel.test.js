@@ -1124,8 +1124,12 @@ group("Копирование требует долговечного журна
     var p = launch({ report: baseReport({ items: [journalItem] }) });
     var originalWrite = p.sandbox.PardCopyQueue.writeText;
     var runs = 0;
+    /* Имя журнала берётся из самого модуля: он у каждого хоста свой,
+     * и зашитое здесь старое имя сделало бы проверку несрабатывающей. */
+    var journalName = p.sandbox.PardCopyQueue.JOURNAL_NAME;
+    check("журнал AE не делится с Premiere", journalName, "pending-ae.tsv");
     p.sandbox.PardCopyQueue.writeText = function (target, content) {
-        if (/pending\.tsv$/.test(target)) return false;
+        if (target.indexOf(journalName) >= 0) return false;
         return originalWrite(target, content);
     };
     p.sandbox.PardCopyQueue.run = function () { runs++; };
@@ -1148,8 +1152,8 @@ group("Копирование требует долговечного журна
     p2.click("run-now");
     check("при ошибке assets.tsv relink не выполняется",
         p2.calls.scripts.some(function (s) { return s.indexOf("commitFromFileJson") >= 0; }), false);
-    check("pending.tsv оставлен для диагностики",
-        fs.existsSync(native(meta + "/pending.tsv")), true);
+    check("журнал оставлен для диагностики",
+        fs.existsSync(native(meta + "/" + p2.sandbox.PardCopyQueue.JOURNAL_NAME)), true);
 
     /* Equal bytes at an unowned path are useful for relink, but they are not
      * proof that PardDefender created the file. */
@@ -1834,7 +1838,8 @@ group("Неиспользуемые файлы: кнопка сортировк�
     check("оригинал не удалён напрямую", fs.existsSync(native(existingUnused)), true);
     check("чужой файл в назначении не тронут",
         fs.readFileSync(native(occupied), "utf8"), "SOMEBODY_ELSES_FILE_OF_ANOTHER_SIZE");
-    check("журнал прохода убран", fs.existsSync(native(wsUnused + "/.parddefender/pending.tsv")), false);
+    check("журнал прохода убран", fs.existsSync(native(
+        wsUnused + "/.parddefender/" + p.sandbox.PardCopyQueue.JOURNAL_NAME)), false);
 
     /* Отказ в перелинковке. Копии остаются как безвредный бэкап, оригинал —
      * строго на месте: именно это и ломала версия до 2.3.4. */
